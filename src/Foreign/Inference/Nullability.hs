@@ -11,8 +11,14 @@ import Data.LLVM.CFG
 import Data.LLVM.Types
 import Data.LLVM.Analysis.Dataflow
 import Data.Hashable
+import Data.HashMap.Strict ( HashMap )
 import Data.HashSet ( HashSet )
 import qualified Data.HashSet as S
+import qualified Data.HashMap.Strict as M
+
+import Text.Printf
+import Debug.Trace
+debug = flip trace
 
 data FieldDescriptor = FD !Type !Int
                      deriving (Show, Eq)
@@ -23,6 +29,8 @@ instance Hashable FieldDescriptor where
 data NullabilityAnalysis =
   NA { nullPtrs :: HashSet Value
      , notNullPtrs :: HashSet Value
+     , nullFields :: HashMap Value FieldDescriptor
+     , notNullFields :: HashMap Value FieldDescriptor
      , notNullablePtrs :: HashSet Value
      , errorPtrs :: HashSet Value
      , notNullableFields :: HashSet FieldDescriptor
@@ -34,6 +42,8 @@ emptyNullabilityAnalysis :: NullabilityAnalysis
 emptyNullabilityAnalysis =
   NA { nullPtrs = S.empty
      , notNullPtrs = S.empty
+     , nullFields = M.empty
+     , notNullFields = M.empty
      , notNullablePtrs = S.empty
      , errorPtrs = S.empty
      , notNullableFields = S.empty
@@ -44,6 +54,8 @@ instance MeetSemiLattice NullabilityAnalysis where
   meet s Top = s
   meet s1 s2 = NA { nullPtrs = nullPtrs s1 `S.intersection` nullPtrs s2
                   , notNullPtrs = notNullPtrs s1 `S.intersection` notNullPtrs s2
+                  , nullFields = nullFields s1 `M.intersection` nullFields s2
+                  , notNullFields = notNullFields s1 `M.intersection` notNullFields s2
                   , notNullablePtrs = notNullablePtrs s1 `S.union` notNullablePtrs s2
                   , errorPtrs = errorPtrs s1 `S.union` errorPtrs s2
                   , notNullableFields = notNullableFields s1 `S.union` notNullableFields s2
@@ -60,11 +72,11 @@ instance DataflowAnalysis NullabilityAnalysis where
 -- the same type.  The rest of the indices delve down.
 fieldAccessInfo :: Value -> Maybe FieldDescriptor
 fieldAccessInfo Value { valueContent =
-                           gep@GetElementPtrInst {
-                             getElementPtrValue = v@Value { valueType = TypePointer it _ }
-                             , getElementPtrIndices = _:ixs
-                             }
-                      } = gepStructField it ixs
+                             GetElementPtrInst {
+                               getElementPtrValue = Value { valueType = TypePointer it0 _ }
+                               , getElementPtrIndices = _:ixs
+                               }
+                        } = gepStructField it0 ixs
   where
     gepStructField :: Type -> [Value] -> Maybe FieldDescriptor
     -- Put this one first since we always want to step through a named
@@ -96,56 +108,84 @@ fieldAccessInfo _ = Nothing
 -- calculates addresses.  Really, this will have to consult the
 -- results of an alias analysis.
 transferFunc :: NullabilityAnalysis -> Value -> [EdgeCondition] -> NullabilityAnalysis
-transferFunc na v edges = maybe na' addDerefInfo dereferencedPtr
+transferFunc na v edges = maybe na' (addDerefInfo na') (getDereferencedPtr v)
   where
-    na' = addEdgeInformation edges
+    na' = foldl' processEdge na edges
 
-    addDerefInfo p =
-      case (S.member p (nullPtrs na'),
-            S.member p (notNullPtrs na'),
-            fieldAccessInfo p) of
-        (True, _, _) -> na' { errorPtrs = p `S.insert` errorPtrs na' }
-        (_, False, Nothing) -> na' { notNullablePtrs = p `S.insert` notNullablePtrs na' }
-        (_, False, Just fi) -> na' { notNullablePtrs = p `S.insert` notNullablePtrs na'
-                                   , notNullableFields = fi `S.insert` notNullableFields na'
-                                   }
-        _ -> na'
+addDerefInfo :: NullabilityAnalysis -> Value -> NullabilityAnalysis
+addDerefInfo na p =
+  case (S.member p (nullPtrs na),
+        S.member p (notNullPtrs na),
+        --M.lookup p (notNullFields na) ) `debug` printf "NNFs(%s): %s\nNotNull? %s\n" (show p) (show (notNullFields na)) (show (S.member p (notNullPtrs na)))
+        fieldAccessInfo p) of
 
-    dereferencedPtr = case valueContent v of
-      StoreInst { storeAddress = dest@Value { valueType = TypePointer _ _ } } -> Just dest
-      LoadInst { loadAddress = src@Value { valueType = TypePointer _ _ } } -> Just src
-      _ -> Nothing
+    (True, _, _) -> na { errorPtrs = p `S.insert` errorPtrs na }
+    (_, False, Nothing) -> na { notNullablePtrs = p `S.insert` notNullablePtrs na }
+    (_, False, Just fi) -> na { notNullablePtrs = p `S.insert` notNullablePtrs na
+                               , notNullableFields = fi `S.insert` notNullableFields na
+                               }
+    _ -> na
+
+getDereferencedPtr :: Value -> Maybe Value
+getDereferencedPtr v = case valueContent v of
+  StoreInst { storeAddress = dest@Value { valueType = TypePointer _ _ } } -> Just dest
+  LoadInst { loadAddress = src@Value { valueType = TypePointer _ _ } } -> Just src
+  _ -> Nothing
+
+-- Ignore floating point comparisons - only integer comparisons
+-- are used for pointers.
+processEdge :: NullabilityAnalysis -> EdgeCondition -> NullabilityAnalysis
+processEdge n (TrueEdge cmp) = case valueContent cmp of
+  ICmpInst ICmpEq v1 Value { valueContent = ConstantPointerNull } ->
+    recordNullPtr v1 n
+  ICmpInst ICmpEq Value { valueContent = ConstantPointerNull } v2 ->
+    recordNullPtr v2 n
+  ICmpInst ICmpNe v1 Value { valueContent = ConstantPointerNull } ->
+    recordNotNullPtr v1 n
+  ICmpInst ICmpNe Value { valueContent = ConstantPointerNull } v2 ->
+    recordNotNullPtr v2 n
+  _ -> n
+processEdge n (FalseEdge cmp) = case valueContent cmp of
+  ICmpInst ICmpEq v1 Value { valueContent = ConstantPointerNull } ->
+    recordNotNullPtr v1 n
+  ICmpInst ICmpEq Value { valueContent = ConstantPointerNull } v2 ->
+    recordNotNullPtr v2 n
+  ICmpInst ICmpNe v1 Value { valueContent = ConstantPointerNull } ->
+    recordNullPtr v1 n
+  ICmpInst ICmpNe Value { valueContent = ConstantPointerNull } v2 ->
+    recordNullPtr v2 n
+  _ -> n
+processEdge n _ = n
+
+-- | Record the given value as known-to-be-null in the analysis state.
+-- If the value @v@ also has information about a field that is null,
+-- record that too.
+recordNullPtr :: Value -> NullabilityAnalysis -> NullabilityAnalysis
+recordNullPtr v na = {- case fldDesc `debug` printf "null ptr: %s\nFldDesc: %s\n" (show v) (show fldDesc) of
+  Nothing -> na' -- This comparison doesn't involve a field load
+  Just fld -> na' { nullFields = M.insert v fld (nullFields na') } -- This one does
+  where
+    na' =-} na { nullPtrs = v `S.insert` nullPtrs na }
+    -- -- ^ We can always record the value we know is null.
+    -- fldDesc = structFieldDescriptorFromLoad v
+
+recordNotNullPtr :: Value -> NullabilityAnalysis -> NullabilityAnalysis
+recordNotNullPtr v na = case fldDesc `debug` printf "Not-null ptr: %s\nFldDesc: %s\n" (show v) (show fldDesc) of
+  Nothing -> na' -- This comparison doesn't involve a field load
+  Just fld -> na' { notNullFields = M.insert v fld (notNullFields na') } -- This one does
+  where
+    na' = na { notNullPtrs = v `S.insert` notNullPtrs na }
+    -- ^ We can always record the value we know is null.
+    fldDesc = structFieldDescriptorFromLoad v
 
 
-    addEdgeInformation = foldl' processEdge na
-    -- Ignore floating point comparisons - only integer comparisons
-    -- are used for pointers.
-    processEdge n (TrueEdge cmp) = case valueContent cmp of
-      ICmpInst ICmpEq v1 Value { valueContent = ConstantPointerNull } ->
-        -- v1 is null
-        n { nullPtrs = v1 `S.insert` nullPtrs n }
-      ICmpInst ICmpEq Value { valueContent = ConstantPointerNull } v2 ->
-        -- v2 is null
-        n { nullPtrs = v2 `S.insert` nullPtrs n }
-      ICmpInst ICmpNe v1 Value { valueContent = ConstantPointerNull } ->
-        -- v1 is not null
-        n { notNullPtrs = v1 `S.insert` notNullPtrs n }
-      ICmpInst ICmpNe Value { valueContent = ConstantPointerNull } v2 ->
-        -- v2 is not null
-        n { notNullPtrs = v2 `S.insert` notNullPtrs n }
-      _ -> n
-    processEdge n (FalseEdge cmp) = case valueContent cmp of
-      ICmpInst ICmpEq v1 Value { valueContent = ConstantPointerNull } ->
-        -- v1 is not null
-        n { notNullPtrs = v1 `S.insert` notNullPtrs n }
-      ICmpInst ICmpEq Value { valueContent = ConstantPointerNull } v2 ->
-        -- v2 is not null
-        n { notNullPtrs = v2 `S.insert` notNullPtrs n }
-      ICmpInst ICmpNe v1 Value { valueContent = ConstantPointerNull } ->
-        -- v1 is null
-        n { nullPtrs = v1 `S.insert` nullPtrs n }
-      ICmpInst ICmpNe Value { valueContent = ConstantPointerNull } v2 ->
-        -- v2 is null
-        n { nullPtrs = v2 `S.insert` nullPtrs n }
-      _ -> n
-    processEdge n _ = n
+structFieldDescriptorFromLoad :: Value -> Maybe FieldDescriptor
+structFieldDescriptorFromLoad Value { valueContent =
+                                         LoadInst { loadAddress =
+                                                       Value { valueContent =
+                                                                  BitcastInst addr } } } =
+  fieldAccessInfo addr
+structFieldDescriptorFromLoad Value { valueContent =
+                                         LoadInst { loadAddress = addr } } =
+  fieldAccessInfo addr
+structFieldDescriptorFromLoad _ = Nothing

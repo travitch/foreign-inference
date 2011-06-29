@@ -1,3 +1,4 @@
+import Data.List ( foldl' )
 import Data.Maybe ( fromJust )
 import qualified Data.HashSet as S
 import System.Environment ( getArgs )
@@ -31,4 +32,5 @@ nullAnalysis m = do
       exitRes' = zip names $ map (S.filter isArgument) (map notNullablePtrs exitRes)
   mapM_ (putStrLn . show) exitRes'
   putStrLn "Fields:"
-  mapM_ (putStrLn . show) $ zip names $ (map notNullableFields exitRes)
+  let allInterestingFields = foldl' S.union S.empty (map notNullableFields exitRes)
+  mapM_ (putStrLn . show) $ S.toList allInterestingFields

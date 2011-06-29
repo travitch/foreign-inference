@@ -1,5 +1,5 @@
 import Data.Maybe ( fromJust )
-import qualified Data.Set as S
+import qualified Data.HashSet as S
 import System.Environment ( getArgs )
 
 
@@ -30,3 +30,5 @@ nullAnalysis m = do
       exitRes = map (\(x,y) -> x y) (zip res (map cfgExitValue cfgs))
       exitRes' = zip names $ map (S.filter isArgument) (map notNullablePtrs exitRes)
   mapM_ (putStrLn . show) exitRes'
+  putStrLn "Fields:"
+  mapM_ (putStrLn . show) $ zip names $ (map notNullableFields exitRes)

@@ -1,6 +1,6 @@
 module Foreign.Inference.Nullability (
   -- * Types
-  NullabilityAnalysis(notNullablePtrs, errorPtrs),
+  NullabilityAnalysis(notNullablePtrs, errorPtrs, notNullableFields),
   -- * Constructor
   emptyNullabilityAnalysis
   ) where
@@ -10,14 +10,22 @@ import Data.List ( foldl' )
 import Data.LLVM.CFG
 import Data.LLVM.Types
 import Data.LLVM.Analysis.Dataflow
-import Data.Set ( Set )
-import qualified Data.Set as S
+import Data.Hashable
+import Data.HashSet ( HashSet )
+import qualified Data.HashSet as S
+
+data FieldDescriptor = FD !Type !Int
+                     deriving (Show, Eq)
+
+instance Hashable FieldDescriptor where
+  hash (FD t i) = hash t `combine` i
 
 data NullabilityAnalysis =
-  NA { nullPtrs :: Set Value
-     , notNullPtrs :: Set Value
-     , notNullablePtrs :: Set Value
-     , errorPtrs :: Set Value
+  NA { nullPtrs :: HashSet Value
+     , notNullPtrs :: HashSet Value
+     , notNullablePtrs :: HashSet Value
+     , errorPtrs :: HashSet Value
+     , notNullableFields :: HashSet FieldDescriptor
      }
   | Top
   deriving (Show, Eq)
@@ -28,6 +36,7 @@ emptyNullabilityAnalysis =
      , notNullPtrs = S.empty
      , notNullablePtrs = S.empty
      , errorPtrs = S.empty
+     , notNullableFields = S.empty
      }
 
 instance MeetSemiLattice NullabilityAnalysis where
@@ -37,6 +46,7 @@ instance MeetSemiLattice NullabilityAnalysis where
                   , notNullPtrs = notNullPtrs s1 `S.intersection` notNullPtrs s2
                   , notNullablePtrs = notNullablePtrs s1 `S.union` notNullablePtrs s2
                   , errorPtrs = errorPtrs s1 `S.union` errorPtrs s2
+                  , notNullableFields = notNullableFields s1 `S.union` notNullableFields s2
                   }
 
 instance BoundedMeetSemiLattice NullabilityAnalysis where
@@ -44,6 +54,42 @@ instance BoundedMeetSemiLattice NullabilityAnalysis where
 
 instance DataflowAnalysis NullabilityAnalysis where
   transfer = transferFunc
+
+-- Can ignore the first index in the GEP, since it just deals with
+-- selecting top-level objects from a base address.  They are all of
+-- the same type.  The rest of the indices delve down.
+fieldAccessInfo :: Value -> Maybe FieldDescriptor
+fieldAccessInfo Value { valueContent =
+                           gep@GetElementPtrInst {
+                             getElementPtrValue = v@Value { valueType = TypePointer it _ }
+                             , getElementPtrIndices = _:ixs
+                             }
+                      } = gepStructField it ixs
+  where
+    gepStructField :: Type -> [Value] -> Maybe FieldDescriptor
+    -- Put this one first since we always want to step through a named
+    -- type, regardless of its indices
+    gepStructField (TypeNamed _ it) indices = gepStructField it indices
+    -- This is the case we care about - the last index in a GEP into a
+    -- struct type.  This is the field that is not nullable.
+    gepStructField st@(TypeStruct its _) [Value { valueContent = ConstantInt ix }] =
+      case length its > fromIntegral ix of
+        True -> Just $ FD st (fromIntegral ix)
+        False -> error "GEP index greater than struct type list length"
+    -- This could happen if the last index is not constant or the
+    -- current "base" isn't a struct type.
+    gepStructField _ [_] = Nothing
+    -- Otherwise, step through the index for this type
+    gepStructField (TypeArray _ it) (_:rest) = gepStructField it rest
+    gepStructField (TypePointer it _) (_:rest) = gepStructField it rest
+    -- We can only resolve constant ints - it is probably an error to
+    -- have a non-constant here with a struct type anyway.
+    gepStructField (TypeStruct its _) ((Value {valueContent = ConstantInt ix}):rest) =
+      case length its > fromIntegral ix of
+        True -> gepStructField (its !! fromIntegral ix) rest
+        False -> error "GEP index greater than struct type list length"
+    gepStructField _ _ = Nothing
+fieldAccessInfo _ = Nothing
 
 -- | If this is a successor of a null test, add a fact.  This probably
 -- also needs to handle getElementPtr, though that really only
@@ -56,9 +102,13 @@ transferFunc na v edges = maybe na' addDerefInfo dereferencedPtr
 
     addDerefInfo p =
       case (S.member p (nullPtrs na'),
-            S.member p (notNullPtrs na')) of
-        (True, _) -> na' { errorPtrs = p `S.insert` errorPtrs na' }
-        (_, False) -> na' { notNullablePtrs = p `S.insert` notNullablePtrs na' }
+            S.member p (notNullPtrs na'),
+            fieldAccessInfo p) of
+        (True, _, _) -> na' { errorPtrs = p `S.insert` errorPtrs na' }
+        (_, False, Nothing) -> na' { notNullablePtrs = p `S.insert` notNullablePtrs na' }
+        (_, False, Just fi) -> na' { notNullablePtrs = p `S.insert` notNullablePtrs na'
+                                   , notNullableFields = fi `S.insert` notNullableFields na'
+                                   }
         _ -> na'
 
     dereferencedPtr = case valueContent v of

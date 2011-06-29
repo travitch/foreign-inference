@@ -117,12 +117,16 @@ addDerefInfo na p =
   case (S.member p (nullPtrs na),
         S.member p (notNullPtrs na),
         --M.lookup p (notNullFields na) ) `debug` printf "NNFs(%s): %s\nNotNull? %s\n" (show p) (show (notNullFields na)) (show (S.member p (notNullPtrs na)))
-        fieldAccessInfo p) of
+        fieldAccessInfo p,
+        M.lookup p (notNullFields na)
+       ) of
 
-    (True, _, _) -> na { errorPtrs = p `S.insert` errorPtrs na }
-    (_, False, Nothing) -> na { notNullablePtrs = p `S.insert` notNullablePtrs na }
-    (_, False, Just fi) -> na { notNullablePtrs = p `S.insert` notNullablePtrs na
-                               , notNullableFields = fi `S.insert` notNullableFields na
+    (True, _, _, _) -> na { errorPtrs = p `S.insert` errorPtrs na }
+    (_, False, Just fi, Nothing) -> na { notNullablePtrs = p `S.insert` notNullablePtrs na
+                              , notNullableFields = fi `S.insert` notNullableFields na
+                              }
+    (_, False, _, _) -> na { notNullablePtrs = p `S.insert` notNullablePtrs na
+                              -- , notNullableFields = fi `S.insert` notNullableFields na
                                }
     _ -> na
 

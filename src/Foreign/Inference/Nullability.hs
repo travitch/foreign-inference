@@ -20,6 +20,7 @@ import Text.Printf
 import Debug.Trace
 debug = flip trace
 
+-- | Uniquely names one field of a struct type.
 data FieldDescriptor = FD !Type !Int
                      deriving (Show, Eq)
 
@@ -28,12 +29,19 @@ instance Hashable FieldDescriptor where
 
 data NullabilityAnalysis =
   NA { nullPtrs :: HashSet Value
+       -- ^ The pointers that are known to be NULL
      , notNullPtrs :: HashSet Value
+       -- ^ The pointers that are known to be non-NULL
      , nullFields :: HashMap Value FieldDescriptor
+       -- ^ Fields that are known to be NULL
      , notNullFields :: HashMap Value FieldDescriptor
+       -- ^ Fields that are known to be not NULL
      , notNullablePtrs :: HashSet Value
+       -- ^ An aggregate field of all pointers known to be not-nullable
      , errorPtrs :: HashSet Value
+       -- ^ An aggregate field of all erroneously dereferenced pointers
      , notNullableFields :: HashSet FieldDescriptor
+       -- ^ An aggregate field of all non-nullable fields
      }
   | Top
   deriving (Show, Eq)
@@ -138,10 +146,22 @@ fieldAccessInfo _ = Nothing
 -- the information for a field access involved in a Load or Store.
 -- This is used in the case that we know a field is being read from or
 -- written to and we need to know which one.
+--
+-- This function transparently handles bitcasts.
 addrFieldAccessInfo :: Value -> Maybe FieldDescriptor
+addrFieldAccessInfo Value {
+  valueContent =
+     LoadInst { loadAddress =
+                   Value { valueContent = BitcastInst addr } } } =
+  fieldAccessInfo addr
+addrFieldAccessInfo Value {
+  valueContent =
+     StoreInst { storeAddress =
+                    Value { valueContent = BitcastInst addr } } } =
+  fieldAccessInfo addr
 addrFieldAccessInfo Value { valueContent = LoadInst { loadAddress = addr } } =
   fieldAccessInfo addr
-addrFieldAccessInfo Value { valueContent = StoreInst { storeAddress = addr } } =
+addrFieldAccessInfo Value { valueContent = StoxxreInst { storeAddress = addr } } =
   fieldAccessInfo addr
 addrFieldAccessInfo _ = Nothing
 
@@ -171,11 +191,17 @@ addDerefInfo na p =
     -- This is an unlikely case, but here we know that a pointer is
     -- NULL and we see that it is being dereferenced.
     (True, _, _, _) -> na { errorPtrs = p `S.insert` errorPtrs na }
+    -- In this case, the value being dereferenced is a pointer that
+    -- was a struct field (fi).  The lookup in notNullFields in this
+    -- case *fails*, meaning that nothing is known about this field
+    -- and that this is a non-nullable field.
     (_, False, Just fi, Nothing) -> na { notNullablePtrs = p `S.insert` notNullablePtrs na
                               , notNullableFields = fi `S.insert` notNullableFields na
                               }
     -- FIXME: probably need to handle a case where there is a guard
     -- for a field of the struct, but not the one being dereferenced.
+
+    -- Here we have just found a non-nullable pointer.
     (_, False, _, _) -> na { notNullablePtrs = p `S.insert` notNullablePtrs na }
     -- Otherwise it isn't interesting and we don't add any information
     _ -> na
@@ -234,16 +260,4 @@ recordNotNullPtr v na = case fldDesc `debug` printf "    Not-null ptr: %s\n  Fld
   where
     na' = na { notNullPtrs = v `S.insert` notNullPtrs na }
     -- ^ We can always record the value we know is null.
-    fldDesc = structFieldDescriptorFromLoad v
-
-
-structFieldDescriptorFromLoad :: Value -> Maybe FieldDescriptor
-structFieldDescriptorFromLoad Value { valueContent =
-                                         LoadInst { loadAddress =
-                                                       Value { valueContent =
-                                                                  BitcastInst addr } } } =
-  fieldAccessInfo addr
-structFieldDescriptorFromLoad Value { valueContent =
-                                         LoadInst { loadAddress = addr } } =
-  fieldAccessInfo addr
-structFieldDescriptorFromLoad _ = Nothing
+    fldDesc = addrFieldAccessInfo v

@@ -103,21 +103,28 @@ fieldAccessInfo Value { valueContent =
     gepStructField _ _ = Nothing
 fieldAccessInfo _ = Nothing
 
+addrFieldAccessInfo :: Value -> Maybe FieldDescriptor
+addrFieldAccessInfo Value { valueContent = LoadInst { loadAddress = addr } } =
+  fieldAccessInfo addr
+addrFieldAccessInfo Value { valueContent = StoreInst { storeAddress = addr } } =
+  fieldAccessInfo addr
+addrFieldAccessInfo _ = Nothing
+
 -- | If this is a successor of a null test, add a fact.  This probably
 -- also needs to handle getElementPtr, though that really only
 -- calculates addresses.  Really, this will have to consult the
 -- results of an alias analysis.
 transferFunc :: NullabilityAnalysis -> Value -> [EdgeCondition] -> NullabilityAnalysis
-transferFunc na v edges = maybe na' (addDerefInfo na') (getDereferencedPtr v)
+transferFunc na v edges = maybe na' (addDerefInfo na' v) (getDereferencedPtr v)
   where
-    na' = foldl' processEdge na edges
+    na' = foldl' processEdge (na `debug` printf "DataFlow for %s (inputs=%s)\n" (show v) (show (notNullFields na))) edges
 
-addDerefInfo :: NullabilityAnalysis -> Value -> NullabilityAnalysis
-addDerefInfo na p =
-  case (S.member p (nullPtrs na),
+addDerefInfo :: NullabilityAnalysis -> Value -> Value -> NullabilityAnalysis
+addDerefInfo na v p =
+  case (S.member (p `debug` printf "  DerefInfo for %s\n  FAI: %s / tbl: %s\n" (show p) (show (fieldAccessInfo p)) (show (notNullFields na))) (nullPtrs na),
         S.member p (notNullPtrs na),
         --M.lookup p (notNullFields na) ) `debug` printf "NNFs(%s): %s\nNotNull? %s\n" (show p) (show (notNullFields na)) (show (S.member p (notNullPtrs na)))
-        fieldAccessInfo p,
+        addrFieldAccessInfo p,
         M.lookup p (notNullFields na)
        ) of
 
@@ -174,7 +181,7 @@ recordNullPtr v na = {- case fldDesc `debug` printf "null ptr: %s\nFldDesc: %s\n
     -- fldDesc = structFieldDescriptorFromLoad v
 
 recordNotNullPtr :: Value -> NullabilityAnalysis -> NullabilityAnalysis
-recordNotNullPtr v na = case fldDesc `debug` printf "Not-null ptr: %s\nFldDesc: %s\n" (show v) (show fldDesc) of
+recordNotNullPtr v na = case fldDesc `debug` printf "    Not-null ptr: %s\n  FldDesc: %s\n" (show v) (show fldDesc) of
   Nothing -> na' -- This comparison doesn't involve a field load
   Just fld -> na' { notNullFields = M.insert v fld (notNullFields na') } -- This one does
   where

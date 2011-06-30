@@ -67,9 +67,40 @@ instance BoundedMeetSemiLattice NullabilityAnalysis where
 instance DataflowAnalysis NullabilityAnalysis where
   transfer = transferFunc
 
--- Can ignore the first index in the GEP, since it just deals with
--- selecting top-level objects from a base address.  They are all of
--- the same type.  The rest of the indices delve down.
+-- | This function extracts a 'FieldDescriptor' from a GetElementPtr
+-- instruction.  The descriptor holds information about the field that
+-- is being referenced by the instruction.  GEP instructions can have
+-- many indices for stepping through aggregate types; the function
+-- returns the *innermost* field reference (and contains no
+-- information about enclosing types).  For example, consider the following
+-- structure and reference:
+--
+-- > struct S {
+-- >   int *p1;
+-- >   int *p2;
+-- > };
+-- >
+-- > struct T {
+-- >   struct S s1;
+-- >   struct S s2;
+-- > };
+-- >
+-- > struct T t;
+-- > x = t.s1.p1;
+--
+-- This will result in a GetElementPtr instruction like the following:
+--
+-- > %1 = getelementptr %struct.T* %t, i32 0, i32 0, i32 0
+--
+-- This function will return the innermost field access: (%struct.S,
+-- 0) since that is the final field being referenced.  Recording just
+-- the innermost field access lets us track a smaller amount of
+-- information: the named field of a struct S in /any/ context is
+-- treated the same.
+--
+-- Note that we can ignore the first index in the GEP, since it just
+-- deals with selecting top-level objects from a base address.  They
+-- are all of the same type.
 fieldAccessInfo :: Value -> Maybe FieldDescriptor
 fieldAccessInfo Value { valueContent =
                              GetElementPtrInst {
@@ -103,6 +134,10 @@ fieldAccessInfo Value { valueContent =
     gepStructField _ _ = Nothing
 fieldAccessInfo _ = Nothing
 
+-- | This function is just a wrapper around 'fieldAccessInfo' to get
+-- the information for a field access involved in a Load or Store.
+-- This is used in the case that we know a field is being read from or
+-- written to and we need to know which one.
 addrFieldAccessInfo :: Value -> Maybe FieldDescriptor
 addrFieldAccessInfo Value { valueContent = LoadInst { loadAddress = addr } } =
   fieldAccessInfo addr
@@ -115,38 +150,55 @@ addrFieldAccessInfo _ = Nothing
 -- calculates addresses.  Really, this will have to consult the
 -- results of an alias analysis.
 transferFunc :: NullabilityAnalysis -> Value -> [EdgeCondition] -> NullabilityAnalysis
-transferFunc na v edges = maybe na' (addDerefInfo na' v) (getDereferencedPtr v)
+transferFunc na v edges = maybe na' (addDerefInfo na') (getDereferencedPtr v)
   where
-    na' = foldl' processEdge (na `debug` printf "DataFlow for %s (inputs=%s)\n" (show v) (show (notNullFields na))) edges
+    na' = foldl' addEdgeInformation na edges
 
-addDerefInfo :: NullabilityAnalysis -> Value -> Value -> NullabilityAnalysis
-addDerefInfo na v p =
-  case (S.member (p `debug` printf "  DerefInfo for %s\n  FAI: %s / tbl: %s\n" (show p) (show (fieldAccessInfo p)) (show (notNullFields na))) (nullPtrs na),
+-- | Add information to the anaylsis state that we gain from observing
+-- a dereferenced pointer.  The basic idea (handled in several cases)
+-- is that if we see a pointer that is known to be non-NULL
+-- dereferenced, that pointer is nullable.  If we see a pointer that
+-- is not known to be non-NULL dereferenced, that pointer is not
+-- nullable (i.e., it must not be NULL to be dereferenced safely).
+addDerefInfo :: NullabilityAnalysis -> Value -> NullabilityAnalysis
+addDerefInfo na p =
+  case (S.member p (nullPtrs na),
         S.member p (notNullPtrs na),
-        --M.lookup p (notNullFields na) ) `debug` printf "NNFs(%s): %s\nNotNull? %s\n" (show p) (show (notNullFields na)) (show (S.member p (notNullPtrs na)))
         addrFieldAccessInfo p,
         M.lookup p (notNullFields na)
        ) of
 
+    -- This is an unlikely case, but here we know that a pointer is
+    -- NULL and we see that it is being dereferenced.
     (True, _, _, _) -> na { errorPtrs = p `S.insert` errorPtrs na }
     (_, False, Just fi, Nothing) -> na { notNullablePtrs = p `S.insert` notNullablePtrs na
                               , notNullableFields = fi `S.insert` notNullableFields na
                               }
-    (_, False, _, _) -> na { notNullablePtrs = p `S.insert` notNullablePtrs na
-                              -- , notNullableFields = fi `S.insert` notNullableFields na
-                               }
+    -- FIXME: probably need to handle a case where there is a guard
+    -- for a field of the struct, but not the one being dereferenced.
+    (_, False, _, _) -> na { notNullablePtrs = p `S.insert` notNullablePtrs na }
+    -- Otherwise it isn't interesting and we don't add any information
     _ -> na
 
+-- | Get the pointer that is being dereferenced by this Load or Store
+-- instruction.  If this is not a load or store instruction, just
+-- return Nothing.
 getDereferencedPtr :: Value -> Maybe Value
 getDereferencedPtr v = case valueContent v of
   StoreInst { storeAddress = dest@Value { valueType = TypePointer _ _ } } -> Just dest
   LoadInst { loadAddress = src@Value { valueType = TypePointer _ _ } } -> Just src
   _ -> Nothing
 
+-- | Add information about null/non null pointers to the analysis
+-- state that we learn from incoming edges.  In particular, this looks
+-- at edges induced by a comparison instruction followed by a branch.
+-- If the comparison was comparing a pointer against NULL, we gain
+-- information about that pointer on this branch.
+--
 -- Ignore floating point comparisons - only integer comparisons
 -- are used for pointers.
-processEdge :: NullabilityAnalysis -> EdgeCondition -> NullabilityAnalysis
-processEdge n (TrueEdge cmp) = case valueContent cmp of
+addEdgeInformation :: NullabilityAnalysis -> EdgeCondition -> NullabilityAnalysis
+addEdgeInformation n (TrueEdge cmp) = case valueContent cmp of
   ICmpInst ICmpEq v1 Value { valueContent = ConstantPointerNull } ->
     recordNullPtr v1 n
   ICmpInst ICmpEq Value { valueContent = ConstantPointerNull } v2 ->
@@ -156,7 +208,7 @@ processEdge n (TrueEdge cmp) = case valueContent cmp of
   ICmpInst ICmpNe Value { valueContent = ConstantPointerNull } v2 ->
     recordNotNullPtr v2 n
   _ -> n
-processEdge n (FalseEdge cmp) = case valueContent cmp of
+addEdgeInformation n (FalseEdge cmp) = case valueContent cmp of
   ICmpInst ICmpEq v1 Value { valueContent = ConstantPointerNull } ->
     recordNotNullPtr v1 n
   ICmpInst ICmpEq Value { valueContent = ConstantPointerNull } v2 ->
@@ -166,20 +218,15 @@ processEdge n (FalseEdge cmp) = case valueContent cmp of
   ICmpInst ICmpNe Value { valueContent = ConstantPointerNull } v2 ->
     recordNullPtr v2 n
   _ -> n
-processEdge n _ = n
+addEdgeInformation n _ = n
 
 -- | Record the given value as known-to-be-null in the analysis state.
--- If the value @v@ also has information about a field that is null,
--- record that too.
 recordNullPtr :: Value -> NullabilityAnalysis -> NullabilityAnalysis
-recordNullPtr v na = {- case fldDesc `debug` printf "null ptr: %s\nFldDesc: %s\n" (show v) (show fldDesc) of
-  Nothing -> na' -- This comparison doesn't involve a field load
-  Just fld -> na' { nullFields = M.insert v fld (nullFields na') } -- This one does
-  where
-    na' =-} na { nullPtrs = v `S.insert` nullPtrs na }
-    -- -- ^ We can always record the value we know is null.
-    -- fldDesc = structFieldDescriptorFromLoad v
+recordNullPtr v na = na { nullPtrs = v `S.insert` nullPtrs na }
 
+-- | Record the given value as known-to-be-not-null in the analysis state.
+-- If the value @v@ also has information about a field that is not null,
+-- record that too.
 recordNotNullPtr :: Value -> NullabilityAnalysis -> NullabilityAnalysis
 recordNotNullPtr v na = case fldDesc `debug` printf "    Not-null ptr: %s\n  FldDesc: %s\n" (show v) (show fldDesc) of
   Nothing -> na' -- This comparison doesn't involve a field load

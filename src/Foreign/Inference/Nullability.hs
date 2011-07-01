@@ -161,7 +161,7 @@ addrFieldAccessInfo Value {
   fieldAccessInfo addr
 addrFieldAccessInfo Value { valueContent = LoadInst { loadAddress = addr } } =
   fieldAccessInfo addr
-addrFieldAccessInfo Value { valueContent = StoxxreInst { storeAddress = addr } } =
+addrFieldAccessInfo Value { valueContent = StoreInst { storeAddress = addr } } =
   fieldAccessInfo addr
 addrFieldAccessInfo _ = Nothing
 

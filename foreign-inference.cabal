@@ -31,7 +31,7 @@ library
 test-suite NullAnalysisTests
   default-language: Haskell2010
   type: exitcode-stdio-1.0
-  main-is: NullAnalysisTests
+  main-is: NullAnalysisTests.hs
   hs-source-dirs: tests
   build-depends: base > 3 && < 5, containers, llvm-analysis, foreign-inference,
                  unordered-containers, HUnit, test-framework, test-framework-hunit

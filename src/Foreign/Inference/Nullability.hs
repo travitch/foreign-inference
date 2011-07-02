@@ -16,10 +16,6 @@ import Data.HashSet ( HashSet )
 import qualified Data.HashSet as S
 import qualified Data.HashMap.Strict as M
 
-import Text.Printf
-import Debug.Trace
-debug = flip trace
-
 -- | Uniquely names one field of a struct type.
 data FieldDescriptor = FD !Type !Int
                      deriving (Show, Eq)
@@ -151,19 +147,67 @@ fieldAccessInfo _ = Nothing
 addrFieldAccessInfo :: Value -> Maybe FieldDescriptor
 addrFieldAccessInfo Value {
   valueContent =
-     LoadInst { loadAddress =
-                   Value { valueContent = BitcastInst addr } } } =
+     LoadInst {
+       loadAddress =
+          Value { valueContent = BitcastInst addr } } } =
   fieldAccessInfo addr
 addrFieldAccessInfo Value {
   valueContent =
-     StoreInst { storeAddress =
-                    Value { valueContent = BitcastInst addr } } } =
+     StoreInst {
+       storeAddress =
+          Value { valueContent = BitcastInst addr } } } =
   fieldAccessInfo addr
 addrFieldAccessInfo Value { valueContent = LoadInst { loadAddress = addr } } =
   fieldAccessInfo addr
 addrFieldAccessInfo Value { valueContent = StoreInst { storeAddress = addr } } =
   fieldAccessInfo addr
 addrFieldAccessInfo _ = Nothing
+
+-- | If the input is a Load or Store of an address calculation (GEP),
+-- return the base address.  This is the first pointer in a chain
+-- being dereferenced.
+addrFieldAccessBase :: Value -> Maybe Value
+addrFieldAccessBase Value {
+  valueContent =
+     LoadInst {
+       loadAddress =
+          Value {
+            valueContent =
+               GetElementPtrInst {
+                 getElementPtrValue = v
+                                      }}}} = Just v
+addrFieldAccessBase Value {
+  valueContent =
+     StoreInst {
+       storeAddress =
+          Value {
+            valueContent =
+               GetElementPtrInst {
+                 getElementPtrValue = v
+                                      }}}} = Just v
+addrFieldAccessBase Value {
+  valueContent =
+     LoadInst {
+       loadAddress =
+          Value {
+            valueContent =
+               BitcastInst Value {
+                 valueContent =
+                    GetElementPtrInst {
+                      getElementPtrValue = v
+                      }}}}} = Just v
+addrFieldAccessBase Value {
+  valueContent =
+     StoreInst {
+       storeAddress =
+          Value {
+            valueContent =
+               BitcastInst Value {
+                 valueContent =
+                    GetElementPtrInst {
+                      getElementPtrValue = v
+                      }}}}} = Just v
+addrFieldAccessBase _ = Nothing
 
 -- | If this is a successor of a null test, add a fact.  This probably
 -- also needs to handle getElementPtr, though that really only
@@ -195,9 +239,13 @@ addDerefInfo na p =
     -- was a struct field (fi).  The lookup in notNullFields in this
     -- case *fails*, meaning that nothing is known about this field
     -- and that this is a non-nullable field.
-    (_, False, Just fi, Nothing) -> na { notNullablePtrs = p `S.insert` notNullablePtrs na
-                              , notNullableFields = fi `S.insert` notNullableFields na
-                              }
+    (_, False, Just fi, Nothing) ->
+      let na' = na { notNullablePtrs = p `S.insert` notNullablePtrs na
+                   , notNullableFields = fi `S.insert` notNullableFields na
+                   }
+      in case addrFieldAccessBase p of
+        Nothing -> na'
+        Just base -> na' { notNullablePtrs = base `S.insert` notNullablePtrs na' }
     -- FIXME: probably need to handle a case where there is a guard
     -- for a field of the struct, but not the one being dereferenced.
 
@@ -205,6 +253,7 @@ addDerefInfo na p =
     (_, False, _, _) -> na { notNullablePtrs = p `S.insert` notNullablePtrs na }
     -- Otherwise it isn't interesting and we don't add any information
     _ -> na
+
 
 -- | Get the pointer that is being dereferenced by this Load or Store
 -- instruction.  If this is not a load or store instruction, just
@@ -254,7 +303,7 @@ recordNullPtr v na = na { nullPtrs = v `S.insert` nullPtrs na }
 -- If the value @v@ also has information about a field that is not null,
 -- record that too.
 recordNotNullPtr :: Value -> NullabilityAnalysis -> NullabilityAnalysis
-recordNotNullPtr v na = case fldDesc `debug` printf "    Not-null ptr: %s\n  FldDesc: %s\n" (show v) (show fldDesc) of
+recordNotNullPtr v na = case fldDesc of
   Nothing -> na' -- This comparison doesn't involve a field load
   Just fld -> na' { notNullFields = M.insert v fld (notNullFields na') } -- This one does
   where

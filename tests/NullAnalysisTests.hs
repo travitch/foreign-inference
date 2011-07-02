@@ -30,6 +30,21 @@ notNullParameterTest m = M.fromList exitRes''
     exitRes' = map (S.map (show . fromJust . valueName) . S.filter isArgument . S.fromList . HS.toList) (map notNullablePtrs exitRes)
     exitRes'' = zip names exitRes'
 
+errorParameterTest :: Module -> Map String StringSet
+errorParameterTest m = M.fromList exitRes''
+  where
+    fs = moduleDefinedFunctions m
+    cfgs = map mkCFG fs
+    names = map (show . fromJust . valueName) fs
+    na0 = emptyNullabilityAnalysis
+    res = map (forwardDataflow na0) cfgs
+    -- get the results at the exit node for each function by applying
+    -- the 'res' function to the exit value for each function.
+    exitRes = map (\(x,y) -> x y) (zip res (map cfgExitValue cfgs))
+    exitRes' = map (S.map (show . fromJust . valueName) . S.filter isArgument . S.fromList . HS.toList) (map errorPtrs exitRes)
+    exitRes'' = zip names exitRes'
+
+
 isArgument :: Value -> Bool
 isArgument Value { valueContent = Argument _ } = True
 isArgument _ = False
@@ -39,5 +54,18 @@ expectedMapper = (++ ".expected")
 
 main :: IO ()
 main = do
-  let pattern = "tests/nullability/params/*.c"
-  testAgainstExpected pattern expectedMapper True notNullParameterTest assertEqual
+  let notNullPattern = "tests/nullability/params/*.c"
+      errorPattern =   "tests/nullability/errorParams/*.c"
+  testAgainstExpected [ TestDescriptor { testPattern = notNullPattern
+                                       , testExpectedMapping = expectedMapper
+                                       , testOptimized = True
+                                       , testResultBuilder = notNullParameterTest
+                                       , testResultComparator = assertEqual
+                                       }
+                      , TestDescriptor { testPattern = errorPattern
+                                       , testExpectedMapping = expectedMapper
+                                       , testOptimized = True
+                                       , testResultBuilder = errorParameterTest
+                                       , testResultComparator = assertEqual
+                                       }
+                      ]

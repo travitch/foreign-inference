@@ -1,6 +1,7 @@
 module Foreign.Inference.Nullability (
   -- * Types
   NullabilityAnalysis(notNullablePtrs, errorPtrs, notNullableFields),
+  FieldDescriptor(..),
   -- * Constructor
   emptyNullabilityAnalysis
   ) where
@@ -18,7 +19,7 @@ import qualified Data.HashMap.Strict as M
 
 -- | Uniquely names one field of a struct type.
 data FieldDescriptor = FD !Type !Int
-                     deriving (Show, Eq)
+                     deriving (Show, Eq, Ord)
 
 instance Hashable FieldDescriptor where
   hash (FD t i) = hash t `combine` i

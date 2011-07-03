@@ -87,7 +87,7 @@ main = do
                       , TestDescriptor { testPattern = fieldPattern
                                        , testExpectedMapping = expectedMapper
                                        , testOptimized = True
-                                       , testResultBuilder = errorParameterTest
+                                       , testResultBuilder = notNullFieldTest
                                        , testResultComparator = assertEqual
                                        }
                       ]

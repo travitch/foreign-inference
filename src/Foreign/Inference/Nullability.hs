@@ -112,31 +112,37 @@ fieldAccessInfo Value { valueContent =
                                getElementPtrValue = Value { valueType = TypePointer it0 _ }
                                , getElementPtrIndices = _:ixs
                                }
-                        } = gepStructField it0 ixs
+                        } = gepStructField it0 Nothing ixs
   where
-    gepStructField :: Type -> [Value] -> Maybe FieldDescriptor
+    -- The second (optional) Type parameter is the enclosing
+    -- NamedType, if any.  This is only really useful for the base
+    -- case if it is actually a struct with a name, and improves
+    -- reporting.  This way, fields are reported in terms of their
+    -- named type instead of the anonymous Struct type.  Other cases
+    -- can ignore this parameter and just pass in Nothing.
+    gepStructField :: Type -> Maybe Type -> [Value] -> Maybe FieldDescriptor
     -- Put this one first since we always want to step through a named
     -- type, regardless of its indices
-    gepStructField (TypeNamed _ it) indices = gepStructField it indices
+    gepStructField nt@(TypeNamed _ it) _ indices = gepStructField it (Just nt) indices
     -- This is the case we care about - the last index in a GEP into a
     -- struct type.  This is the field that is not nullable.
-    gepStructField st@(TypeStruct its _) [Value { valueContent = ConstantInt ix }] =
+    gepStructField st@(TypeStruct its _) mNamedType [Value { valueContent = ConstantInt ix }] =
       case length its > fromIntegral ix of
-        True -> Just $ FD st (fromIntegral ix)
+        True -> Just $ FD (maybe st id mNamedType) (fromIntegral ix)
         False -> error "GEP index greater than struct type list length"
     -- This could happen if the last index is not constant or the
     -- current "base" isn't a struct type.
-    gepStructField _ [_] = Nothing
+    gepStructField _ _ [_] = Nothing
     -- Otherwise, step through the index for this type
-    gepStructField (TypeArray _ it) (_:rest) = gepStructField it rest
-    gepStructField (TypePointer it _) (_:rest) = gepStructField it rest
+    gepStructField (TypeArray _ it) _ (_:rest) = gepStructField it Nothing rest
+    gepStructField (TypePointer it _) _ (_:rest) = gepStructField it Nothing rest
     -- We can only resolve constant ints - it is probably an error to
     -- have a non-constant here with a struct type anyway.
-    gepStructField (TypeStruct its _) ((Value {valueContent = ConstantInt ix}):rest) =
+    gepStructField (TypeStruct its _) _ ((Value {valueContent = ConstantInt ix}):rest) =
       case length its > fromIntegral ix of
-        True -> gepStructField (its !! fromIntegral ix) rest
+        True -> gepStructField (its !! fromIntegral ix) Nothing rest
         False -> error "GEP index greater than struct type list length"
-    gepStructField _ _ = Nothing
+    gepStructField _ _ _ = Nothing
 fieldAccessInfo _ = Nothing
 
 -- | This function is just a wrapper around 'fieldAccessInfo' to get

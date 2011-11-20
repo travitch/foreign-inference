@@ -6,11 +6,13 @@ import System.Environment ( getArgs )
 
 import Data.LLVM
 import Data.LLVM.CFG
-import Data.LLVM.Types
 import Data.LLVM.Analysis.Dataflow
 
 import Foreign.Inference.Nullability
 
+main = putStrLn "blank"
+
+{-
 main :: IO ()
 main = do
   [ fname ] <- getArgs
@@ -34,3 +36,4 @@ nullAnalysis m = do
   putStrLn "Fields:"
   let allInterestingFields = foldl' S.union S.empty (map notNullableFields exitRes)
   mapM_ (putStrLn . show) $ S.toList allInterestingFields
+-}

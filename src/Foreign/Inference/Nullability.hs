@@ -1,21 +1,23 @@
 module Foreign.Inference.Nullability (
   -- * Types
-  NullabilityAnalysis(notNullablePtrs, errorPtrs, notNullableFields),
-  FieldDescriptor(..),
-  -- * Constructor
-  emptyNullabilityAnalysis
+  -- NullabilityAnalysis(notNullablePtrs, errorPtrs, notNullableFields),
+  -- FieldDescriptor(..),
+  -- -- * Constructor
+  -- emptyNullabilityAnalysis
   ) where
 
 import Algebra.Lattice
 import Data.List ( foldl' )
 import Data.LLVM.CFG
-import Data.LLVM.Types
+import Data.LLVM
 import Data.LLVM.Analysis.Dataflow
 import Data.Hashable
 import Data.HashMap.Strict ( HashMap )
 import Data.HashSet ( HashSet )
 import qualified Data.HashSet as S
 import qualified Data.HashMap.Strict as M
+
+{-
 
 -- | Uniquely names one field of a struct type.
 data FieldDescriptor = FD !Type !Int
@@ -182,7 +184,7 @@ addrFieldAccessBase Value {
             valueContent =
                GetElementPtrInst {
                  getElementPtrValue = v
-                                      }}}} = Just v
+                 }}}} = Just v
 addrFieldAccessBase Value {
   valueContent =
      StoreInst {
@@ -191,7 +193,7 @@ addrFieldAccessBase Value {
             valueContent =
                GetElementPtrInst {
                  getElementPtrValue = v
-                                      }}}} = Just v
+                 }}}} = Just v
 addrFieldAccessBase Value {
   valueContent =
      LoadInst {
@@ -220,7 +222,7 @@ addrFieldAccessBase _ = Nothing
 -- also needs to handle getElementPtr, though that really only
 -- calculates addresses.  Really, this will have to consult the
 -- results of an alias analysis.
-transferFunc :: NullabilityAnalysis -> Value -> [EdgeCondition] -> NullabilityAnalysis
+transferFunc :: NullabilityAnalysis -> Value -> [CFGEdge] -> NullabilityAnalysis
 transferFunc na v edges = maybe na' (addDerefInfo na') (getDereferencedPtr v)
   where
     na' = foldl' addEdgeInformation na edges
@@ -232,7 +234,7 @@ transferFunc na v edges = maybe na' (addDerefInfo na') (getDereferencedPtr v)
 -- is not known to be non-NULL dereferenced, that pointer is not
 -- nullable (i.e., it must not be NULL to be dereferenced safely).
 addDerefInfo :: NullabilityAnalysis -> Value -> NullabilityAnalysis
-addDerefInfo na p =
+addDerefInfo na rawPtr =
   case (S.member p (nullPtrs na),
         S.member p (notNullPtrs na),
         addrFieldAccessInfo p,
@@ -250,16 +252,19 @@ addDerefInfo na p =
       let na' = na { notNullablePtrs = p `S.insert` notNullablePtrs na
                    , notNullableFields = fi `S.insert` notNullableFields na
                    }
-      in case addrFieldAccessBase p of
+      in case addrFieldAccessBase rawPtr of
         Nothing -> na'
         Just base -> na' { notNullablePtrs = base `S.insert` notNullablePtrs na' }
-    -- FIXME: probably need to handle a case where there is a guard
-    -- for a field of the struct, but not the one being dereferenced.
 
     -- Here we have just found a non-nullable pointer.
     (_, False, _, _) -> na { notNullablePtrs = p `S.insert` notNullablePtrs na }
     -- Otherwise it isn't interesting and we don't add any information
     _ -> na
+  where
+    p = case valueContent rawPtr of
+      GetElementPtrInst { getElementPtrValue = ptrBase } -> ptrBase
+      BitcastInst Value { valueContent = GetElementPtrInst { getElementPtrValue = ptrBase } } -> ptrBase
+      _ -> rawPtr
 
 
 -- | Get the pointer that is being dereferenced by this Load or Store
@@ -267,9 +272,9 @@ addDerefInfo na p =
 -- return Nothing.
 getDereferencedPtr :: Value -> Maybe Value
 getDereferencedPtr v = case valueContent v of
-  StoreInst { storeAddress = dest@Value { valueType = TypePointer _ _ } } -> Just dest
-  LoadInst { loadAddress = src@Value { valueType = TypePointer _ _ } } -> Just src
-  _ -> Nothing
+      StoreInst { storeAddress = dest@Value { valueType = TypePointer _ _ } } -> Just dest
+      LoadInst { loadAddress = src@Value { valueType = TypePointer _ _ } } -> Just src
+      _ -> Nothing
 
 -- | Add information about null/non null pointers to the analysis
 -- state that we learn from incoming edges.  In particular, this looks
@@ -279,7 +284,7 @@ getDereferencedPtr v = case valueContent v of
 --
 -- Ignore floating point comparisons - only integer comparisons
 -- are used for pointers.
-addEdgeInformation :: NullabilityAnalysis -> EdgeCondition -> NullabilityAnalysis
+addEdgeInformation :: NullabilityAnalysis -> CFGEdge -> NullabilityAnalysis
 addEdgeInformation n (TrueEdge cmp) = case valueContent cmp of
   ICmpInst ICmpEq v1 Value { valueContent = ConstantPointerNull } ->
     recordNullPtr v1 n
@@ -317,3 +322,5 @@ recordNotNullPtr v na = case fldDesc of
     na' = na { notNullPtrs = v `S.insert` notNullPtrs na }
     -- ^ We can always record the value we know is null.
     fldDesc = addrFieldAccessInfo v
+
+-}

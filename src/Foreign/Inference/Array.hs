@@ -143,7 +143,7 @@ getBaseType base = case valueType base of
 -- | Update the summary for an argument with a depth
 addToSummary :: Function -> Int -> Argument -> ArrayParamSummary -> ArrayParamSummary
 addToSummary f depth arg summ =
-  M.insert (show (functionName f), show (argumentName arg)) depth summ
+  M.insertWith max (show (functionName f), show (argumentName arg)) depth summ
 
 traceBackwards :: Map Value (Value, [Value], EscapeGraph) -> Value -> Int -> Int
 traceBackwards baseResultMap result depth =

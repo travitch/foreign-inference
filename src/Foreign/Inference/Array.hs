@@ -66,26 +66,38 @@ traceFromBases :: Function
                   -> (Value, [Value], EscapeGraph)
                   -> ArrayParamSummary
 traceFromBases f baseResultMap summary base (result, _, eg) =
-  case argumentsForBase of
+  case argumentsForValue eg base of
     [] -> summary
     args ->
       let depth = traceBackwards baseResultMap result 1
       in foldr (addToSummary f depth) summary args
-  where
-    ptNode = case valueContent base of
-      InstructionC LoadInst { loadAddress = la } -> la
-      ArgumentC a -> Value a
-    baseAliases = case valueInGraph eg ptNode of
-      True -> map escapeNodeValue $ S.toList $ localPointsTo eg ptNode `debug` printf "Node %d == %s" (valueUniqueId ptNode) (show ptNode )
-      False -> []
-    argumentsForBase = mapMaybe (argumentForBase f) baseAliases `debug` show baseAliases
 
--- | If the given base value is an Argument, convert it to an Argument
--- and return it.  Otherwise, return Nothing.x
-argumentForBase :: IsValue a => Function -> a -> Maybe Argument
-argumentForBase f base = case valueContent base of
-  ArgumentC a -> if argumentFunction a == f then Just a else Nothing
-  _ -> Nothing
+-- | Figure out which arguments, if any, correspond to the given value
+-- in the points-to escape graph (flow-sensitive points-to
+-- information).
+--
+-- This function makes a best effort to handle struct references.
+argumentsForValue :: EscapeGraph -> Value -> [Argument]
+argumentsForValue eg v =
+  mapMaybe extractArgument baseAliases `debug` show baseAliases
+  where
+  ptNode = case valueContent v of
+    InstructionC AllocaInst {} -> v
+    InstructionC LoadInst { loadAddress =
+      (valueContent' -> InstructionC i@GetElementPtrInst {})} -> Value i `debug` "Base is load gep"
+    InstructionC LoadInst { loadAddress = la } -> la
+    GlobalVariableC g -> Value g
+    ExternalValueC e -> Value e
+    ArgumentC a -> Value a
+  baseAliases = case valueInGraph eg ptNode of
+    False -> []
+    True -> map escapeNodeValue $ S.toList $ localPointsTo eg ptNode  `debug` printf "Node %d == %s" (valueUniqueId ptNode) (show ptNode )
+  -- | If the given base value is an Argument, convert it to an Argument
+  -- and return it.  Otherwise, return Nothing.x
+  extractArgument :: IsValue a => a -> Maybe Argument
+  extractArgument val = case valueContent val of
+    ArgumentC a -> Just a
+    _ -> Nothing
 
 -- | Update the summary for an argument with a depth
 addToSummary :: Function -> Int -> Argument -> ArrayParamSummary -> ArrayParamSummary

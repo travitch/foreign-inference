@@ -21,10 +21,6 @@ import Data.LLVM.CallGraph
 import Data.LLVM.Analysis.CallGraphSCCTraversal
 import Data.LLVM.Analysis.Escape
 
-import Text.Printf
-import Debug.Trace
-debug = flip trace
-
 type ArrayParamSummary = Map (String, String) Int
 
 -- | The analysis to generate array parameter summaries for an entire
@@ -46,7 +42,7 @@ arrayAnalysis :: EscapeResult
                  -> ArrayParamSummary
                  -> ArrayParamSummary
 arrayAnalysis er f summary =
-  M.foldlWithKey' (traceFromBases f baseResultMap) summary baseResultMap -- `debug` show baseResultMap
+  M.foldlWithKey' (traceFromBases f baseResultMap) summary baseResultMap
   where
     insts = concatMap basicBlockInstructions (functionBody f)
     basesAndOffsets = mapMaybe (isArrayDeref er) insts
@@ -72,31 +68,6 @@ traceFromBases f baseResultMap summary base (result, _, eg) =
       let depth = traceBackwards baseResultMap result 1
       in foldr (addToSummary f depth) summary args
 
--- | Figure out which arguments, if any, correspond to the given value
--- in the points-to escape graph (flow-sensitive points-to
--- information).
---
--- This function makes a best effort to handle struct references.
-    {-
-argumentsForValue :: EscapeGraph -> Value -> [Argument]
-argumentsForValue eg v =
-  mapMaybe extractArgument baseAliases `debug` show baseAliases
-  where
-  ptNode = case valueContent' v of
-    InstructionC AllocaInst {} -> v
-    InstructionC LoadInst { loadAddress = la } -> getLoadedValue eg la
-    {-
-    InstructionC LoadInst { loadAddress =
-      (valueContent' -> InstructionC i@GetElementPtrInst {})} -> Value i `debug` "Base is load gep"
-    InstructionC LoadInst { loadAddress = la } -> la
--}
-    GlobalVariableC g -> Value g
-    ExternalValueC e -> Value e
-    ArgumentC a -> Value a
-  baseAliases = case valueInGraph eg ptNode of
-    False -> []
-    True -> map escapeNodeValue $ S.toList $ localPointsTo eg ptNode  `debug` printf "Node %d == %s" (valueUniqueId ptNode) (show ptNode )
--}
 
 -- | If the given base value is an Argument, convert it to an Argument
 -- and return it.  Otherwise, return Nothing.
@@ -105,6 +76,12 @@ extractArgument val = case valueContent' val of
   ArgumentC a -> Just a
   _ -> Nothing
 
+-- | Figure out which arguments, if any, correspond to the given value
+-- in the points-to escape graph (flow-sensitive points-to
+-- information).
+--
+-- This function makes a best effort to handle struct references.
+argumentsForValue :: EscapeGraph -> Value -> [Argument]
 argumentsForValue eg v =
   case valueContent' v of
     InstructionC LoadInst { loadAddress = la } ->
@@ -113,6 +90,7 @@ argumentsForValue eg v =
         as -> as
     _ -> argumentsForValue' eg v
 
+argumentsForValue' :: EscapeGraph -> Value -> [Argument]
 argumentsForValue' eg v =
   case valueInGraph eg v of
     False -> []
@@ -121,6 +99,7 @@ argumentsForValue' eg v =
           targetVals = map escapeNodeValue targets
       in mapMaybe extractArgument targetVals
 
+argumentsForLoad :: EscapeGraph -> Value -> [Argument]
 argumentsForLoad eg v =
   case getLoadedValue eg v of
     Nothing -> []
@@ -131,6 +110,7 @@ argumentsForLoad eg v =
             targetVals = map escapeNodeValue targets
         in mapMaybe extractArgument targetVals
 
+getLoadedValue :: EscapeGraph -> Value -> Maybe Value
 getLoadedValue eg la = case valueContent' la of
   ConstantC ConstantValue { constantInstruction =
     GetElementPtrInst { getElementPtrValue = base

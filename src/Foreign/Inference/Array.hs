@@ -132,19 +132,28 @@ argumentsForLoad eg v =
         in mapMaybe extractArgument targetVals
 
 getLoadedValue eg la = case valueContent' la of
+  ConstantC ConstantValue { constantInstruction =
+    GetElementPtrInst { getElementPtrValue = base
+                      , getElementPtrIndices = idxs
+                      } } ->
+    getGepBase base idxs
   InstructionC GetElementPtrInst { getElementPtrValue = base
                                  , getElementPtrIndices = idxs
                                  } ->
-    case valueInGraph eg base of
-      False -> Just la
-      True -> case idxs of
-        [] -> error ("ArrayAnalysis: GEP with no indices: " ++ show la)
-        [_] -> followEscapeEdge eg base Array
-        (valueContent -> ConstantC ConstantInt { constantIntValue = 0}) :
-          (valueContent -> ConstantC ConstantInt { constantIntValue = fieldNo}) : _ ->
-            followEscapeEdge eg base (Field (fromIntegral fieldNo) (getBaseType base))
-        _ -> followEscapeEdge eg base Array
+    getGepBase base idxs
   _ -> Just la
+  where
+    getGepBase base idxs =
+      case valueInGraph eg base of
+        False -> Just la
+        True -> case idxs of
+          [] -> error ("ArrayAnalysis: GEP with no indices: " ++ show la)
+          [_] -> followEscapeEdge eg base Array
+          (valueContent -> ConstantC ConstantInt { constantIntValue = 0}) :
+            (valueContent -> ConstantC ConstantInt { constantIntValue = fieldNo}) : _ ->
+              followEscapeEdge eg base (Field (fromIntegral fieldNo) (getBaseType base))
+          _ -> followEscapeEdge eg base Array
+
 
 getBaseType :: Value -> Type
 getBaseType base = case valueType base of

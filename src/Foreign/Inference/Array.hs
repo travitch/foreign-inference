@@ -77,27 +77,79 @@ traceFromBases f baseResultMap summary base (result, _, eg) =
 -- information).
 --
 -- This function makes a best effort to handle struct references.
+    {-
 argumentsForValue :: EscapeGraph -> Value -> [Argument]
 argumentsForValue eg v =
   mapMaybe extractArgument baseAliases `debug` show baseAliases
   where
-  ptNode = case valueContent v of
+  ptNode = case valueContent' v of
     InstructionC AllocaInst {} -> v
+    InstructionC LoadInst { loadAddress = la } -> getLoadedValue eg la
+    {-
     InstructionC LoadInst { loadAddress =
       (valueContent' -> InstructionC i@GetElementPtrInst {})} -> Value i `debug` "Base is load gep"
     InstructionC LoadInst { loadAddress = la } -> la
+-}
     GlobalVariableC g -> Value g
     ExternalValueC e -> Value e
     ArgumentC a -> Value a
   baseAliases = case valueInGraph eg ptNode of
     False -> []
     True -> map escapeNodeValue $ S.toList $ localPointsTo eg ptNode  `debug` printf "Node %d == %s" (valueUniqueId ptNode) (show ptNode )
-  -- | If the given base value is an Argument, convert it to an Argument
-  -- and return it.  Otherwise, return Nothing.x
-  extractArgument :: IsValue a => a -> Maybe Argument
-  extractArgument val = case valueContent val of
-    ArgumentC a -> Just a
-    _ -> Nothing
+-}
+
+-- | If the given base value is an Argument, convert it to an Argument
+-- and return it.  Otherwise, return Nothing.
+extractArgument :: IsValue a => a -> Maybe Argument
+extractArgument val = case valueContent' val of
+  ArgumentC a -> Just a
+  _ -> Nothing
+
+argumentsForValue eg v =
+  case valueContent' v of
+    InstructionC LoadInst { loadAddress = la } ->
+      case argumentsForValue' eg la of
+        [] -> argumentsForLoad eg la
+        as -> as
+    _ -> argumentsForValue' eg v
+
+argumentsForValue' eg v =
+  case valueInGraph eg v of
+    False -> []
+    True ->
+      let targets = S.toList $ localPointsTo eg v
+          targetVals = map escapeNodeValue targets
+      in mapMaybe extractArgument targetVals
+
+argumentsForLoad eg v =
+  case getLoadedValue eg v of
+    Nothing -> []
+    Just base -> case valueInGraph eg base of
+      False -> []
+      True ->
+        let targets = S.toList $ localPointsTo eg base
+            targetVals = map escapeNodeValue targets
+        in mapMaybe extractArgument targetVals
+
+getLoadedValue eg la = case valueContent' la of
+  InstructionC GetElementPtrInst { getElementPtrValue = base
+                                 , getElementPtrIndices = idxs
+                                 } ->
+    case valueInGraph eg base of
+      False -> Just la
+      True -> case idxs of
+        [] -> error ("ArrayAnalysis: GEP with no indices: " ++ show la)
+        [_] -> followEscapeEdge eg base Array
+        (valueContent -> ConstantC ConstantInt { constantIntValue = 0}) :
+          (valueContent -> ConstantC ConstantInt { constantIntValue = fieldNo}) : _ ->
+            followEscapeEdge eg base (Field (fromIntegral fieldNo) (getBaseType base))
+        _ -> followEscapeEdge eg base Array
+  _ -> Just la
+
+getBaseType :: Value -> Type
+getBaseType base = case valueType base of
+  TypePointer t _ -> t
+  _ -> error ("Array base value has illegal type: " ++ show base)
 
 -- | Update the summary for an argument with a depth
 addToSummary :: Function -> Int -> Argument -> ArrayParamSummary -> ArrayParamSummary

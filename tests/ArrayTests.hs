@@ -1,5 +1,6 @@
 module Main ( main ) where
 
+import Data.Map ( mapKeys )
 import System.FilePath ( (<.>) )
 import Test.HUnit ( assertEqual )
 
@@ -25,8 +26,13 @@ testDescriptors = [ TestDescriptor { testPattern = "tests/arrays/*.c"
                                    }
                   ]
 
-analyzeArrays m = identifyArrays cg er
+analyzeArrays m = convertSummary $ identifyArrays cg er
   where
     pta = runPointsToAnalysis m
     cg = mkCallGraph m pta []
     er = runEscapeAnalysis m cg
+
+convertSummary = mapKeys argToString
+argToString a = (show (functionName f), show (argumentName a))
+  where
+    f = argumentFunction a

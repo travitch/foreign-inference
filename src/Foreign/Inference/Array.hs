@@ -21,7 +21,9 @@ import Data.LLVM.CallGraph
 import Data.LLVM.Analysis.CallGraphSCCTraversal
 import Data.LLVM.Analysis.Escape
 
-type ArrayParamSummary = Map (String, String) Int
+-- | Summarize the array parameters in the module.  This maps each
+-- array argument to its inferred dimensionality.
+type ArrayParamSummary = Map Argument Int
 
 -- | The analysis to generate array parameter summaries for an entire
 -- Module (via the CallGraph).  Example usage:
@@ -42,7 +44,7 @@ arrayAnalysis :: EscapeResult
                  -> ArrayParamSummary
                  -> ArrayParamSummary
 arrayAnalysis er f summary =
-  M.foldlWithKey' (traceFromBases f baseResultMap) summary baseResultMap
+  M.foldlWithKey' (traceFromBases baseResultMap) summary baseResultMap
   where
     insts = concatMap basicBlockInstructions (functionBody f)
     basesAndOffsets = mapMaybe (isArrayDeref er) insts
@@ -55,18 +57,17 @@ arrayAnalysis er f summary =
 --
 -- Otherwise, just pass the summary along and try to find the next
 -- access.
-traceFromBases :: Function
-                  -> Map Value (Value, [Value], EscapeGraph)
+traceFromBases :: Map Value (Value, [Value], EscapeGraph)
                   -> ArrayParamSummary
                   -> Value
                   -> (Value, [Value], EscapeGraph)
                   -> ArrayParamSummary
-traceFromBases f baseResultMap summary base (result, _, eg) =
+traceFromBases baseResultMap summary base (result, _, eg) =
   case argumentsForValue eg base of
     [] -> summary
     args ->
       let depth = traceBackwards baseResultMap result 1
-      in foldr (addToSummary f depth) summary args
+      in foldr (addToSummary depth) summary args
 
 
 -- | If the given base value is an Argument, convert it to an Argument
@@ -140,10 +141,15 @@ getBaseType base = case valueType base of
   TypePointer t _ -> t
   _ -> error ("Array base value has illegal type: " ++ show base)
 
--- | Update the summary for an argument with a depth
-addToSummary :: Function -> Int -> Argument -> ArrayParamSummary -> ArrayParamSummary
-addToSummary f depth arg summ =
-  M.insertWith max (show (functionName f), show (argumentName arg)) depth summ
+-- | Update the summary for an argument with a depth.
+--
+-- The function always keeps the *maximum* array depth it discovers
+-- (i.e., inserting an array depth of 1 for an argument that is
+-- already recorded as having depth 2 will not make any changes to the
+-- summary).
+addToSummary :: Int -> Argument -> ArrayParamSummary -> ArrayParamSummary
+addToSummary depth arg summ =
+  M.insertWith max arg depth summ
 
 traceBackwards :: Map Value (Value, [Value], EscapeGraph) -> Value -> Int -> Int
 traceBackwards baseResultMap result depth =

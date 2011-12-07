@@ -23,12 +23,6 @@ library
   ghc-options: -Wall -funbox-strict-fields
   ghc-prof-options: -auto-all
 
-  -- Modules not exported by this package.
-  -- Other-modules:
-
-  -- Extra tools (e.g. alex, hsc2hs, ...) needed to build the source.
-  -- Build-tools:
-
 
 test-suite ArrayTests
   default-language: Haskell2010
@@ -36,7 +30,7 @@ test-suite ArrayTests
   type: exitcode-stdio-1.0
   main-is: ArrayTests.hs
   build-depends: llvm-analysis, llvm-data-interop, foreign-inference,
-                 base > 3 && < 5, filepath, HUnit
+                 base > 3 && < 5, filepath, HUnit, containers
 
 -- test-suite NullAnalysisTests
 --   default-language: Haskell2010

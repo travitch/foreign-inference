@@ -160,5 +160,10 @@ isArrayDeref er inst = case valueContent inst of
   InstructionC LoadInst { loadAddress = (valueContent ->
      InstructionC GetElementPtrInst { getElementPtrValue = base
                                     , getElementPtrIndices = idxs
-                                    })} -> Just (Value inst, base, idxs, escapeGraphAtLocation er inst)
+                                    })} -> case idxs of
+    [] -> error ("GEP <isArrayDeref> with no indices")
+    [_] -> Just (Value inst, base, idxs, escapeGraphAtLocation er inst)
+    (valueContent' -> ConstantC ConstantInt { constantIntValue = 0 }) :
+      (valueContent' -> ConstantC ConstantInt {}) : _ -> Nothing
+    _ -> Just (Value inst, base, idxs, escapeGraphAtLocation er inst)
   _ -> Nothing

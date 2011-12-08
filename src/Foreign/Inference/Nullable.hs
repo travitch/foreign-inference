@@ -9,6 +9,7 @@ module Foreign.Inference.Nullable (
   ) where
 
 import Algebra.Lattice
+import Data.List ( foldl' )
 import Data.Map ( Map )
 import qualified Data.Map as M
 import qualified Data.HashMap.Strict as HM
@@ -25,11 +26,11 @@ import Data.LLVM.Analysis.Escape
 
 import Foreign.Inference.Internal.ValueArguments
 
-import Text.Printf
-import Debug.Trace
+-- import Text.Printf
+-- import Debug.Trace
 
-debug :: c -> String -> c
-debug = flip trace
+-- debug :: c -> String -> c
+-- debug = flip trace
 
 -- | Note, this could be a Set (Argument, Instruction) where the
 -- Instruction is the fact we saw that led us to believe that Argument
@@ -96,7 +97,11 @@ nullableAnalysis er f summ = M.insert f justArgs summ
 -- NULL.  Also map these possibly-NULL pointers to any corresponding
 -- parameters.
 nullTransfer :: NullData -> NullInfo -> Instruction -> [CFGEdge] -> NullInfo
-nullTransfer nd ni i edges = case i `debug` printf "%s --> %s\n" (show i) (show ni') of
+nullTransfer nd ni i edges = case i {- `debug` printf "%s --> %s\n" (show i) (show ni') -} of
+  CallInst { callFunction = calledFunc, callArguments = args } ->
+    callTransfer nd eg ni' calledFunc (map fst args)
+  InvokeInst { invokeFunction = calledFunc, invokeArguments = args } ->
+    callTransfer nd eg ni' calledFunc (map fst args)
   -- Stack allocated pointers start off as NULL
   AllocaInst {} -> case isPointerPointer i of
     True -> recordPossiblyNull (Value i) ni'
@@ -179,8 +184,6 @@ nullTransfer nd ni i edges = case i `debug` printf "%s --> %s\n" (show i) (show 
 maybeClobber :: NullInfo -> Value -> Value -> NullInfo
 maybeClobber ni ptr newVal = recordPossiblyNull ptr ni
 
-
-
 -- | Check if the *exact* pointer is in the set of may-be-null
 -- pointers.  If it is, try to map it back to an argument before
 -- inserting it into the non-nullable set.
@@ -195,10 +198,17 @@ recordIfMayBeNull eg ni ptr =
     -- The access is unsafe and we need to record that this pointer
     -- (and especially any arguments it may point to) are not
     -- NULLABLE. (accessedUnchecked)
-    True ->
-      let args = map Value $ argumentsForValue eg ptr
-          newUnchecked = S.fromList (ptr : args)
-      in ni { accessedUnchecked = S.union (accessedUnchecked ni) newUnchecked }
+    True -> addUncheckedAccess eg ni ptr
+      -- let args = map Value $ argumentsForValue eg ptr
+      --     newUnchecked = S.fromList (ptr : args)
+      -- in ni { accessedUnchecked = S.union (accessedUnchecked ni) newUnchecked }
+
+addUncheckedAccess :: EscapeGraph -> NullInfo -> Value -> NullInfo
+addUncheckedAccess eg ni ptr =
+  ni { accessedUnchecked = S.union (accessedUnchecked ni) newUnchecked }
+  where
+    args = map Value $ argumentsForValue eg ptr
+    newUnchecked = S.fromList (ptr : args)
 
 -- | As in @recordIfMayBeNull@, record ptr as non-nullable if
 -- necessary.  Additionally, clobber @ptr@ since it could be NULL
@@ -247,6 +257,32 @@ processCFGEdge ni cond v = case valueContent v of
     process' val isNull = case isNull of
       True -> ni
       False -> recordNotNull val ni
+
+-- | A split out transfer function for function calls.  Looks up
+-- summary values for called functions/params and records relevant
+-- information in the current dataflow fact.
+--
+-- Note, does not handle indirect calls yet.
+callTransfer :: NullData -> EscapeGraph -> NullInfo -> Value -> [Value] -> NullInfo
+callTransfer nd eg ni calledFunc args =
+  case valueContent' calledFunc of
+    FunctionC f -> definedFunctionTransfer eg (moduleSummary nd) f ni args
+    ExternalFunctionC e -> undefined
+
+definedFunctionTransfer :: EscapeGraph -> NullableSummary -> Function
+                           -> NullInfo -> [Value] -> NullInfo
+definedFunctionTransfer eg summ f ni args =
+  foldl' markArgNotNullable ni indexedNotNullArgs
+  where
+    err = error ("No summary for " ++ show (functionName f))
+    formals = functionParameters f
+    notNullableArgs = M.findWithDefault err f summ
+    isNotNullable (a, _) = S.member a notNullableArgs
+    -- | Pairs of not-nullable formals/actuals
+    indexedNotNullArgs = filter isNotNullable $ zip formals args
+    markArgNotNullable info (_, a) = addUncheckedAccess eg info a
+
+--moduleSummary :: NullableSummary
 
 -- Helpers
 toArg :: Value -> Maybe Argument

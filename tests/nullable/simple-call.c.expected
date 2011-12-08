@@ -1,0 +1,3 @@
+fromList [ ("@f", fromList ["%arr"])
+         , ("@g", fromList ["%arr"])
+         ]

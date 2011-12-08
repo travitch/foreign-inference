@@ -9,7 +9,9 @@ module Foreign.Inference.Nullable (
   ) where
 
 import Algebra.Lattice
-import qualified Data.HashMap.Strict as M
+import Data.Map ( Map )
+import qualified Data.Map as M
+import qualified Data.HashMap.Strict as HM
 import Data.Maybe ( mapMaybe )
 import Data.Set ( Set )
 import qualified Data.Set as S
@@ -32,11 +34,13 @@ debug = flip trace
 -- | Note, this could be a Set (Argument, Instruction) where the
 -- Instruction is the fact we saw that led us to believe that Argument
 -- is not nullable.
-type NullableSummary = Set Argument
+type NullableSummary = Map Function (Set Argument)
 
 -- | The top-level entry point of the nullability analysis
-identifyNullable :: CallGraph -> EscapeResult -> NullableSummary
-identifyNullable cg er = callGraphSCCTraversal cg (nullableAnalysis er) S.empty
+identifyNullable :: Module -> CallGraph -> EscapeResult -> NullableSummary
+identifyNullable m cg er = callGraphSCCTraversal cg (nullableAnalysis er) s0
+  where
+    s0 = M.fromList $ zip (moduleDefinedFunctions m) (repeat S.empty)
 
 -- | The dataflow fact for this analysis
 data NullInfo = NI { mayBeNull :: Set Value  -- ^ The set of variables that may be NULL
@@ -72,7 +76,7 @@ meetNullInfo ni1 ni2 =
 -- This set of arguments is added to the global summary data (set of
 -- all non-nullable arguments).
 nullableAnalysis :: EscapeResult -> Function -> NullableSummary -> NullableSummary
-nullableAnalysis er f summ = summ `S.union` justArgs
+nullableAnalysis er f summ = M.insert f justArgs summ
   where
     -- The global data is the escape analysis result
     nd = ND er summ
@@ -83,7 +87,7 @@ nullableAnalysis er f summ = summ `S.union` justArgs
     localInfo = forwardDataflow nd s0 f
     exitInst = functionExitInstruction f
     err = error "NullAnalysis: exit instruction not in dataflow result"
-    exitInfo = M.lookupDefault err exitInst localInfo
+    exitInfo = HM.lookupDefault err exitInst localInfo
     justArgs = S.fromList $ mapMaybe toArg $ S.toList (accessedUnchecked exitInfo)
 
 -- | First, process the incoming CFG edges to learn about pointers

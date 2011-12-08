@@ -1,5 +1,6 @@
 module Main ( main ) where
 
+import qualified Data.Map as M
 import qualified Data.Set as S
 import System.FilePath ( (<.>) )
 import System.Environment ( getArgs, withArgs )
@@ -31,10 +32,14 @@ main = do
   where
     parser = parseLLVMFile defaultParserOptions
 
-analyzeNullable m = convertSummary $ identifyNullable cg er
+analyzeNullable m = convertSummary $ identifyNullable m cg er
   where
     pta = runPointsToAnalysis m
     cg = mkCallGraph m pta []
     er = runEscapeAnalysis m cg
 
-convertSummary = S.map (show . argumentName)
+convertSummary = M.mapKeys keyMapper . M.map valMapper . M.filter notEmptySet
+  where
+    notEmptySet = not . S.null
+    valMapper = S.map (show . argumentName)
+    keyMapper = show . functionName

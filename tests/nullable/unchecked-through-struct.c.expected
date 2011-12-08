@@ -1,1 +1,1 @@
-fromList ["%arr"]
+fromList [ ("@f", fromList ["%arr"]) ]

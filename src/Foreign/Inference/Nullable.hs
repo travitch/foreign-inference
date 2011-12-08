@@ -9,7 +9,6 @@ module Foreign.Inference.Nullable (
   ) where
 
 import Algebra.Lattice
-import Data.HashMap.Strict ( HashMap )
 import qualified Data.HashMap.Strict as M
 import Data.Maybe ( mapMaybe )
 import Data.Set ( Set )
@@ -24,6 +23,10 @@ import Data.LLVM.Analysis.Escape
 
 import Foreign.Inference.Internal.ValueArguments
 
+-- import Text.Printf
+-- import Debug.Trace
+-- debug = flip trace
+
 -- | Note, this could be a Set (Argument, Instruction) where the
 -- Instruction is the fact we saw that led us to believe that Argument
 -- is not nullable.
@@ -37,7 +40,7 @@ identifyNullable cg er = callGraphSCCTraversal cg (nullableAnalysis er) S.empty
 data NullInfo = NI { mayBeNull :: Set Value  -- ^ The set of variables that may be NULL
                    , accessedUnchecked :: Set Value -- ^ Variables that were accessed before they were known to be not NULL
                    }
-                deriving (Eq, Ord)
+                deriving (Eq, Ord, Show)
 
 data NullData = ND { escapeResult :: EscapeResult }
 
@@ -70,7 +73,7 @@ nullableAnalysis er f summ = summ `S.union` justArgs
     -- The global data is the escape analysis result
     nd = ND er
     -- Start off by assuming that all pointer parameters are NULL
-    s0 = NI { mayBeNull = S.fromList $ map Value $ filter isPointer (functionParameters f)
+    s0 = NI { mayBeNull = S.fromList [] -- $ map Value $ filter isPointer (functionParameters f)
             , accessedUnchecked = S.empty
             }
     localInfo = forwardDataflow nd s0 f
@@ -85,7 +88,7 @@ nullableAnalysis er f summ = summ `S.union` justArgs
 -- NULL.  Also map these possibly-NULL pointers to any corresponding
 -- parameters.
 nullTransfer :: NullData -> NullInfo -> Instruction -> [CFGEdge] -> NullInfo
-nullTransfer nd ni i edges = case i of
+nullTransfer nd ni i edges = case i {- `debug` printf "%s --> %s" (show i) (show ni') -} of
   -- Stack allocated pointers start off as NULL
   AllocaInst {} -> case isPointerPointer i of
     True -> recordPossiblyNull ni' (Value i)
@@ -93,7 +96,8 @@ nullTransfer nd ni i edges = case i of
   -- For these two instructions, if the ptr is in the may be null set,
   -- it is a not-null pointer.  Note that the result of the load (if a
   -- pointer) could also be NULL.
-  LoadInst { loadAddress = ptr } ->
+  LoadInst { loadAddress =
+    (valueContent' -> InstructionC LoadInst { loadAddress = ptr }) } ->
     let ni'' = recordIfMayBeNull eg ni' ptr
     in case isPointer i of
       False -> ni''
@@ -104,12 +108,13 @@ nullTransfer nd ni i edges = case i of
   -- after these instructions execute, the location stored to could
   -- contain NULL again.  This is conservative - we could more closely inspect
   -- what is being assigned to the pointer, but ...
-  StoreInst { storeAddress = ptr, storeValue = newVal } ->
+  StoreInst { storeAddress = (valueContent' -> InstructionC LoadInst { loadAddress = ptr })
+            , storeValue = newVal } ->
     recordAndClobber eg ni' ptr newVal
   AtomicCmpXchgInst { atomicCmpXchgPointer = ptr
                     , atomicCmpXchgNewValue = newVal } ->
     recordAndClobber eg ni' ptr newVal
-  _ -> ni
+  _ -> ni'
   where
     ni' = removeNonNullPointers ni edges
     eg = escapeGraphAtLocation (escapeResult nd) i
@@ -156,23 +161,27 @@ removeNonNullPointers ni _ = ni
 
 processCFGEdge :: NullInfo -> (Bool -> Bool) -> Value -> NullInfo
 processCFGEdge ni cond v = case valueContent v of
-  InstructionC ICmpInst { cmpPredicate = ICmpEq, cmpV1 = v1
+  InstructionC ICmpInst { cmpPredicate = ICmpEq
+                        , cmpV1 = (valueContent' -> InstructionC LoadInst { loadAddress = v1 } )
                         , cmpV2 = (valueContent -> ConstantC ConstantPointerNull {}) } ->
     process' v1 (cond True)
-  InstructionC ICmpInst { cmpPredicate = ICmpEq, cmpV2 = v2
+  InstructionC ICmpInst { cmpPredicate = ICmpEq
+                        , cmpV2 = (valueContent' -> InstructionC LoadInst { loadAddress = v2 } )
                         , cmpV1 = (valueContent -> ConstantC ConstantPointerNull {}) } ->
     process' v2 (cond True)
-  InstructionC ICmpInst { cmpPredicate = ICmpNe, cmpV1 = v1
+  InstructionC ICmpInst { cmpPredicate = ICmpNe
+                        , cmpV1 = (valueContent' -> InstructionC LoadInst { loadAddress = v1 } )
                         , cmpV2 = (valueContent -> ConstantC ConstantPointerNull {}) } ->
     process' v1 (cond False)
-  InstructionC ICmpInst { cmpPredicate = ICmpNe, cmpV2 = v2
+  InstructionC ICmpInst { cmpPredicate = ICmpNe
+                        , cmpV2 = (valueContent' -> InstructionC LoadInst { loadAddress = v2 } )
                         , cmpV1 = (valueContent -> ConstantC ConstantPointerNull {}) } ->
     process' v2 (cond False)
   _ -> ni
   where
     process' val isNull = case isNull of
       True -> ni
-      False -> recordPossiblyNull ni val
+      False -> recordNotNull ni val
 
 -- Helpers
 toArg :: Value -> Maybe Argument
@@ -193,3 +202,6 @@ isPointerPointer v = case valueType v of
 -- | Helper to record a possibly null pointer into a dataflow fact
 recordPossiblyNull :: NullInfo -> Value -> NullInfo
 recordPossiblyNull ni v = ni { mayBeNull = S.insert v (mayBeNull ni) }
+
+recordNotNull :: NullInfo -> Value -> NullInfo
+recordNotNull ni v = ni { mayBeNull = S.delete v (mayBeNull ni) }

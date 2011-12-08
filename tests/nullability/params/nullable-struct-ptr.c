@@ -5,6 +5,6 @@ struct S {
 };
 
 void nullableStructPtr(struct S *s) {
-  if(s->p)
+  if(s)
     g = *s->p;
 }

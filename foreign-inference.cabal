@@ -18,6 +18,7 @@ library
   hs-source-dirs: src
   exposed-modules: Foreign.Inference.Array,
                    Foreign.Inference.Nullable
+  other-modules: Foreign.Inference.Internal.ValueArguments
   build-depends: base > 3 && < 5, containers, unordered-containers >= 0.1.4.0,
                  hashable, lattices, llvm-analysis
   ghc-options: -Wall -funbox-strict-fields

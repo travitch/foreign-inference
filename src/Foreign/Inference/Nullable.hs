@@ -93,6 +93,13 @@ nullTransfer nd ni i edges = case i {- `debug` printf "%s --> %s" (show i) (show
   AllocaInst {} -> case isPointerPointer i of
     True -> recordPossiblyNull ni' (Value i)
     False -> ni'
+  LoadInst { loadAddress =
+    (valueContent' -> InstructionC GetElementPtrInst { getElementPtrValue =
+      (valueContent' -> InstructionC LoadInst { loadAddress = ptr })})} ->
+    let ni'' = recordIfMayBeNull eg ni' ptr
+    in case isPointer i of
+      False -> ni''
+      True -> recordPossiblyNull ni'' (Value i)
   -- For these two instructions, if the ptr is in the may be null set,
   -- it is a not-null pointer.  Note that the result of the load (if a
   -- pointer) could also be NULL.

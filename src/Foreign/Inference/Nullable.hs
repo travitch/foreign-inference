@@ -23,9 +23,11 @@ import Data.LLVM.Analysis.Escape
 
 import Foreign.Inference.Internal.ValueArguments
 
--- import Text.Printf
--- import Debug.Trace
--- debug = flip trace
+import Text.Printf
+import Debug.Trace
+
+debug :: c -> String -> c
+debug = flip trace
 
 -- | Note, this could be a Set (Argument, Instruction) where the
 -- Instruction is the fact we saw that led us to believe that Argument
@@ -42,7 +44,9 @@ data NullInfo = NI { mayBeNull :: Set Value  -- ^ The set of variables that may 
                    }
                 deriving (Eq, Ord, Show)
 
-data NullData = ND { escapeResult :: EscapeResult }
+data NullData = ND { escapeResult :: EscapeResult
+                   , moduleSummary :: NullableSummary
+                   }
 
 
 instance MeetSemiLattice NullInfo where
@@ -71,7 +75,7 @@ nullableAnalysis :: EscapeResult -> Function -> NullableSummary -> NullableSumma
 nullableAnalysis er f summ = summ `S.union` justArgs
   where
     -- The global data is the escape analysis result
-    nd = ND er
+    nd = ND er summ
     -- Start off by assuming that all pointer parameters are NULL
     s0 = NI { mayBeNull = S.fromList [] -- $ map Value $ filter isPointer (functionParameters f)
             , accessedUnchecked = S.empty
@@ -88,10 +92,10 @@ nullableAnalysis er f summ = summ `S.union` justArgs
 -- NULL.  Also map these possibly-NULL pointers to any corresponding
 -- parameters.
 nullTransfer :: NullData -> NullInfo -> Instruction -> [CFGEdge] -> NullInfo
-nullTransfer nd ni i edges = case i {- `debug` printf "%s --> %s" (show i) (show ni') -} of
+nullTransfer nd ni i edges = case i `debug` printf "%s --> %s\n" (show i) (show ni') of
   -- Stack allocated pointers start off as NULL
   AllocaInst {} -> case isPointerPointer i of
-    True -> recordPossiblyNull ni' (Value i)
+    True -> recordPossiblyNull (Value i) ni'
     False -> ni'
   LoadInst { loadAddress =
     (valueContent' -> InstructionC GetElementPtrInst { getElementPtrValue =
@@ -99,7 +103,13 @@ nullTransfer nd ni i edges = case i {- `debug` printf "%s --> %s" (show i) (show
     let ni'' = recordIfMayBeNull eg ni' ptr
     in case isPointer i of
       False -> ni''
-      True -> recordPossiblyNull ni'' (Value i)
+      True -> recordPossiblyNull (Value i) ni''
+  LoadInst { loadAddress =
+    (valueContent' -> InstructionC GetElementPtrInst { getElementPtrValue = ptr })} ->
+    let ni'' = recordIfMayBeNull eg ni' ptr
+    in case isPointer i of
+      False -> ni''
+      True -> recordPossiblyNull (Value i) ni''
   -- For these two instructions, if the ptr is in the may be null set,
   -- it is a not-null pointer.  Note that the result of the load (if a
   -- pointer) could also be NULL.
@@ -108,16 +118,50 @@ nullTransfer nd ni i edges = case i {- `debug` printf "%s --> %s" (show i) (show
     let ni'' = recordIfMayBeNull eg ni' ptr
     in case isPointer i of
       False -> ni''
-      True -> recordPossiblyNull ni'' (Value i)
+      True -> recordPossiblyNull (Value i) ni''
   AtomicRMWInst { atomicRMWPointer = ptr } ->
     recordIfMayBeNull eg ni' ptr
+
   -- For these instructions, if the ptr is treated the same.  However,
   -- after these instructions execute, the location stored to could
   -- contain NULL again.  This is conservative - we could more closely inspect
   -- what is being assigned to the pointer, but ...
+
+  -- This case handles stores through pointers. Example:
+  --
+  -- > int * x;
+  -- > *x = 5; // This line
+  --
+  -- makes store 5 x.  If x is not known to be non-NULL here, we have
+  -- to record x as being non-nullable (accessed without being
+  -- checked).  If x is at least a pointer to pointer, then the
+  -- pointer value *may* be null after this.  &x cannot be null, of
+  -- course.
   StoreInst { storeAddress = (valueContent' -> InstructionC LoadInst { loadAddress = ptr })
             , storeValue = newVal } ->
     recordAndClobber eg ni' ptr newVal
+
+  -- Similar, but storing directly to an argument.  This could happen
+  -- if the module has been reg2mem-ed.  This case is a little
+  -- different because the argument acts as a location (this is the
+  -- strange off-by-one behavior of arguments versus allocas/globals).
+  StoreInst { storeAddress = (valueContent' -> ArgumentC a)
+            , storeValue = newVal
+            } ->
+    recordAndClobber eg ni' (Value a) newVal
+
+  -- This is a simpler case - we are storing to some location.
+  -- Locations (allocas, globals) are never NULL.  At worst, the
+  -- pointer stored at the location is being clobbered.
+  --
+  -- > int * x;
+  -- > x = malloc();
+  --
+  -- makes: store (malloc) x.  Clearly &x is never NULL, but x may be
+  -- NULL after the assignment.
+  StoreInst { storeAddress = ptr
+            , storeValue = newVal } ->
+    maybeClobber ni' ptr newVal
   AtomicCmpXchgInst { atomicCmpXchgPointer = ptr
                     , atomicCmpXchgNewValue = newVal } ->
     recordAndClobber eg ni' ptr newVal
@@ -126,12 +170,22 @@ nullTransfer nd ni i edges = case i {- `debug` printf "%s --> %s" (show i) (show
     ni' = removeNonNullPointers ni edges
     eg = escapeGraphAtLocation (escapeResult nd) i
 
+-- | Clobber the value of @ptr@ (mark it as possibly NULL due to
+-- assignment).
+maybeClobber :: NullInfo -> Value -> Value -> NullInfo
+maybeClobber ni ptr newVal = recordPossiblyNull ptr ni
+
+
+
 -- | Check if the *exact* pointer is in the set of may-be-null
 -- pointers.  If it is, try to map it back to an argument before
 -- inserting it into the non-nullable set.
 recordIfMayBeNull :: EscapeGraph -> NullInfo -> Value -> NullInfo
 recordIfMayBeNull eg ni ptr =
-  case S.member ptr (mayBeNull ni) of
+  case S.member ptr (mayBeNull ni) of -- FIXME: Or if it is a field
+                                      -- access?  Fields might always
+                                      -- be null
+
     -- The access is safe
     False -> ni
     -- The access is unsafe and we need to record that this pointer
@@ -148,7 +202,7 @@ recordIfMayBeNull eg ni ptr =
 -- NULL.  Various pointer values can never be NULL (e.g., variables).
 recordAndClobber :: EscapeGraph -> NullInfo -> Value -> Value -> NullInfo
 recordAndClobber eg ni ptr newVal =
-  recordPossiblyNull ni' ptr
+  recordPossiblyNull ptr ni'
   where
     ni' = recordIfMayBeNull eg ni ptr
 
@@ -188,7 +242,7 @@ processCFGEdge ni cond v = case valueContent v of
   where
     process' val isNull = case isNull of
       True -> ni
-      False -> recordNotNull ni val
+      False -> recordNotNull val ni
 
 -- Helpers
 toArg :: Value -> Maybe Argument
@@ -207,8 +261,8 @@ isPointerPointer v = case valueType v of
   _ -> False
 
 -- | Helper to record a possibly null pointer into a dataflow fact
-recordPossiblyNull :: NullInfo -> Value -> NullInfo
-recordPossiblyNull ni v = ni { mayBeNull = S.insert v (mayBeNull ni) }
+recordPossiblyNull :: Value -> NullInfo -> NullInfo
+recordPossiblyNull v ni = ni { mayBeNull = S.insert v (mayBeNull ni) }
 
-recordNotNull :: NullInfo -> Value -> NullInfo
-recordNotNull ni v = ni { mayBeNull = S.delete v (mayBeNull ni) }
+recordNotNull :: Value -> NullInfo -> NullInfo
+recordNotNull v ni = ni { mayBeNull = S.delete v (mayBeNull ni) }

@@ -7,6 +7,12 @@
 -- During the analysis, the dependencies of the current library are
 -- represented using the 'DependencySummary', which is composed of
 -- several 'LibraryInterface's.
+--
+-- Note that this module does not currently handle by-value structs
+-- properly.  The various LLVM frontends lower these according to the
+-- target ABI and it is a bit difficult to map the result exactly back
+-- to how it appeared in the source.  This will have to be done with
+-- some metadata.
 module Foreign.Inference.Interface (
   -- * Classes
   ModuleSummary(..),
@@ -21,9 +27,12 @@ module Foreign.Inference.Interface (
   FuncAnnotation(..),
   StdLib(..),
   -- * Functions
+  lookupArgumentSummary,
   loadDependencies,
   loadDependencies',
-  moduleToLibraryInterface
+  moduleToLibraryInterface,
+  saveInterface,
+  saveModule
   ) where
 
 import GHC.Generics
@@ -41,6 +50,10 @@ import Data.List ( foldl' )
 import System.FilePath
 
 import Data.LLVM
+
+-- | The extension used for all summaries
+summaryExtension :: String
+summaryExtension = "json"
 
 -- | The annotations that are specific to individual parameters.
 data ParamAnnotation = PAArray !Int
@@ -126,6 +139,24 @@ data StdLib = CStdLib
             | CxxStdLib
             deriving (Show)
 
+-- | Persist a 'LibraryInterface' to disk in the given @summaryDir@.
+-- It uses the name specified in the 'LibraryInterface' to choose the
+-- filename.
+--
+-- > saveInterface summaryDir iface
+saveInterface :: FilePath -> LibraryInterface -> IO ()
+saveInterface summaryDir i = do
+  let bs = encode i
+      path = summaryDir </> libraryName i <.> summaryExtension
+  LBS.writeFile path bs
+
+-- | A shortcut to convert a 'Module' into a 'LibraryInterface' and
+-- then persist it as in 'saveInterface'.
+saveModule :: forall s . (ModuleSummary s) => FilePath -> String -> [String] -> Module -> [s] -> IO ()
+saveModule summaryDir name deps m summaries = do
+  let i = moduleToLibraryInterface m name deps summaries
+  saveInterface summaryDir i
+
 -- | A call
 --
 -- > loadDependencies summaryDir deps
@@ -139,8 +170,6 @@ data StdLib = CStdLib
 loadDependencies :: FilePath -> [String] -> IO DependencySummary
 loadDependencies = loadDependencies' [CStdLib]
 
-summaryExtension :: String
-summaryExtension = "json"
 
 -- | The same as 'loadDependencies', except it gives the option of not
 -- automatically loading standard library summaries.
@@ -243,6 +272,19 @@ paramToExternal summaries arg =
             , parameterName = SBS.unpack (identifierContent (argumentName arg))
             , parameterAnnotations = concatMap (summarizeArgument arg) summaries
             }
+
+-- | Look up the summary information for the indicated parameter.
+lookupArgumentSummary :: DependencySummary -> ExternalFunction -> Int -> Maybe [ParamAnnotation]
+lookupArgumentSummary ds ef ix =
+  case fsum of
+    Nothing -> Nothing
+    Just s -> case length (foreignFunctionParameters s) < ix of
+      True -> error $ "lookupArgumentSummary: no parameter " ++ show ix ++ " for " ++ show ef
+      False -> Just $ parameterAnnotations (foreignFunctionParameters s !! ix)
+  where
+    fname = identifierContent $ externalFunctionName ef
+    summ = depSummary ds
+    fsum = M.lookup fname summ
 
 -- Helpers
 

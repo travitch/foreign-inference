@@ -1,4 +1,4 @@
-{-# LANGUAGE DeriveGeneric, OverloadedStrings #-}
+{-# LANGUAGE DeriveGeneric, OverloadedStrings, ExistentialQuantification #-}
 -- | This module defines an external representation of library
 -- interfaces.  Individual libraries are represented by the
 -- 'LibraryInterface'.  The analysis reads these in and writes these
@@ -8,6 +8,8 @@
 -- represented using the 'DependencySummary', which is composed of
 -- several 'LibraryInterface's.
 module Foreign.Inference.Interface (
+  -- * Classes
+  ModuleSummary(..),
   -- * Types
   DependencySummary,
   LibraryInterface(..),
@@ -20,20 +22,25 @@ module Foreign.Inference.Interface (
   StdLib(..),
   -- * Functions
   loadDependencies,
-  loadDependencies'
+  loadDependencies',
+  moduleToLibraryInterface
   ) where
 
 import GHC.Generics
 
 import Data.Aeson
-import Data.ByteString ( ByteString )
+import Data.ByteString.Char8 ( ByteString )
+import qualified Data.ByteString.Char8 as SBS
 import qualified Data.ByteString.Lazy as LBS
 import Data.HashMap.Strict ( HashMap )
 import qualified Data.HashMap.Strict as M
+import Data.Maybe ( mapMaybe )
 import Data.Set ( Set )
 import qualified Data.Set as S
 import Data.List ( foldl' )
 import System.FilePath
+
+import Data.LLVM
 
 -- | The annotations that are specific to individual parameters.
 data ParamAnnotation = PAArray !Int
@@ -59,21 +66,14 @@ instance ToJSON Linkage
 -- | A simple external representation of C/C++ types.  Note that C++
 -- templates are not (and will not) be represented.
 data CType = CVoid
-           | CChar
-           | CUChar
-           | CShort
-           | CUShort
-           | CInt
-           | CUInt
-           | CLong
-           | CULong
-           | CLongLong
-           | CULongLong
+           | CInt !Int
+           | CUInt !Int
            | CFloat
            | CDouble
-           | CFunction CType [CType]
+           | CFunction CType [CType] Bool
            | CPointer CType
            | CStruct String [CType]
+           | CAnonStruct [CType]
            deriving (Show, Generic)
 instance FromJSON CType
 instance ToJSON CType
@@ -106,6 +106,7 @@ instance ToJSON ForeignFunction
 data LibraryInterface = LibraryInterface { libraryFunctions :: [ForeignFunction]
                                          , libraryName :: String
                                          , libraryDependencies :: [String]
+                                         , libraryTypes :: [CType]
                                          }
                       deriving (Show, Generic)
 
@@ -151,6 +152,11 @@ loadDependencies' includeStd summaryDir deps = do
 -- | Load all of the dependencies requested (transitively).  This just
 -- iterates loading interfaces and recording all of the new
 -- dependencies until there are no more.
+--
+-- Note that this function does not need to load types from library
+-- descriptions because LLVM will have definitions for any public
+-- struct types already.  The type descriptions are only useful for
+-- binding generation.
 loadTransDeps :: FilePath -> [String] -> Set String -> DepMap -> IO DepMap
 loadTransDeps summaryDir deps loadedDeps m = do
   let unmetDeps = filter (`S.member` loadedDeps) deps
@@ -190,3 +196,85 @@ parseInterface p = do
   case mval of
     Nothing -> error $ "Failed to decode " ++ p
     Just li -> return li
+
+-- | An interface for analyses to implement in order to annotate
+-- constructs in 'Module's.
+class ModuleSummary s where
+  summarizeArgument :: Argument -> s -> [ParamAnnotation]
+  summarizeFunction :: Function -> s -> [FuncAnnotation]
+
+-- | Convert a Module to a LibraryInterface using the information in
+-- the provided 'ModuleSummary's.
+moduleToLibraryInterface :: forall s . (ModuleSummary s)
+                            => Module   -- ^ Module to summarize
+                            -> String   -- ^ Module name
+                            -> [String] -- ^ Module dependencies
+                            -> [s]      -- ^ Summary information from analyses
+                            -> LibraryInterface
+moduleToLibraryInterface m name deps summaries =
+  LibraryInterface { libraryFunctions = funcs
+                   , libraryTypes = types
+                   , libraryName = name
+                   , libraryDependencies = deps
+                   }
+  where
+    -- | FIXME: Need a way to get all types from a Module
+    types = map typeToCType []
+    funcs = mapMaybe (functionToExternal summaries) (moduleDefinedFunctions m)
+
+-- | Summarize a single function
+functionToExternal :: forall s . (ModuleSummary s) => [s] -> Function -> Maybe ForeignFunction
+functionToExternal summaries f = case toLinkage (functionLinkage f) of
+  Nothing -> Nothing
+  Just l ->
+    Just ForeignFunction { foreignFunctionName = identifierContent (functionName f)
+                         , foreignFunctionLinkage = l
+                         , foreignFunctionReturnType = typeToCType (functionType f)
+                         , foreignFunctionParameters = params
+                         , foreignFunctionAnnotations = annots
+                         }
+  where
+    annots = concatMap (summarizeFunction f) summaries
+    params = map (paramToExternal summaries) (functionParameters f)
+
+paramToExternal :: forall s . (ModuleSummary s) => [s] -> Argument -> Parameter
+paramToExternal summaries arg =
+  Parameter { parameterType = typeToCType (argumentType arg)
+            , parameterName = SBS.unpack (identifierContent (argumentName arg))
+            , parameterAnnotations = concatMap (summarizeArgument arg) summaries
+            }
+
+-- Helpers
+
+-- | FIXME: Need to consult some metadata here to get sign information
+typeToCType :: Type -> CType
+typeToCType t = case t of
+  TypeVoid -> CVoid
+  TypeInteger i -> CInt i
+  TypeFloat -> CFloat
+  TypeDouble -> CDouble
+  TypeArray _ t' -> CPointer (typeToCType t')
+  TypeFunction r ts isVa -> CFunction (typeToCType r) (map typeToCType ts) isVa
+  TypePointer t' _ -> CPointer (typeToCType t')
+  TypeStruct (Just n) ts _ -> CStruct n (map typeToCType ts)
+  TypeStruct Nothing ts _ -> CAnonStruct (map typeToCType ts)
+
+-- | Convert an LLVM linkage to a type more suitable for the summary
+toLinkage :: LinkageType -> Maybe Linkage
+toLinkage l = case l of
+  LTExternal -> Just LinkDefault
+  LTAvailableExternally -> Just LinkDefault
+  LTLinkOnceAny -> Just LinkWeak
+  LTLinkOnceODR -> Just LinkWeak
+  LTAppending -> Just LinkDefault
+  LTInternal -> Nothing
+  LTPrivate -> Nothing
+  LTLinkerPrivate -> Nothing
+  LTLinkerPrivateWeak -> Nothing
+  LTLinkerPrivateWeakDefAuto -> Nothing
+  LTDLLImport -> Just LinkDefault
+  LTDLLExport -> Just LinkDefault
+  LTExternalWeak -> Just LinkWeak
+  LTCommon -> Just LinkDefault
+  LTWeakAny -> Just LinkWeak
+  LTWeakODR -> Just LinkWeak

@@ -146,15 +146,15 @@ summaryExtension = "json"
 -- automatically loading standard library summaries.
 loadDependencies' :: [StdLib] -> FilePath -> [String] -> IO DependencySummary
 loadDependencies' includeStd summaryDir deps = do
-  m <- loadTransDeps summaryDir deps M.empty
+  m <- loadTransDeps summaryDir deps S.empty M.empty
   return (DS m)
 
 -- | Load all of the dependencies requested (transitively).  This just
 -- iterates loading interfaces and recording all of the new
 -- dependencies until there are no more.
-loadTransDeps :: FilePath -> [String] -> DepMap -> IO DepMap
-loadTransDeps summaryDir deps m = do
-  let unmetDeps = filter (isNothing . (\x -> M.lookup x m)) deps
+loadTransDeps :: FilePath -> [String] -> Set String -> DepMap -> IO DepMap
+loadTransDeps summaryDir deps loadedDeps m = do
+  let unmetDeps = filter (isNothing . (`S.member` loadedDeps)) deps
       paths = map ((summaryDir </>) . (<.> summaryExtension)) unmetDeps
   case unmetDeps of
     [] -> return m
@@ -162,9 +162,15 @@ loadTransDeps summaryDir deps m = do
       newInterfaces <- mapM parseInterface paths
       let newDeps = concatMap libraryDependencies newInterfaces
           newFuncs = concatMap libraryFunctions newInterfaces
+          loadedDeps' = loadedDeps `S.union` S.fromList unmetDeps
           m' = foldl' mergeFunction m newFuncs
       loadTransDeps summaryDir newDeps m'
 
+-- | Try to "link" function summaries into the current
+-- 'DependencySummary'.  This makes a best effort to deal with weak
+-- symbols.  Weak symbols get overridden arbitrarily.  If two non-weak
+-- symbols with the same name are encountered, this function just
+-- raises an error.
 mergeFunction :: DepMap -> ForeignFunction -> DepMap
 mergeFunction m f = case M.lookup fn m of
   Nothing -> M.insert fn f m

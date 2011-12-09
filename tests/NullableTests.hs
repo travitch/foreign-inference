@@ -14,7 +14,7 @@ import Data.LLVM.Analysis.PointsTo.TrivialFunction
 import Data.LLVM.Parse
 import Data.LLVM.Testing
 
-import Foreign.Inference.Nullable
+import Foreign.Inference.Analysis.Nullable
 
 main :: IO ()
 main = do

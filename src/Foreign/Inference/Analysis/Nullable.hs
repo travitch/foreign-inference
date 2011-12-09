@@ -3,7 +3,7 @@
 --
 -- Nullable pointers are those pointers that are checked against NULL
 -- before they are used.
-module Foreign.Inference.Nullable (
+module Foreign.Inference.Analysis.Nullable (
   NullableSummary,
   identifyNullable
   ) where

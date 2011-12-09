@@ -6,7 +6,7 @@
 -- flow insensitive and works by examining chains of GetElementPtr and
 -- Load instructions to reconstruct the shape of arrays that are
 -- accessed.
-module Foreign.Inference.Array (
+module Foreign.Inference.Analysis.Array (
   ArrayParamSummary,
   identifyArrays
   ) where

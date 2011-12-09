@@ -12,7 +12,7 @@ import Data.LLVM.Analysis.PointsTo
 import Data.LLVM.Analysis.PointsTo.TrivialFunction
 import Data.LLVM.Testing
 
-import Foreign.Inference.Array
+import Foreign.Inference.Analysis.Array
 
 main :: IO ()
 main = testAgainstExpected bcParser testDescriptors

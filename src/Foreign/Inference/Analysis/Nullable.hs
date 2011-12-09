@@ -296,7 +296,7 @@ callTransfer :: NullData -> EscapeGraph -> NullInfo -> Value -> [Value] -> NullI
 callTransfer nd eg ni calledFunc args =
   case valueContent' calledFunc of
     FunctionC f -> definedFunctionTransfer eg (moduleSummary nd) f ni args
-    ExternalFunctionC e -> undefined
+    ExternalFunctionC e -> externalFunctionTransfer eg (dependencySummary nd) e ni args
 
 definedFunctionTransfer :: EscapeGraph -> SummaryType -> Function
                            -> NullInfo -> [Value] -> NullInfo
@@ -311,7 +311,9 @@ definedFunctionTransfer eg summ f ni args =
     indexedNotNullArgs = filter isNotNullable $ zip formals args
     markArgNotNullable info (_, a) = addUncheckedAccess eg info a
 
---moduleSummary :: NullableSummary
+externalFunctionTransfer :: EscapeGraph -> DependencySummary -> ExternalFunction
+                            -> NullInfo -> [Value] -> NullInfo
+externalFunctionTransfer eg summ e ni args = undefined
 
 -- Helpers
 toArg :: Value -> Maybe Argument

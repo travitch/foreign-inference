@@ -139,6 +139,13 @@ data StdLib = CStdLib
             | CxxStdLib
             deriving (Show)
 
+-- | An interface for analyses to implement in order to annotate
+-- constructs in 'Module's.
+class ModuleSummary s where
+  summarizeArgument :: Argument -> s -> [ParamAnnotation]
+  summarizeFunction :: Function -> s -> [FuncAnnotation]
+
+
 -- | Persist a 'LibraryInterface' to disk in the given @summaryDir@.
 -- It uses the name specified in the 'LibraryInterface' to choose the
 -- filename.
@@ -225,12 +232,6 @@ parseInterface p = do
   case mval of
     Nothing -> error $ "Failed to decode " ++ p
     Just li -> return li
-
--- | An interface for analyses to implement in order to annotate
--- constructs in 'Module's.
-class ModuleSummary s where
-  summarizeArgument :: Argument -> s -> [ParamAnnotation]
-  summarizeFunction :: Function -> s -> [FuncAnnotation]
 
 -- | Convert a Module to a LibraryInterface using the information in
 -- the provided 'ModuleSummary's.

@@ -4,8 +4,11 @@
 -- Nullable pointers are those pointers that are checked against NULL
 -- before they are used.
 module Foreign.Inference.Analysis.Nullable (
+  -- * Interface
   NullableSummary,
-  identifyNullable
+  identifyNullable,
+  -- * Testing
+  nullSummaryToTestFormat
   ) where
 
 import Algebra.Lattice
@@ -24,6 +27,7 @@ import Data.LLVM.Analysis.CallGraphSCCTraversal
 import Data.LLVM.Analysis.Dataflow
 import Data.LLVM.Analysis.Escape
 
+import Foreign.Inference.Interface
 import Foreign.Inference.Internal.ValueArguments
 
 -- import Text.Printf
@@ -32,14 +36,38 @@ import Foreign.Inference.Internal.ValueArguments
 -- debug :: c -> String -> c
 -- debug = flip trace
 
+type SummaryType = Map Function (Set Argument)
+
 -- | Note, this could be a Set (Argument, Instruction) where the
 -- Instruction is the fact we saw that led us to believe that Argument
 -- is not nullable.
-type NullableSummary = Map Function (Set Argument)
+newtype NullableSummary = NS SummaryType
+                        deriving (Eq)
+
+instance ModuleSummary NullableSummary where
+  summarizeFunction _ _ = []
+  summarizeArgument = summarizeNullArgument
+
+summarizeNullArgument :: Argument -> NullableSummary -> [ParamAnnotation]
+summarizeNullArgument a (NS s) = case a `S.member` nonNullableArgs of
+  False -> []
+  True -> [PANotNull]
+  where
+    f = argumentFunction a
+    err = error ("Function not in summary: " ++ show (functionName f))
+    nonNullableArgs = M.findWithDefault err f s
+
+nullSummaryToTestFormat :: NullableSummary -> Map String (Set String)
+nullSummaryToTestFormat (NS m) = convert m
+  where
+    convert = M.mapKeys keyMapper . M.map valMapper . M.filter notEmptySet
+    notEmptySet = not . S.null
+    valMapper = S.map (show . argumentName)
+    keyMapper = show . functionName
 
 -- | The top-level entry point of the nullability analysis
-identifyNullable :: Module -> CallGraph -> EscapeResult -> NullableSummary
-identifyNullable m cg er = callGraphSCCTraversal cg (nullableAnalysis er) s0
+identifyNullable :: DependencySummary -> Module -> CallGraph -> EscapeResult -> NullableSummary
+identifyNullable ds m cg er = NS $ callGraphSCCTraversal cg (nullableAnalysis ds er) s0
   where
     s0 = M.fromList $ zip (moduleDefinedFunctions m) (repeat S.empty)
 
@@ -50,7 +78,8 @@ data NullInfo = NI { mayBeNull :: Set Value  -- ^ The set of variables that may 
                 deriving (Eq, Ord, Show)
 
 data NullData = ND { escapeResult :: EscapeResult
-                   , moduleSummary :: NullableSummary
+                   , moduleSummary :: SummaryType
+                   , dependencySummary :: DependencySummary
                    }
 
 
@@ -76,11 +105,11 @@ meetNullInfo ni1 ni2 =
 --
 -- This set of arguments is added to the global summary data (set of
 -- all non-nullable arguments).
-nullableAnalysis :: EscapeResult -> Function -> NullableSummary -> NullableSummary
-nullableAnalysis er f summ = M.insert f justArgs summ
+nullableAnalysis :: DependencySummary -> EscapeResult -> Function -> SummaryType -> SummaryType
+nullableAnalysis ds er f summ = M.insert f justArgs summ
   where
     -- The global data is the escape analysis result
-    nd = ND er summ
+    nd = ND er summ ds
     -- Start off by assuming that all pointer parameters are NULL
     s0 = NI { mayBeNull = S.fromList []
             , accessedUnchecked = S.empty
@@ -269,7 +298,7 @@ callTransfer nd eg ni calledFunc args =
     FunctionC f -> definedFunctionTransfer eg (moduleSummary nd) f ni args
     ExternalFunctionC e -> undefined
 
-definedFunctionTransfer :: EscapeGraph -> NullableSummary -> Function
+definedFunctionTransfer :: EscapeGraph -> SummaryType -> Function
                            -> NullInfo -> [Value] -> NullInfo
 definedFunctionTransfer eg summ f ni args =
   foldl' markArgNotNullable ni indexedNotNullArgs

@@ -33,7 +33,6 @@ import qualified Data.HashMap.Strict as M
 import Data.Set ( Set )
 import qualified Data.Set as S
 import Data.List ( foldl' )
-import Data.Maybe ( isNothing )
 import System.FilePath
 
 -- | The annotations that are specific to individual parameters.
@@ -154,7 +153,7 @@ loadDependencies' includeStd summaryDir deps = do
 -- dependencies until there are no more.
 loadTransDeps :: FilePath -> [String] -> Set String -> DepMap -> IO DepMap
 loadTransDeps summaryDir deps loadedDeps m = do
-  let unmetDeps = filter (isNothing . (`S.member` loadedDeps)) deps
+  let unmetDeps = filter (`S.member` loadedDeps) deps
       paths = map ((summaryDir </>) . (<.> summaryExtension)) unmetDeps
   case unmetDeps of
     [] -> return m
@@ -164,7 +163,7 @@ loadTransDeps summaryDir deps loadedDeps m = do
           newFuncs = concatMap libraryFunctions newInterfaces
           loadedDeps' = loadedDeps `S.union` S.fromList unmetDeps
           m' = foldl' mergeFunction m newFuncs
-      loadTransDeps summaryDir newDeps m'
+      loadTransDeps summaryDir newDeps loadedDeps' m'
 
 -- | Try to "link" function summaries into the current
 -- 'DependencySummary'.  This makes a best effort to deal with weak

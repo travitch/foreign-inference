@@ -82,7 +82,7 @@ nullableAnalysis er f summ = M.insert f justArgs summ
     -- The global data is the escape analysis result
     nd = ND er summ
     -- Start off by assuming that all pointer parameters are NULL
-    s0 = NI { mayBeNull = S.fromList [] -- $ map Value $ filter isPointer (functionParameters f)
+    s0 = NI { mayBeNull = S.fromList []
             , accessedUnchecked = S.empty
             }
     localInfo = forwardDataflow nd s0 f

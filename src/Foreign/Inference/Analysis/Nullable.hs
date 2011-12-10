@@ -3,6 +3,17 @@
 --
 -- Nullable pointers are those pointers that are checked against NULL
 -- before they are used.
+--
+-- Questions:
+--
+-- 1) How strict should this be? Must a non-nullable pointer be
+--    referenced unchecked on *every* path, or does one suffice?
+--
+-- 2) How conservative should we be with regard to aliasing? Should a
+--    may-alias unchecked dereference make the parameter non-nullable?
+--    In theory letting may-alias relationships influence us could lead
+--    to false positives that make some functions uncallable.  Is this a
+--    problem in practice?
 module Foreign.Inference.Analysis.Nullable (
   -- * Interface
   NullableSummary,

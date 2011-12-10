@@ -5,5 +5,5 @@ int f(int i, int * arr) {
   if(i > 10 && arr)
     return arr[i];
 
-  f(i + 1, arr);
+  return f(i + 1, arr);
 }

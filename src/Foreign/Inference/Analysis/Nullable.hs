@@ -122,9 +122,7 @@ nullableAnalysis ds er f summ = M.insert f justArgs summ
     -- The global data is the escape analysis result
     nd = ND er summ ds
     -- Start off by assuming that all pointer parameters are NULL
-    s0 = NI { mayBeNull = S.fromList []
-            , accessedUnchecked = S.empty
-            }
+    s0 = top
     localInfo = forwardDataflow nd s0 f
     exitInst = functionExitInstruction f
     err = error "NullAnalysis: exit instruction not in dataflow result"

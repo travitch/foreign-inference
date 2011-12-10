@@ -58,13 +58,13 @@ summaryExtension = "json"
 -- | The annotations that are specific to individual parameters.
 data ParamAnnotation = PAArray !Int
                      | PANotNull
-                     deriving (Show, Generic)
+                     deriving (Show, Generic, Eq, Ord)
 instance FromJSON ParamAnnotation
 instance ToJSON ParamAnnotation
 
 -- | The annotations that can apply at the 'ForeignFunction' level.
 data FuncAnnotation = FAAllocator
-                    deriving (Show, Generic)
+                    deriving (Show, Generic, Eq, Ord)
 instance FromJSON FuncAnnotation
 instance ToJSON FuncAnnotation
 
@@ -195,7 +195,7 @@ loadDependencies' includeStd summaryDir deps = do
 -- binding generation.
 loadTransDeps :: FilePath -> [String] -> Set String -> DepMap -> IO DepMap
 loadTransDeps summaryDir deps loadedDeps m = do
-  let unmetDeps = filter (`S.member` loadedDeps) deps
+  let unmetDeps = filter (`S.notMember` loadedDeps) deps
       paths = map ((summaryDir </>) . (<.> summaryExtension)) unmetDeps
   case unmetDeps of
     [] -> return m

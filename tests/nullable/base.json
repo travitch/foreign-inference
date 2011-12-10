@@ -1,0 +1,211 @@
+{
+    "libraryDependencies": [],
+    "libraryFunctions": [
+        {
+            "foreignFunctionAnnotations": [],
+            "foreignFunctionLinkage": {
+                "LinkDefault": []
+            },
+            "foreignFunctionName": "argOneNotNull",
+            "foreignFunctionParameters": [
+                {
+                    "parameterAnnotations": [
+                        {
+                            "PANotNull": []
+                        }
+                    ],
+                    "parameterName": "arg1",
+                    "parameterType": {
+                        "CPointer": {
+                            "CInt": 32
+                        }
+                    }
+                },
+                {
+                    "parameterAnnotations": [],
+                    "parameterName": "arg2",
+                    "parameterType": {
+                        "CPointer": {
+                            "CInt": 32
+                        }
+                    }
+                }
+            ],
+            "foreignFunctionReturnType": {
+                "CFunction": [
+                    {
+                        "CInt": 32
+                    },
+                    [
+                        {
+                            "CPointer": {
+                                "CInt": 32
+                            }
+                        },
+                        {
+                            "CPointer": {
+                                "CInt": 32
+                            }
+                        }
+                    ],
+                    false
+                ]
+            }
+        },
+        {
+            "foreignFunctionAnnotations": [],
+            "foreignFunctionLinkage": {
+                "LinkDefault": []
+            },
+            "foreignFunctionName": "argTwoNotNull",
+            "foreignFunctionParameters": [
+                {
+                    "parameterAnnotations": [],
+                    "parameterName": "arg1",
+                    "parameterType": {
+                        "CPointer": {
+                            "CInt": 32
+                        }
+                    }
+                },
+                {
+                    "parameterAnnotations": [
+                        {
+                            "PANotNull": []
+                        }
+                    ],
+                    "parameterName": "arg2",
+                    "parameterType": {
+                        "CPointer": {
+                            "CInt": 32
+                        }
+                    }
+                }
+            ],
+            "foreignFunctionReturnType": {
+                "CFunction": [
+                    {
+                        "CInt": 32
+                    },
+                    [
+                        {
+                            "CPointer": {
+                                "CInt": 32
+                            }
+                        },
+                        {
+                            "CPointer": {
+                                "CInt": 32
+                            }
+                        }
+                    ],
+                    false
+                ]
+            }
+        },
+        {
+            "foreignFunctionAnnotations": [],
+            "foreignFunctionLinkage": {
+                "LinkDefault": []
+            },
+            "foreignFunctionName": "bothNotNull",
+            "foreignFunctionParameters": [
+                {
+                    "parameterAnnotations": [
+                        {
+                            "PANotNull": []
+                        }
+                    ],
+                    "parameterName": "arg1",
+                    "parameterType": {
+                        "CPointer": {
+                            "CInt": 32
+                        }
+                    }
+                },
+                {
+                    "parameterAnnotations": [
+                        {
+                            "PANotNull": []
+                        }
+                    ],
+                    "parameterName": "arg2",
+                    "parameterType": {
+                        "CPointer": {
+                            "CInt": 32
+                        }
+                    }
+                }
+            ],
+            "foreignFunctionReturnType": {
+                "CFunction": [
+                    {
+                        "CInt": 32
+                    },
+                    [
+                        {
+                            "CPointer": {
+                                "CInt": 32
+                            }
+                        },
+                        {
+                            "CPointer": {
+                                "CInt": 32
+                            }
+                        }
+                    ],
+                    false
+                ]
+            }
+        },
+        {
+            "foreignFunctionAnnotations": [],
+            "foreignFunctionLinkage": {
+                "LinkDefault": []
+            },
+            "foreignFunctionName": "allArgsNullable",
+            "foreignFunctionParameters": [
+                {
+                    "parameterAnnotations": [],
+                    "parameterName": "arg1",
+                    "parameterType": {
+                        "CPointer": {
+                            "CInt": 32
+                        }
+                    }
+                },
+                {
+                    "parameterAnnotations": [],
+                    "parameterName": "arg2",
+                    "parameterType": {
+                        "CPointer": {
+                            "CInt": 32
+                        }
+                    }
+                }
+            ],
+            "foreignFunctionReturnType": {
+                "CFunction": [
+                    {
+                        "CInt": 32
+                    },
+                    [
+                        {
+                            "CPointer": {
+                                "CInt": 32
+                            }
+                        },
+                        {
+                            "CPointer": {
+                                "CInt": 32
+                            }
+                        }
+                    ],
+                    false
+                ]
+            }
+        }
+    ],
+    "libraryName": "base",
+    "libraryTypes": []
+}

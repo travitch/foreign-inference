@@ -303,7 +303,7 @@ definedFunctionTransfer :: EscapeGraph -> SummaryType -> Function
 definedFunctionTransfer eg summ f ni args =
   foldl' markArgNotNullable ni indexedNotNullArgs
   where
-    err = error ("No summary for " ++ show (functionName f))
+    err = error ("No Function summary for " ++ show (functionName f))
     formals = functionParameters f
     notNullableArgs = M.findWithDefault err f summ
     isNotNullable (a, _) = S.member a notNullableArgs
@@ -313,7 +313,17 @@ definedFunctionTransfer eg summ f ni args =
 
 externalFunctionTransfer :: EscapeGraph -> DependencySummary -> ExternalFunction
                             -> NullInfo -> [Value] -> NullInfo
-externalFunctionTransfer eg summ e ni args = undefined
+externalFunctionTransfer eg summ e ni args =
+  foldl' markIfNotNullable ni indexedArgs
+  where
+    err = error ("No ExternalFunction summary for " ++ show (externalFunctionName e))
+    indexedArgs = zip [0..] args
+    markIfNotNullable info (ix, arg) =
+      case lookupArgumentSummary summ e ix of
+        Nothing -> info
+        Just attrs -> case PANotNull `elem` attrs of
+          False -> info
+          True -> addUncheckedAccess eg info arg
 
 -- Helpers
 toArg :: Value -> Maybe Argument

@@ -15,6 +15,7 @@
 -- some metadata.
 module Foreign.Inference.Interface (
   -- * Classes
+  SummarizeModule(..),
   ModuleSummary(..),
   -- * Types
   DependencySummary,
@@ -141,10 +142,17 @@ data StdLib = CStdLib
 
 -- | An interface for analyses to implement in order to annotate
 -- constructs in 'Module's.
-class ModuleSummary s where
+class SummarizeModule s where
   summarizeArgument :: Argument -> s -> [ParamAnnotation]
   summarizeFunction :: Function -> s -> [FuncAnnotation]
 
+summarizeArgument' :: Argument -> ModuleSummary -> [ParamAnnotation]
+summarizeArgument' a (ModuleSummary s) = summarizeArgument a s
+
+summarizeFunction' :: Function -> ModuleSummary -> [FuncAnnotation]
+summarizeFunction' f (ModuleSummary s) = summarizeFunction f s
+
+data ModuleSummary = forall a . (SummarizeModule a) => ModuleSummary a
 
 -- | Persist a 'LibraryInterface' to disk in the given @summaryDir@.
 -- It uses the name specified in the 'LibraryInterface' to choose the
@@ -159,7 +167,7 @@ saveInterface summaryDir i = do
 
 -- | A shortcut to convert a 'Module' into a 'LibraryInterface' and
 -- then persist it as in 'saveInterface'.
-saveModule :: forall s . (ModuleSummary s) => FilePath -> String -> [String] -> Module -> [s] -> IO ()
+saveModule :: FilePath -> String -> [String] -> Module -> [ModuleSummary] -> IO ()
 saveModule summaryDir name deps m summaries = do
   let i = moduleToLibraryInterface m name deps summaries
   saveInterface summaryDir i
@@ -235,11 +243,10 @@ parseInterface p = do
 
 -- | Convert a Module to a LibraryInterface using the information in
 -- the provided 'ModuleSummary's.
-moduleToLibraryInterface :: forall s . (ModuleSummary s)
-                            => Module   -- ^ Module to summarize
+moduleToLibraryInterface :: Module   -- ^ Module to summarize
                             -> String   -- ^ Module name
                             -> [String] -- ^ Module dependencies
-                            -> [s]      -- ^ Summary information from analyses
+                            -> [ModuleSummary] -- ^ Summary information from analyses
                             -> LibraryInterface
 moduleToLibraryInterface m name deps summaries =
   LibraryInterface { libraryFunctions = funcs
@@ -253,7 +260,7 @@ moduleToLibraryInterface m name deps summaries =
     funcs = mapMaybe (functionToExternal summaries) (moduleDefinedFunctions m)
 
 -- | Summarize a single function
-functionToExternal :: forall s . (ModuleSummary s) => [s] -> Function -> Maybe ForeignFunction
+functionToExternal :: [ModuleSummary] -> Function -> Maybe ForeignFunction
 functionToExternal summaries f = case toLinkage (functionLinkage f) of
   Nothing -> Nothing
   Just l ->
@@ -264,14 +271,14 @@ functionToExternal summaries f = case toLinkage (functionLinkage f) of
                          , foreignFunctionAnnotations = annots
                          }
   where
-    annots = concatMap (summarizeFunction f) summaries
+    annots = concatMap (summarizeFunction' f) summaries
     params = map (paramToExternal summaries) (functionParameters f)
 
-paramToExternal :: forall s . (ModuleSummary s) => [s] -> Argument -> Parameter
+paramToExternal :: [ModuleSummary] -> Argument -> Parameter
 paramToExternal summaries arg =
   Parameter { parameterType = typeToCType (argumentType arg)
             , parameterName = SBS.unpack (identifierContent (argumentName arg))
-            , parameterAnnotations = concatMap (summarizeArgument arg) summaries
+            , parameterAnnotations = concatMap (summarizeArgument' arg) summaries
             }
 
 -- | Look up the summary information for the indicated parameter.

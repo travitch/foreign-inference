@@ -55,7 +55,7 @@ type SummaryType = Map Function (Set Argument)
 newtype NullableSummary = NS SummaryType
                         deriving (Eq)
 
-instance ModuleSummary NullableSummary where
+instance SummarizeModule NullableSummary where
   summarizeFunction _ _ = []
   summarizeArgument = summarizeNullArgument
 

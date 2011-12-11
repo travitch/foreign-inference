@@ -7,6 +7,7 @@ import Data.LLVM.Analysis.Escape
 import Data.LLVM.Analysis.PointsTo.TrivialFunction
 import Data.LLVM.Parse
 import Foreign.Inference.Interface
+import Foreign.Inference.Analysis.Array
 import Foreign.Inference.Analysis.Nullable
 
 main :: IO ()
@@ -18,4 +19,5 @@ main = do
       er = runEscapeAnalysis m cg
   ds <- loadDependencies' [] "." []
   let s = identifyNullable ds m cg er
-  saveModule "." name [] m [s]
+      a = identifyArrays cg er
+  saveModule "." name [] m [ModuleSummary s, ModuleSummary a]

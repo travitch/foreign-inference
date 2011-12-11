@@ -8,7 +8,7 @@
 -- accessed.
 module Foreign.Inference.Analysis.Array (
   -- * Interface
-  ArrayParamSummary,
+  ArraySummary,
   identifyArrays,
   -- * Testing
   arraySummaryToTestFormat
@@ -17,7 +17,6 @@ module Foreign.Inference.Analysis.Array (
 import Data.Map ( Map )
 import qualified Data.Map as M
 import Data.Maybe ( mapMaybe )
-import qualified Data.Set as S
 
 import Data.LLVM
 import Data.LLVM.CallGraph
@@ -31,7 +30,16 @@ type SummaryType = Map Argument Int
 
 -- | Summarize the array parameters in the module.  This maps each
 -- array argument to its inferred dimensionality.
-newtype ArrayParamSummary = APS SummaryType
+newtype ArraySummary = APS SummaryType
+
+instance SummarizeModule ArraySummary where
+  summarizeFunction _ _ = []
+  summarizeArgument = summarizeArrayArgument
+
+summarizeArrayArgument :: Argument -> ArraySummary -> [ParamAnnotation]
+summarizeArrayArgument a (APS summ) = case M.lookup a summ of
+  Nothing -> []
+  Just depth -> [PAArray depth]
 
 -- | The analysis to generate array parameter summaries for an entire
 -- Module (via the CallGraph).  Example usage:
@@ -40,7 +48,7 @@ newtype ArrayParamSummary = APS SummaryType
 -- >     cg = mkCallGraph m pta []
 -- >     er = runEscapeAnalysis m cg
 -- > in identifyArrays cg er
-identifyArrays :: CallGraph -> EscapeResult -> ArrayParamSummary
+identifyArrays :: CallGraph -> EscapeResult -> ArraySummary
 identifyArrays cg er = APS $ callGraphSCCTraversal cg (arrayAnalysis er) M.empty
 
 -- | The summarization function - add a summary for the current
@@ -113,7 +121,7 @@ isArrayDeref er inst = case valueContent inst of
 
 -- Testing
 
-arraySummaryToTestFormat :: ArrayParamSummary -> Map (String, String) Int
+arraySummaryToTestFormat :: ArraySummary -> Map (String, String) Int
 arraySummaryToTestFormat (APS summ) = M.mapKeys argToString summ
   where
     argToString a =

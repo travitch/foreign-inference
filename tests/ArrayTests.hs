@@ -1,5 +1,6 @@
 module Main ( main ) where
 
+import System.Environment ( getArgs, withArgs )
 import System.FilePath ( (<.>) )
 import Test.HUnit ( assertEqual )
 
@@ -11,21 +12,29 @@ import Data.LLVM.Analysis.PointsTo
 import Data.LLVM.Analysis.PointsTo.TrivialFunction
 import Data.LLVM.Testing
 
+import Foreign.Inference.Interface
 import Foreign.Inference.Analysis.Array
 
 main :: IO ()
-main = testAgainstExpected bcParser testDescriptors
+main = do
+  args <- getArgs
+  let pattern = case args of
+        [] -> "tests/arrays/*.c"
+        [infile] -> infile
+  ds <- loadDependencies' [] "tests/arrays" ["base"]
+  let testDescriptors = [ TestDescriptor { testPattern = pattern
+                                         , testExpectedMapping = (<.> "expected")
+                                         , testResultBuilder = analyzeArrays ds
+                                         , testResultComparator = assertEqual
+                                         }
+                        ]
+  withArgs [] $ testAgainstExpected bcParser testDescriptors
   where
     bcParser = parseLLVMFile defaultParserOptions
 
-testDescriptors = [ TestDescriptor { testPattern = "tests/arrays/*.c"
-                                   , testExpectedMapping = (<.> "expected")
-                                   , testResultBuilder = analyzeArrays
-                                   , testResultComparator = assertEqual
-                                   }
-                  ]
 
-analyzeArrays m = arraySummaryToTestFormat $ identifyArrays cg er
+
+analyzeArrays ds m = arraySummaryToTestFormat $ identifyArrays ds cg er
   where
     pta = runPointsToAnalysis m
     cg = mkCallGraph m pta []

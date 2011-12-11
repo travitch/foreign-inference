@@ -39,10 +39,3 @@ analyzeNullable ds m = nullSummaryToTestFormat $ identifyNullable ds m cg er
     pta = runPointsToAnalysis m
     cg = mkCallGraph m pta []
     er = runEscapeAnalysis m cg
-{-
-convertSummary = M.mapKeys keyMapper . M.map valMapper . M.filter notEmptySet
-  where
-    notEmptySet = not . S.null
-    valMapper = S.map (show . argumentName)
-    keyMapper = show . functionName
--}

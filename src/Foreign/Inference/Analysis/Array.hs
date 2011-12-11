@@ -14,9 +14,9 @@ module Foreign.Inference.Analysis.Array (
   arraySummaryToTestFormat
   ) where
 
+import Data.List ( foldl' )
 import Data.Map ( Map )
 import qualified Data.Map as M
-import Data.Maybe ( mapMaybe )
 
 import Data.LLVM
 import Data.LLVM.CallGraph
@@ -50,22 +50,23 @@ summarizeArrayArgument a (APS summ) = case M.lookup a summ of
 -- >     cg = mkCallGraph m pta []
 -- >     er = runEscapeAnalysis m cg
 -- > in identifyArrays cg er
-identifyArrays :: CallGraph -> EscapeResult -> ArraySummary
-identifyArrays cg er = APS $ callGraphSCCTraversal cg (arrayAnalysis er) M.empty
+identifyArrays :: DependencySummary -> CallGraph -> EscapeResult -> ArraySummary
+identifyArrays ds cg er = APS $ callGraphSCCTraversal cg (arrayAnalysis ds er) M.empty
 
 -- | The summarization function - add a summary for the current
 -- Function to the current summary.  This function collects all of the
 -- base+offset pairs and then uses @traceFromBases@ to reconstruct
 -- them.
-arrayAnalysis :: EscapeResult
+arrayAnalysis :: DependencySummary
+                 -> EscapeResult
                  -> Function
                  -> SummaryType
                  -> SummaryType
-arrayAnalysis er f summary =
+arrayAnalysis ds er f summary =
   M.foldlWithKey' (traceFromBases baseResultMap) summary baseResultMap
   where
     insts = concatMap basicBlockInstructions (functionBody f)
-    basesAndOffsets = mapMaybe (isArrayDeref er) insts
+    basesAndOffsets = concatMap (isArrayDeref ds summary er) insts
     baseResultMap = foldr addDeref M.empty basesAndOffsets
     addDeref (base, use) acc = M.insert base use acc
 
@@ -100,7 +101,7 @@ addToSummary depth arg summ =
 
 
 data PointerUse = IndexOperation Value [Value] EscapeGraph
-                | CallArgument Int EscapeGraph
+                | CallArgument Value Int EscapeGraph
 
 traceBackwards :: Map Value PointerUse -> Value -> Int -> Int
 traceBackwards baseResultMap result depth =
@@ -109,22 +110,27 @@ traceBackwards baseResultMap result depth =
   case M.lookup result baseResultMap of
     Nothing -> depth
     Just (IndexOperation result' _ _) -> traceBackwards baseResultMap result' (depth + 1)
---    Just (result', _, _) -> traceBackwards baseResultMap result' (depth + 1)
 
-
--- isArrayDeref :: EscapeResult -> Instruction -> Maybe (Value, Value, [Value], EscapeGraph)
-isArrayDeref :: EscapeResult -> Instruction -> Maybe (Value, PointerUse)
-isArrayDeref er inst = case valueContent inst of
+isArrayDeref :: DependencySummary
+                -> SummaryType
+                -> EscapeResult
+                -> Instruction
+                -> [(Value, PointerUse)]
+isArrayDeref ds summ er inst = case valueContent inst of
   InstructionC LoadInst { loadAddress = (valueContent ->
      InstructionC GetElementPtrInst { getElementPtrValue = base
                                     , getElementPtrIndices = idxs
                                     })} -> case idxs of
     [] -> error ("GEP <isArrayDeref> with no indices")
-    [_] -> Just (base, IndexOperation (Value inst) idxs (escapeGraphAtLocation er inst))
+    [_] -> [(base, IndexOperation (Value inst) idxs (escapeGraphAtLocation er inst))]
     (valueContent' -> ConstantC ConstantInt { constantIntValue = 0 }) :
-      (valueContent' -> ConstantC ConstantInt {}) : _ -> Nothing
-    _ -> Just (base, IndexOperation (Value inst) idxs (escapeGraphAtLocation er inst))
-  _ -> Nothing
+      (valueContent' -> ConstantC ConstantInt {}) : _ -> []
+    _ -> [(base, IndexOperation (Value inst) idxs (escapeGraphAtLocation er inst))]
+  InstructionC CallInst { callFunction = f, callArguments = args } ->
+    foldl' (collectArrayArgs ds (escapeGraphAtLocation er inst) f) [] args
+  _ -> []
+
+collectArrayArgs ds eg f lst arg = undefined
 
 -- Testing
 

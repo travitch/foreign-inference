@@ -19,5 +19,5 @@ main = do
       er = runEscapeAnalysis m cg
   ds <- loadDependencies' [] "." []
   let s = identifyNullable ds m cg er
-      a = identifyArrays cg er
+      a = identifyArrays ds cg er
   saveModule "." name [] m [ModuleSummary s, ModuleSummary a]

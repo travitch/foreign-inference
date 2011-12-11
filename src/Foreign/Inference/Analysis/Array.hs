@@ -26,6 +26,8 @@ import Data.LLVM.Analysis.Escape
 import Foreign.Inference.Interface
 import Foreign.Inference.Internal.ValueArguments
 
+-- | The real type of the summary (without the wrapper that is exposed
+-- to clients).
 type SummaryType = Map Argument Int
 
 -- | Summarize the array parameters in the module.  This maps each
@@ -104,8 +106,7 @@ traceBackwards baseResultMap result depth =
     Nothing -> depth
     Just (result', _, _) -> traceBackwards baseResultMap result' (depth + 1)
 
--- | FIXME: Ignore GEPs that are struct references (constant zero base
--- with a second or higher index).
+
 isArrayDeref :: EscapeResult -> Instruction -> Maybe (Value, Value, [Value], EscapeGraph)
 isArrayDeref er inst = case valueContent inst of
   InstructionC LoadInst { loadAddress = (valueContent ->

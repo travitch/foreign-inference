@@ -152,6 +152,8 @@ summarizeArgument' a (ModuleSummary s) = summarizeArgument a s
 summarizeFunction' :: Function -> ModuleSummary -> [FuncAnnotation]
 summarizeFunction' f (ModuleSummary s) = summarizeFunction f s
 
+-- | An existential wrapper around types implementing
+-- 'SummarizeModule' to allow heterogenous lists of analysis results.
 data ModuleSummary = forall a . (SummarizeModule a) => ModuleSummary a
 
 -- | Persist a 'LibraryInterface' to disk in the given @summaryDir@.

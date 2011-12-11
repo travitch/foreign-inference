@@ -68,13 +68,6 @@ summarizeNullArgument a (NS s) = case a `S.member` nonNullableArgs of
     err = error ("Function not in summary: " ++ show (functionName f))
     nonNullableArgs = M.findWithDefault err f s
 
-nullSummaryToTestFormat :: NullableSummary -> Map String (Set String)
-nullSummaryToTestFormat (NS m) = convert m
-  where
-    convert = M.mapKeys keyMapper . M.map valMapper . M.filter notEmptySet
-    notEmptySet = not . S.null
-    valMapper = S.map (show . argumentName)
-    keyMapper = show . functionName
 
 -- | The top-level entry point of the nullability analysis
 identifyNullable :: DependencySummary -> Module -> CallGraph -> EscapeResult -> NullableSummary
@@ -356,3 +349,15 @@ recordPossiblyNull v ni = ni { mayBeNull = S.insert v (mayBeNull ni) }
 
 recordNotNull :: Value -> NullInfo -> NullInfo
 recordNotNull v ni = ni { mayBeNull = S.delete v (mayBeNull ni) }
+
+-- Testing
+
+-- | Convert the 'NullableSummary' to a format that is easy to read
+-- from a file for testing purposes.
+nullSummaryToTestFormat :: NullableSummary -> Map String (Set String)
+nullSummaryToTestFormat (NS m) = convert m
+  where
+    convert = M.mapKeys keyMapper . M.map valMapper . M.filter notEmptySet
+    notEmptySet = not . S.null
+    valMapper = S.map (show . argumentName)
+    keyMapper = show . functionName

@@ -67,7 +67,7 @@ arrayAnalysis er f summary =
     insts = concatMap basicBlockInstructions (functionBody f)
     basesAndOffsets = mapMaybe (isArrayDeref er) insts
     baseResultMap = foldr addDeref M.empty basesAndOffsets
-    addDeref (load, base, offsets, eg) acc = M.insert base (load, offsets, eg) acc
+    addDeref (base, use) acc = M.insert base use acc
 
 -- | Examine a GetElementPtr instruction result.  If the base is an
 -- argument, trace its access structure (using the @baseResultMap@ via
@@ -75,12 +75,12 @@ arrayAnalysis er f summary =
 --
 -- Otherwise, just pass the summary along and try to find the next
 -- access.
-traceFromBases :: Map Value (Value, [Value], EscapeGraph)
+traceFromBases :: Map Value PointerUse
                   -> SummaryType
                   -> Value
-                  -> (Value, [Value], EscapeGraph)
+                  -> PointerUse
                   -> SummaryType
-traceFromBases baseResultMap summary base (result, _, eg) =
+traceFromBases baseResultMap summary base (IndexOperation result _ eg) =
   case argumentsForValue eg base of
     [] -> summary
     args ->
@@ -98,26 +98,32 @@ addToSummary :: Int -> Argument -> SummaryType -> SummaryType
 addToSummary depth arg summ =
   M.insertWith max arg depth summ
 
-traceBackwards :: Map Value (Value, [Value], EscapeGraph) -> Value -> Int -> Int
+
+data PointerUse = IndexOperation Value [Value] EscapeGraph
+                | CallArgument Int EscapeGraph
+
+traceBackwards :: Map Value PointerUse -> Value -> Int -> Int
 traceBackwards baseResultMap result depth =
   -- Is the current result used as the base of an indexing operation?
   -- If so, that adds a level of array wrapping.
   case M.lookup result baseResultMap of
     Nothing -> depth
-    Just (result', _, _) -> traceBackwards baseResultMap result' (depth + 1)
+    Just (IndexOperation result' _ _) -> traceBackwards baseResultMap result' (depth + 1)
+--    Just (result', _, _) -> traceBackwards baseResultMap result' (depth + 1)
 
 
-isArrayDeref :: EscapeResult -> Instruction -> Maybe (Value, Value, [Value], EscapeGraph)
+-- isArrayDeref :: EscapeResult -> Instruction -> Maybe (Value, Value, [Value], EscapeGraph)
+isArrayDeref :: EscapeResult -> Instruction -> Maybe (Value, PointerUse)
 isArrayDeref er inst = case valueContent inst of
   InstructionC LoadInst { loadAddress = (valueContent ->
      InstructionC GetElementPtrInst { getElementPtrValue = base
                                     , getElementPtrIndices = idxs
                                     })} -> case idxs of
     [] -> error ("GEP <isArrayDeref> with no indices")
-    [_] -> Just (Value inst, base, idxs, escapeGraphAtLocation er inst)
+    [_] -> Just (base, IndexOperation (Value inst) idxs (escapeGraphAtLocation er inst))
     (valueContent' -> ConstantC ConstantInt { constantIntValue = 0 }) :
       (valueContent' -> ConstantC ConstantInt {}) : _ -> Nothing
-    _ -> Just (Value inst, base, idxs, escapeGraphAtLocation er inst)
+    _ -> Just (base, IndexOperation (Value inst) idxs (escapeGraphAtLocation er inst))
   _ -> Nothing
 
 -- Testing

@@ -2,9 +2,9 @@
 
 /*
 
-  Since arr is passed to a call that indicates that it is not
-  non-null, we should not count the subsequent unchecked use.
-  Essentially, we treat the call as checking arr for nullness.
+  Here, arr is passed to a call that checks it for NULL.  This should
+  not affect the not-nullability in the caller (f) since it could
+  *still* be null.
 
  */
 

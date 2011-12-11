@@ -7,8 +7,11 @@
 -- Load instructions to reconstruct the shape of arrays that are
 -- accessed.
 module Foreign.Inference.Analysis.Array (
+  -- * Interface
   ArrayParamSummary,
-  identifyArrays
+  identifyArrays,
+  -- * Testing
+  arraySummaryToTestFormat
   ) where
 
 import Data.Map ( Map )
@@ -21,11 +24,14 @@ import Data.LLVM.CallGraph
 import Data.LLVM.Analysis.CallGraphSCCTraversal
 import Data.LLVM.Analysis.Escape
 
+import Foreign.Inference.Interface
 import Foreign.Inference.Internal.ValueArguments
+
+type SummaryType = Map Argument Int
 
 -- | Summarize the array parameters in the module.  This maps each
 -- array argument to its inferred dimensionality.
-type ArrayParamSummary = Map Argument Int
+newtype ArrayParamSummary = APS SummaryType
 
 -- | The analysis to generate array parameter summaries for an entire
 -- Module (via the CallGraph).  Example usage:
@@ -35,7 +41,7 @@ type ArrayParamSummary = Map Argument Int
 -- >     er = runEscapeAnalysis m cg
 -- > in identifyArrays cg er
 identifyArrays :: CallGraph -> EscapeResult -> ArrayParamSummary
-identifyArrays cg er = callGraphSCCTraversal cg (arrayAnalysis er) M.empty
+identifyArrays cg er = APS $ callGraphSCCTraversal cg (arrayAnalysis er) M.empty
 
 -- | The summarization function - add a summary for the current
 -- Function to the current summary.  This function collects all of the
@@ -43,8 +49,8 @@ identifyArrays cg er = callGraphSCCTraversal cg (arrayAnalysis er) M.empty
 -- them.
 arrayAnalysis :: EscapeResult
                  -> Function
-                 -> ArrayParamSummary
-                 -> ArrayParamSummary
+                 -> SummaryType
+                 -> SummaryType
 arrayAnalysis er f summary =
   M.foldlWithKey' (traceFromBases baseResultMap) summary baseResultMap
   where
@@ -60,10 +66,10 @@ arrayAnalysis er f summary =
 -- Otherwise, just pass the summary along and try to find the next
 -- access.
 traceFromBases :: Map Value (Value, [Value], EscapeGraph)
-                  -> ArrayParamSummary
+                  -> SummaryType
                   -> Value
                   -> (Value, [Value], EscapeGraph)
-                  -> ArrayParamSummary
+                  -> SummaryType
 traceFromBases baseResultMap summary base (result, _, eg) =
   case argumentsForValue eg base of
     [] -> summary
@@ -78,7 +84,7 @@ traceFromBases baseResultMap summary base (result, _, eg) =
 -- (i.e., inserting an array depth of 1 for an argument that is
 -- already recorded as having depth 2 will not make any changes to the
 -- summary).
-addToSummary :: Int -> Argument -> ArrayParamSummary -> ArrayParamSummary
+addToSummary :: Int -> Argument -> SummaryType -> SummaryType
 addToSummary depth arg summ =
   M.insertWith max arg depth summ
 
@@ -104,3 +110,12 @@ isArrayDeref er inst = case valueContent inst of
       (valueContent' -> ConstantC ConstantInt {}) : _ -> Nothing
     _ -> Just (Value inst, base, idxs, escapeGraphAtLocation er inst)
   _ -> Nothing
+
+-- Testing
+
+arraySummaryToTestFormat :: ArrayParamSummary -> Map (String, String) Int
+arraySummaryToTestFormat (APS summ) = M.mapKeys argToString summ
+  where
+    argToString a =
+      let f = argumentFunction a
+      in (show (functionName f), show (argumentName a))

@@ -88,7 +88,7 @@ traceFromBases baseResultMap summary base (IndexOperation result _ eg) =
     args ->
       let depth = traceBackwards baseResultMap result 1
       in foldr (addToSummary depth) summary args
-traceFromBases baseResultMap summary base (CallArgument depth eg) =
+traceFromBases _ summary base (CallArgument depth eg) =
   case argumentsForValue eg base of
     [] -> summary
     args -> foldr (addToSummary depth) summary args

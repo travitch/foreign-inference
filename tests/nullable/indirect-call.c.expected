@@ -1,0 +1,3 @@
+fromList [ ("@f", fromList ["%a", "%b"])
+         , ("@neitherNullable", fromList ["%a", "%b"])
+         ]

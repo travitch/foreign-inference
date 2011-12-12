@@ -71,7 +71,7 @@ summarizeNullArgument a (NS s) = case a `S.member` nonNullableArgs of
 
 -- | The top-level entry point of the nullability analysis
 identifyNullable :: DependencySummary -> Module -> CallGraph -> EscapeResult -> NullableSummary
-identifyNullable ds m cg er = NS $ callGraphSCCTraversal cg (nullableAnalysis ds er) s0
+identifyNullable ds m cg er = NS $ callGraphSCCTraversal cg (nullableAnalysis cg ds er) s0
   where
     s0 = M.fromList $ zip (moduleDefinedFunctions m) (repeat S.empty)
 
@@ -84,6 +84,7 @@ data NullInfo = NI { mayBeNull :: Set Value  -- ^ The set of variables that may 
 data NullData = ND { escapeResult :: EscapeResult
                    , moduleSummary :: SummaryType
                    , dependencySummary :: DependencySummary
+                   , callGraph :: CallGraph
                    }
 
 
@@ -109,11 +110,12 @@ meetNullInfo ni1 ni2 =
 --
 -- This set of arguments is added to the global summary data (set of
 -- all non-nullable arguments).
-nullableAnalysis :: DependencySummary -> EscapeResult -> Function -> SummaryType -> SummaryType
-nullableAnalysis ds er f summ = M.insert f justArgs summ
+nullableAnalysis :: CallGraph -> DependencySummary -> EscapeResult
+                    -> Function -> SummaryType -> SummaryType
+nullableAnalysis cg ds er f summ = M.insert f justArgs summ
   where
     -- The global data is the escape analysis result
-    nd = ND er summ ds
+    nd = ND er summ ds cg
     -- Start off by assuming that all pointer parameters are NULL
     s0 = top
     localInfo = forwardDataflow nd s0 f
@@ -292,13 +294,15 @@ processCFGEdge ni cond v = case valueContent v of
 -- | A split out transfer function for function calls.  Looks up
 -- summary values for called functions/params and records relevant
 -- information in the current dataflow fact.
---
--- FIXME: handle indirect calls
 callTransfer :: NullData -> EscapeGraph -> NullInfo -> Value -> [Value] -> NullInfo
 callTransfer nd eg ni calledFunc args =
-  case valueContent' calledFunc of
-    FunctionC f -> definedFunctionTransfer eg (moduleSummary nd) f ni args
-    ExternalFunctionC e -> externalFunctionTransfer eg (dependencySummary nd) e ni args
+  foldl' callTransferDispatch ni callTargets
+  where
+    callTargets = callValueTargets (callGraph nd) calledFunc
+    callTransferDispatch info target =
+      case valueContent' target of
+        FunctionC f -> definedFunctionTransfer eg (moduleSummary nd) f info args
+        ExternalFunctionC e -> externalFunctionTransfer eg (dependencySummary nd) e info args
 
 definedFunctionTransfer :: EscapeGraph -> SummaryType -> Function
                            -> NullInfo -> [Value] -> NullInfo

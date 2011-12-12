@@ -88,7 +88,10 @@ traceFromBases baseResultMap summary base (IndexOperation result _ eg) =
     args ->
       let depth = traceBackwards baseResultMap result 1
       in foldr (addToSummary depth) summary args
-
+traceFromBases baseResultMap summary base (CallArgument depth eg) =
+  case argumentsForValue eg base of
+    [] -> summary
+    args -> foldr (addToSummary depth) summary args
 
 -- | Update the summary for an argument with a depth.
 --
@@ -111,6 +114,7 @@ traceBackwards baseResultMap result depth =
   case M.lookup result baseResultMap of
     Nothing -> depth
     Just (IndexOperation result' _ _) -> traceBackwards baseResultMap result' (depth + 1)
+    Just (CallArgument d _ _) ->
 
 isArrayDeref :: CallGraph
                 -> DependencySummary

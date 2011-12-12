@@ -51,22 +51,23 @@ summarizeArrayArgument a (APS summ) = case M.lookup a summ of
 -- >     er = runEscapeAnalysis m cg
 -- > in identifyArrays cg er
 identifyArrays :: DependencySummary -> CallGraph -> EscapeResult -> ArraySummary
-identifyArrays ds cg er = APS $ callGraphSCCTraversal cg (arrayAnalysis ds er) M.empty
+identifyArrays ds cg er = APS $ callGraphSCCTraversal cg (arrayAnalysis cg ds er) M.empty
 
 -- | The summarization function - add a summary for the current
 -- Function to the current summary.  This function collects all of the
 -- base+offset pairs and then uses @traceFromBases@ to reconstruct
 -- them.
-arrayAnalysis :: DependencySummary
+arrayAnalysis :: CallGraph
+                 -> DependencySummary
                  -> EscapeResult
                  -> Function
                  -> SummaryType
                  -> SummaryType
-arrayAnalysis ds er f summary =
+arrayAnalysis cg ds er f summary =
   M.foldlWithKey' (traceFromBases baseResultMap) summary baseResultMap
   where
     insts = concatMap basicBlockInstructions (functionBody f)
-    basesAndOffsets = concatMap (isArrayDeref ds summary er) insts
+    basesAndOffsets = concatMap (isArrayDeref cg ds summary er) insts
     baseResultMap = foldr addDeref M.empty basesAndOffsets
     addDeref (base, use) acc = M.insert base use acc
 
@@ -101,7 +102,7 @@ addToSummary depth arg summ =
 
 
 data PointerUse = IndexOperation Value [Value] EscapeGraph
-                | CallArgument Value Int EscapeGraph
+                | CallArgument Int EscapeGraph
 
 traceBackwards :: Map Value PointerUse -> Value -> Int -> Int
 traceBackwards baseResultMap result depth =
@@ -111,12 +112,13 @@ traceBackwards baseResultMap result depth =
     Nothing -> depth
     Just (IndexOperation result' _ _) -> traceBackwards baseResultMap result' (depth + 1)
 
-isArrayDeref :: DependencySummary
+isArrayDeref :: CallGraph
+                -> DependencySummary
                 -> SummaryType
                 -> EscapeResult
                 -> Instruction
                 -> [(Value, PointerUse)]
-isArrayDeref ds summ er inst = case valueContent inst of
+isArrayDeref cg ds summ er inst = case valueContent inst of
   InstructionC LoadInst { loadAddress = (valueContent ->
      InstructionC GetElementPtrInst { getElementPtrValue = base
                                     , getElementPtrIndices = idxs
@@ -127,10 +129,51 @@ isArrayDeref ds summ er inst = case valueContent inst of
       (valueContent' -> ConstantC ConstantInt {}) : _ -> []
     _ -> [(base, IndexOperation (Value inst) idxs (escapeGraphAtLocation er inst))]
   InstructionC CallInst { callFunction = f, callArguments = args } ->
-    foldl' (collectArrayArgs ds (escapeGraphAtLocation er inst) f) [] args
+    let eg = escapeGraphAtLocation er inst
+        indexedArgs = zip [0..] (map fst args)
+    in foldl' (collectArrayArgs cg ds summ eg f) [] indexedArgs
+  InstructionC InvokeInst { invokeFunction = f, invokeArguments = args } ->
+    let eg = escapeGraphAtLocation er inst
+        indexedArgs = zip [0..] (map fst args)
+    in foldl' (collectArrayArgs cg ds summ eg f) [] indexedArgs
   _ -> []
 
-collectArrayArgs ds eg f lst arg = undefined
+-- | If the argument is an array (according to either the module
+-- summary or the dependency summary), make a CallArgument tag for it.
+collectArrayArgs :: CallGraph -> DependencySummary -> SummaryType -> EscapeGraph
+                    -> Value -> [(Value, PointerUse)] -> (Int, Value)
+                    -> [(Value, PointerUse)]
+collectArrayArgs cg ds summ eg f lst (ix, arg) =
+  foldl' (collectArrayArgsForCallee ds summ eg ix arg) lst callTargets
+  where
+    callTargets = callValueTargets cg f
+
+collectArrayArgsForCallee :: DependencySummary -> SummaryType -> EscapeGraph
+                             -> Int -> Value -> [(Value, PointerUse)] -> Value
+                             -> [(Value, PointerUse)]
+collectArrayArgsForCallee ds summ eg ix arg lst callee =
+  case valueContent' callee of
+    FunctionC f ->
+      let funcArgs = functionParameters f
+      in case length funcArgs > ix of
+        True -> case M.lookup (funcArgs !! ix) summ of
+          Nothing -> lst
+          Just depth -> (arg, CallArgument depth eg) : lst
+        False -> error "ArrayAnalysis: argument index out of range"
+    -- Look up the ixth argument of the callee in the
+    -- DependencySummary and record it if it is tagged with a PAArray
+    -- annotation
+    ExternalFunctionC e ->
+      case lookupArgumentSummary ds e ix of
+        Nothing -> lst
+        Just annots -> case filter isArrayAnnot annots of
+          [] -> lst
+          [PAArray depth] -> (arg, CallArgument depth eg) : lst
+
+isArrayAnnot :: ParamAnnotation -> Bool
+isArrayAnnot (PAArray _) = True
+isArrayAnnot _ = False
+
 
 -- Testing
 

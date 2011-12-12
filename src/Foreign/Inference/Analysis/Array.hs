@@ -114,7 +114,7 @@ traceBackwards baseResultMap result depth =
   case M.lookup result baseResultMap of
     Nothing -> depth
     Just (IndexOperation result' _ _) -> traceBackwards baseResultMap result' (depth + 1)
-    Just (CallArgument d _ _) ->
+    Just (CallArgument d _) -> depth + d
 
 isArrayDeref :: CallGraph
                 -> DependencySummary

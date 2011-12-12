@@ -1,0 +1,249 @@
+{
+    "libraryDependencies": [],
+    "libraryFunctions": [
+        {
+            "foreignFunctionAnnotations": [],
+            "foreignFunctionLinkage": {
+                "LinkDefault": []
+            },
+            "foreignFunctionName": "oneDimAccess",
+            "foreignFunctionParameters": [
+                {
+                    "parameterAnnotations": [
+                        {
+                            "PANotNull": []
+                        },
+                        {
+                            "PAArray": 1
+                        }
+                    ],
+                    "parameterName": "arr",
+                    "parameterType": {
+                        "CPointer": {
+                            "CInt": 32
+                        }
+                    }
+                },
+                {
+                    "parameterAnnotations": [
+                        {
+                            "PANotNull": []
+                        }
+                    ],
+                    "parameterName": "in",
+                    "parameterType": {
+                        "CPointer": {
+                            "CInt": 32
+                        }
+                    }
+                }
+            ],
+            "foreignFunctionReturnType": {
+                "CFunction": [
+                    {
+                        "CInt": 32
+                    },
+                    [
+                        {
+                            "CPointer": {
+                                "CInt": 32
+                            }
+                        },
+                        {
+                            "CPointer": {
+                                "CInt": 32
+                            }
+                        }
+                    ],
+                    false
+                ]
+            }
+        },
+        {
+            "foreignFunctionAnnotations": [],
+            "foreignFunctionLinkage": {
+                "LinkDefault": []
+            },
+            "foreignFunctionName": "twoDimAccess",
+            "foreignFunctionParameters": [
+                {
+                    "parameterAnnotations": [
+                        {
+                            "PANotNull": []
+                        },
+                        {
+                            "PAArray": 2
+                        }
+                    ],
+                    "parameterName": "arr",
+                    "parameterType": {
+                        "CPointer": {
+                            "CPointer": {
+                                "CInt": 32
+                            }
+                        }
+                    }
+                },
+                {
+                    "parameterAnnotations": [
+                        {
+                            "PANotNull": []
+                        }
+                    ],
+                    "parameterName": "in",
+                    "parameterType": {
+                        "CPointer": {
+                            "CInt": 32
+                        }
+                    }
+                }
+            ],
+            "foreignFunctionReturnType": {
+                "CFunction": [
+                    {
+                        "CInt": 32
+                    },
+                    [
+                        {
+                            "CPointer": {
+                                "CPointer": {
+                                    "CInt": 32
+                                }
+                            }
+                        },
+                        {
+                            "CPointer": {
+                                "CInt": 32
+                            }
+                        }
+                    ],
+                    false
+                ]
+            }
+        },
+        {
+            "foreignFunctionAnnotations": [],
+            "foreignFunctionLinkage": {
+                "LinkDefault": []
+            },
+            "foreignFunctionName": "threeDimAccess",
+            "foreignFunctionParameters": [
+                {
+                    "parameterAnnotations": [
+                        {
+                            "PANotNull": []
+                        },
+                        {
+                            "PAArray": 3
+                        }
+                    ],
+                    "parameterName": "arr",
+                    "parameterType": {
+                        "CPointer": {
+                            "CPointer": {
+                                "CPointer": {
+                                    "CInt": 32
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "parameterAnnotations": [
+                        {
+                            "PANotNull": []
+                        }
+                    ],
+                    "parameterName": "in",
+                    "parameterType": {
+                        "CPointer": {
+                            "CInt": 32
+                        }
+                    }
+                }
+            ],
+            "foreignFunctionReturnType": {
+                "CFunction": [
+                    {
+                        "CInt": 32
+                    },
+                    [
+                        {
+                            "CPointer": {
+                                "CPointer": {
+                                    "CPointer": {
+                                        "CInt": 32
+                                    }
+                                }
+                            }
+                        },
+                        {
+                            "CPointer": {
+                                "CInt": 32
+                            }
+                        }
+                    ],
+                    false
+                ]
+            }
+        },
+        {
+            "foreignFunctionAnnotations": [],
+            "foreignFunctionLinkage": {
+                "LinkDefault": []
+            },
+            "foreignFunctionName": "oneDimPtrPtr",
+            "foreignFunctionParameters": [
+                {
+                    "parameterAnnotations": [
+                        {
+                            "PANotNull": []
+                        },
+                        {
+                            "PAArray": 1
+                        }
+                    ],
+                    "parameterName": "arr",
+                    "parameterType": {
+                        "CPointer": {
+                            "CPointer": {
+                                "CInt": 32
+                            }
+                        }
+                    }
+                },
+                {
+                    "parameterAnnotations": [],
+                    "parameterName": "i",
+                    "parameterType": {
+                        "CInt": 32
+                    }
+                }
+            ],
+            "foreignFunctionReturnType": {
+                "CFunction": [
+                    {
+                        "CPointer": {
+                            "CInt": 32
+                        }
+                    },
+                    [
+                        {
+                            "CPointer": {
+                                "CPointer": {
+                                    "CInt": 32
+                                }
+                            }
+                        },
+                        {
+                            "CInt": 32
+                        }
+                    ],
+                    false
+                ]
+            }
+        }
+    ],
+    "libraryName": "base",
+    "libraryTypes": []
+}

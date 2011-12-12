@@ -293,7 +293,7 @@ processCFGEdge ni cond v = case valueContent v of
 -- summary values for called functions/params and records relevant
 -- information in the current dataflow fact.
 --
--- Note, does not handle indirect calls yet.
+-- FIXME: handle indirect calls
 callTransfer :: NullData -> EscapeGraph -> NullInfo -> Value -> [Value] -> NullInfo
 callTransfer nd eg ni calledFunc args =
   case valueContent' calledFunc of

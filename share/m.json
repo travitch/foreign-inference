@@ -1,0 +1,271 @@
+{
+    "libraryDependencies": [],
+    "libraryFunctions": [
+        { "foreignFunctionName": "acos",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CDouble": []},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "x",
+                "parameterType": {"CDouble": []}
+              }
+          ]
+        },
+        { "foreignFunctionName": "asin",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CDouble": []},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "x",
+                "parameterType": {"CDouble": []}
+              }
+          ]
+        },
+        { "foreignFunctionName": "atan",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CDouble": []},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "x",
+                "parameterType": {"CDouble": []}
+              }
+          ]
+        },
+        { "foreignFunctionName": "atan2",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CDouble": []},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "y",
+                "parameterType": {"CDouble": []}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "x",
+                "parameterType": {"CDouble": []}
+              }
+          ]
+        },
+        { "foreignFunctionName": "cos",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CDouble": []},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "x",
+                "parameterType": {"CDouble": []}
+              }
+          ]
+        },
+        { "foreignFunctionName": "cosh",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CDouble": []},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "x",
+                "parameterType": {"CDouble": []}
+              }
+          ]
+        },
+        { "foreignFunctionName": "sin",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CDouble": []},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "x",
+                "parameterType": {"CDouble": []}
+              }
+          ]
+        },
+        { "foreignFunctionName": "sinh",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CDouble": []},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "x",
+                "parameterType": {"CDouble": []}
+              }
+          ]
+        },
+        { "foreignFunctionName": "tan",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CDouble": []},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "x",
+                "parameterType": {"CDouble": []}
+              }
+          ]
+        },
+        { "foreignFunctionName": "tanh",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CDouble": []},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "x",
+                "parameterType": {"CDouble": []}
+              }
+          ]
+        },
+        { "foreignFunctionName": "exp",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CDouble": []},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "x",
+                "parameterType": {"CDouble": []}
+              }
+          ]
+        },
+        { "foreignFunctionName": "frexp",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CDouble": []},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "x",
+                "parameterType": {"CDouble": []}
+              },
+              { "parameterAnnotations": [{"PAOut":[]}],
+                "parameterName": "exponent",
+                "parameterType": {"CPointer": {"CInt": 32}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "ldexp",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CDouble": []},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "x",
+                "parameterType": {"CDouble": []}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "exponent",
+                "parameterType": {"CInt": 32}
+              }
+          ]
+        },
+        { "foreignFunctionName": "log",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CDouble": []},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "x",
+                "parameterType": {"CDouble": []}
+              }
+          ]
+        },
+        { "foreignFunctionName": "log10",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CDouble": []},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "x",
+                "parameterType": {"CDouble": []}
+              }
+          ]
+        },
+        { "foreignFunctionName": "modf",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CDouble": []},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "x",
+                "parameterType": {"CDouble": []}
+              },
+              { "parameterAnnotations": {"PAOut": []},
+                "parameterName": "integer",
+                "parameterType": {"CPointer": {"CInt": 32}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "pow",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CDouble": []},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "x",
+                "parameterType": {"CDouble": []}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "y",
+                "parameterType": {"CDouble": []}
+              }
+          ]
+        },
+        { "foreignFunctionName": "sqrt",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CDouble": []},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "x",
+                "parameterType": {"CDouble": []}
+              }
+          ]
+        },
+        { "foreignFunctionName": "ceil",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CDouble": []},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "x",
+                "parameterType": {"CDouble": []}
+              }
+          ]
+        },
+        { "foreignFunctionName": "fabs",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CDouble": []},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "x",
+                "parameterType": {"CDouble": []}
+              }
+          ]
+        },
+        { "foreignFunctionName": "floor",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CDouble": []},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "x",
+                "parameterType": {"CDouble": []}
+              }
+          ]
+        },
+        { "foreignFunctionName": "fmod",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CDouble": []},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "x",
+                "parameterType": {"CDouble": []}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "y",
+                "parameterType": {"CDouble": []}
+              }
+          ]
+        }
+    ]
+}

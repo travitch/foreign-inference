@@ -1,0 +1,281 @@
+{
+    "libraryDependencies": [],
+    "libraryFunctions": [
+        { "foreignFunctionName": "clearerr",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CVoid": []},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "stream",
+                "parameterType": {"CPointer": {"CStruct": ["FILE", []]}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "fclose",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "stream",
+                "parameterType": {"CPointer": {"CStruct": ["FILE", []]}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "feof",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "stream",
+                "parameterType": {"CPointer": {"CStruct": ["FILE", []]}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "ferror",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "stream",
+                "parameterType": {"CPointer": {"CStruct": ["FILE", []]}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "fflush",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "stream",
+                "parameterType": {"CPointer": {"CStruct": ["FILE", []]}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "fgetpos",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "stream",
+                "parameterType": {"CPointer": {"CStruct": ["FILE", []]}}
+              },
+              { "parameterAnnotations": [{"PAOut":[]}, {"PANotNull":[]}],
+                "parameterName": "pos",
+                "parameterType": {"CPointer": {"CStruct": ["fpos_t", []]}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "fopen",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CPointer": {"CStruct": ["FILE",[]]}},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PAArray": 1}, {"PAConst":[]}, {"PANotNull":[]}, {"PAString":[]}],
+                "parameterName": "filename",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              },
+              { "parameterAnnotations": [{"PAArray": 1}, {"PAConst":[]}, {"PANotNull":[]}, {"PAString":[]}],
+                "parameterName": "mode",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "fread",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CStruct": ["size_t", []]},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PAArray": 1}, {"PANotNull":[]}],
+                "parameterName": "ptr",
+                "parameterType": {"CPointer": {"CVoid":[]}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "size",
+                "parameterType": {"CStruct": ["size_t", []]}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "nmemb",
+                "parameterType": {"CStruct": ["size_t", []]}
+              },
+              { "parameterAnnotations": {"PANotNull":[]},
+                "parameterName": "stream",
+                "parameterType": {"CPointer": {"CStruct": ["FILE", []]}}
+              }
+          ]
+        },,
+        { "foreignFunctionName": "freopen",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CPointer": {"CStruct": ["FILE", []]}},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PAArray": 1}, {"PANotNull":[]}, {"PAString":[]}, {"PAConst":[]}],
+                "parameterName": "filename",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              },
+              { "parameterAnnotations": [{"PAArray": 1}, {"PANotNull":[]}, {"PAString":[]}, {"PAConst":[]}],
+                "parameterName": "mode",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              },
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "stream",
+                "parameterType": {"CPointer": {"CStruct": ["FILE", []]}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "fseek",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "stream",
+                "parameterType": {"CPointer": {"CStruct": ["FILE", []]}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "offset",
+                "parameterType": {"CInt": 64}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "whence",
+                "parameterType": {"CInt": 32}
+              }
+          ]
+        },
+        { "foreignFunctionName": "fsetpos",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "stream",
+                "parameterType": {"CPointer": {"CStruct": ["FILE", []]}}
+              },
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "pos",
+                "parameterType": {"CPointer": {"CStruct": ["fpos_t", []]}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "fwrite",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CStruct": ["size_t", []]},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PAArray": 1}, {"PANotNull":[]}],
+                "parameterName": "ptr",
+                "parameterType": {"CPointer": {"CVoid":[]}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "size",
+                "parameterType": {"CStruct": ["size_t", []]}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "nmemb",
+                "parameterType": {"CStruct": ["size_t", []]}
+              },
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "stream",
+                "parameterType": {"CPointer": {"CStruct": ["FILE", []]}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "remove",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PAArray": 1}, {"PAString":[]}, {"PANotNull":[]}, {"PAConst": []}],
+                "parameterName": "filename",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "rename",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PAArray": 1}, {"PAString":[]}, {"PANotNull":[]}, {"PAConst": []}],
+                "parameterName": "old_filename",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              },
+              { "parameterAnnotations": [{"PAArray": 1}, {"PAString":[]}, {"PANotNull":[]}, {"PAConst": []}],
+                "parameterName": "new_filename",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "rewind",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CVoid": []},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "stream",
+                "parameterType": {"CPointer": {"CStruct": ["FILE", []]}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "setbuf",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CVoid": []},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "stream",
+                "parameterType": {"CPointer": {"CStruct": ["FILE", []]}}
+              },
+              { "parameterAnnotations": [{"PAArray": 1}],
+                "parameterName": "buffer",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "setvbuf",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "stream",
+                "parameterType": {"CPointer": {"CStruct": ["FILE", []]}}
+              },
+              { "parameterAnnotations": [{"PAArray": 1}],
+                "parameterName": "buffer",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "mode",
+                "parameterType": {"CInt": 32}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "size",
+                "parameterType": {"CStruct": ["size_t", []]}
+              }
+          ]
+        },
+        { "foreignFunctionName": "tmpfile",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CPointer": {"CStruct": ["FILE", []]}},
+          "foreignFunctionParameters": []
+        },
+        { "foreignFunctionName": "tmpnam",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CPointer": {"CInt": 8}},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PAArray": 1}, {"PAString": []}],
+                "parameterName": "str",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              }
+          ]
+        },
+    ]
+}

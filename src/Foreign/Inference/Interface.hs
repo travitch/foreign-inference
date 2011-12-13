@@ -39,6 +39,7 @@ module Foreign.Inference.Interface (
 import GHC.Generics
 
 import Data.Aeson
+import Data.Aeson.Encode.Pretty
 import Data.ByteString.Char8 ( ByteString )
 import qualified Data.ByteString.Char8 as SBS
 import qualified Data.ByteString.Lazy as LBS
@@ -163,7 +164,7 @@ data ModuleSummary = forall a . (SummarizeModule a) => ModuleSummary a
 -- > saveInterface summaryDir iface
 saveInterface :: FilePath -> LibraryInterface -> IO ()
 saveInterface summaryDir i = do
-  let bs = encode i
+  let bs = encodePretty i
       path = summaryDir </> libraryName i <.> summaryExtension
   LBS.writeFile path bs
 

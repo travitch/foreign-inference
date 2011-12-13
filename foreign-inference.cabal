@@ -20,9 +20,10 @@ library
                    Foreign.Inference.Analysis.Array,
                    Foreign.Inference.Analysis.Nullable
   other-modules: Foreign.Inference.Internal.ValueArguments
-  build-depends: base > 3 && < 5, containers, unordered-containers >= 0.1.4.0,
-                 hashable, lattices, llvm-analysis, text, bytestring, ghc-prim,
-                 aeson >= 0.4.0.0, filepath
+  build-depends: base > 3 && < 5, containers, filepath, text, bytestring, ghc-prim,
+                 unordered-containers >= 0.1.4.0, hashable,
+                 aeson >= 0.4.0.0, aeson-pretty,
+                 lattices, llvm-analysis
   ghc-options: -Wall -funbox-strict-fields
   ghc-prof-options: -auto-all
 

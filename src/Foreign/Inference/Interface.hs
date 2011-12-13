@@ -59,13 +59,19 @@ summaryExtension = "json"
 
 -- | The annotations that are specific to individual parameters.
 data ParamAnnotation = PAArray !Int
+                     | PAOut
+                     | PAInOut
                      | PANotNull
+                     | PAString
+                     | PAConst
                      deriving (Show, Generic, Eq, Ord)
 instance FromJSON ParamAnnotation
 instance ToJSON ParamAnnotation
 
 -- | The annotations that can apply at the 'ForeignFunction' level.
+-- The FAVarArg annotation is not inferred but is still necessary.
 data FuncAnnotation = FAAllocator
+                    | FAVarArg
                     deriving (Show, Generic, Eq, Ord)
 instance FromJSON FuncAnnotation
 instance ToJSON FuncAnnotation
@@ -80,6 +86,8 @@ instance ToJSON Linkage
 
 -- | A simple external representation of C/C++ types.  Note that C++
 -- templates are not (and will not) be represented.
+--
+-- Opaque types are represented by a struct with an empty body.
 data CType = CVoid
            | CInt !Int
            | CUInt !Int
@@ -288,7 +296,7 @@ paramToExternal summaries arg =
 lookupArgumentSummary :: DependencySummary -> ExternalFunction -> Int -> Maybe [ParamAnnotation]
 lookupArgumentSummary ds ef ix =
   case fsum of
-    Nothing -> Nothing
+    Nothing -> error ("No summary for " ++ show ef)
     Just s -> case length (foreignFunctionParameters s) < ix of
       True -> error $ "lookupArgumentSummary: no parameter " ++ show ix ++ " for " ++ show ef
       False -> Just $ parameterAnnotations (foreignFunctionParameters s !! ix)

@@ -1,4 +1,4 @@
-{-# LANGUAGE DeriveGeneric, OverloadedStrings, ExistentialQuantification #-}
+{-# LANGUAGE DeriveGeneric, OverloadedStrings, ExistentialQuantification, DeriveDataTypeable #-}
 -- | This module defines an external representation of library
 -- interfaces.  Individual libraries are represented by the
 -- 'LibraryInterface'.  The analysis reads these in and writes these
@@ -36,8 +36,11 @@ module Foreign.Inference.Interface (
   saveModule
   ) where
 
+import Prelude hiding ( catch )
+
 import GHC.Generics
 
+import Control.Exception
 import Data.Aeson
 import Data.Aeson.Encode.Pretty
 import Data.ByteString.Char8 ( ByteString )
@@ -58,6 +61,10 @@ import Paths_foreign_inference
 -- | The extension used for all summaries
 summaryExtension :: String
 summaryExtension = "json"
+
+data InterfaceException = DependencyMissing FilePath
+                        deriving (Show, Typeable)
+instance Exception InterfaceException
 
 -- | The annotations that are specific to individual parameters.
 data ParamAnnotation = PAArray !Int
@@ -256,12 +263,16 @@ mergeFunction m f = case M.lookup fn m of
 -- Try to load the named file from all possible summary repository
 -- dirs.
 parseInterface :: [FilePath] -> FilePath -> IO LibraryInterface
-parseInterface summaryDirs p = do
-  c <- LBS.readFile p
+parseInterface (summaryDir:rest) p = do
+  c <- catch (LBS.readFile p) handleMissingDep
   let mval = decode' c
   case mval of
     Nothing -> error $ "Failed to decode " ++ p
     Just li -> return li
+  where
+    handleMissingDep :: IOException -> IO LibraryInterface
+    handleMissingDep _ = parseInterface rest p
+parseInterface [] p = throw (DependencyMissing p)
 
 -- | Convert a Module to a LibraryInterface using the information in
 -- the provided 'ModuleSummary's.

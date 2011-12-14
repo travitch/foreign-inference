@@ -23,7 +23,7 @@ main = do
   let pattern = case args of
         [] -> "tests/nullable/*.c"
         [infile] -> infile
-  ds <- loadDependencies' [] "tests/nullable" ["base"]
+  ds <- loadDependencies' [] ["tests/nullable"] ["base"]
   let testDescriptors = [ TestDescriptor { testPattern = pattern
                                          , testExpectedMapping = (<.> "expected")
                                          , testResultBuilder = analyzeNullable ds

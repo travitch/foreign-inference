@@ -46,6 +46,7 @@ import Data.Aeson.Encode.Pretty
 import Data.ByteString.Char8 ( ByteString )
 import qualified Data.ByteString.Char8 as SBS
 import qualified Data.ByteString.Lazy as LBS
+import Data.Data
 import Data.HashMap.Strict ( HashMap )
 import qualified Data.HashMap.Strict as M
 import Data.Maybe ( mapMaybe )
@@ -198,8 +199,9 @@ saveModule summaryDir name deps m summaries = do
 -- > loadDependencies summaryDir deps
 --
 -- Loads all of the 'LibraryInterface's transitively required by
--- @deps@ from the directory @summaryDir@.  Will throw an exception if
--- a required dependency is not found.
+-- @deps@ from any directory in @summaryDirs@.  The @summaryDirs@ are
+-- searched in order.  Will throw an exception if a required
+-- dependency is not found.
 --
 -- This variant will automatically include the C standard library (and
 -- eventually the C++ standard library).
@@ -213,7 +215,7 @@ loadDependencies' :: [StdLib] -> [FilePath] -> [String] -> IO DependencySummary
 loadDependencies' includeStd summaryDirs deps = do
   let deps' = foldl' addStdlibDeps deps includeStd
   predefinedSummaries <- getDataFileName "stdlibs"
-  m <- loadTransDeps (predefinedSummaries : summaryDirs) deps S.empty M.empty
+  m <- loadTransDeps (predefinedSummaries : summaryDirs) deps' S.empty M.empty
   return (DS m)
   where
     addStdlibDeps ds CStdLib = "c" : "m" : ds
@@ -239,7 +241,7 @@ loadTransDeps summaryDirs deps loadedDeps m = do
           newFuncs = concatMap libraryFunctions newInterfaces
           loadedDeps' = loadedDeps `S.union` S.fromList unmetDeps
           m' = foldl' mergeFunction m newFuncs
-      loadTransDeps summaryDir newDeps loadedDeps' m'
+      loadTransDeps summaryDirs newDeps loadedDeps' m'
 
 -- | Try to "link" function summaries into the current
 -- 'DependencySummary'.  This makes a best effort to deal with weak
@@ -263,16 +265,20 @@ mergeFunction m f = case M.lookup fn m of
 -- Try to load the named file from all possible summary repository
 -- dirs.
 parseInterface :: [FilePath] -> FilePath -> IO LibraryInterface
-parseInterface (summaryDir:rest) p = do
-  c <- catch (LBS.readFile p) handleMissingDep
+parseInterface summaryDirs p = do
+  c <- loadFromSources summaryDirs p
   let mval = decode' c
   case mval of
     Nothing -> error $ "Failed to decode " ++ p
     Just li -> return li
+
+loadFromSources :: [FilePath] -> FilePath -> IO LBS.ByteString
+loadFromSources (src:rest) p = catch (LBS.readFile fname) handleMissingSrc
   where
-    handleMissingDep :: IOException -> IO LibraryInterface
-    handleMissingDep _ = parseInterface rest p
-parseInterface [] p = throw (DependencyMissing p)
+    fname = src </> p
+    handleMissingSrc :: IOException -> IO LBS.ByteString
+    handleMissingSrc _ = loadFromSources rest p
+loadFromSources [] p = throw (DependencyMissing p)
 
 -- | Convert a Module to a LibraryInterface using the information in
 -- the provided 'ModuleSummary's.

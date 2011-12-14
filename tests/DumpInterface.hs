@@ -17,7 +17,7 @@ main = do
   let pta = runPointsToAnalysis m
       cg = mkCallGraph m pta []
       er = runEscapeAnalysis m cg
-  ds <- loadDependencies' [] "." []
+  ds <- loadDependencies' [] ["."] []
   let s = identifyNullable ds m cg er
       a = identifyArrays ds cg er
   saveModule "." name [] m [ModuleSummary s, ModuleSummary a]

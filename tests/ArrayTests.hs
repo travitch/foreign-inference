@@ -21,7 +21,7 @@ main = do
   let pattern = case args of
         [] -> "tests/arrays/*.c"
         [infile] -> infile
-  ds <- loadDependencies' [] "tests/arrays" ["base"]
+  ds <- loadDependencies' [] ["tests/arrays"] ["base"]
   let testDescriptors = [ TestDescriptor { testPattern = pattern
                                          , testExpectedMapping = (<.> "expected")
                                          , testResultBuilder = analyzeArrays ds

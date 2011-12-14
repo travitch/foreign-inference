@@ -10,6 +10,8 @@ build-type: Simple
 cabal-version: >=1.10
 tested-with: GHC == 7.0.3
 
+data-files: stdlibs/*.json
+
 -- extra-source-files:
 -- description:
 
@@ -19,7 +21,8 @@ library
   exposed-modules: Foreign.Inference.Interface,
                    Foreign.Inference.Analysis.Array,
                    Foreign.Inference.Analysis.Nullable
-  other-modules: Foreign.Inference.Internal.ValueArguments
+  other-modules: Foreign.Inference.Internal.ValueArguments,
+                 Paths_foreign_inference
   build-depends: base > 3 && < 5, containers, filepath, text, bytestring, ghc-prim,
                  unordered-containers >= 0.1.4.0, hashable,
                  aeson >= 0.4.0.0, aeson-pretty,

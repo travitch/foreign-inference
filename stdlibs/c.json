@@ -925,6 +925,162 @@
                 "parameterType": {"CPointer": {"CFunction": [{"CInt":32}, [{"CPointer": {"CVoid":[]}},{"CPointer": {"CVoid":[]}}]]}}
               }
           ]
+        },
+        { "foreignFunctionName": "abs",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "x",
+                "parameterType": {"CInt":32}
+              }
+          ]
+        },
+        { "foreignFunctionName": "div",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CStruct": ["div_t", [{"CInt":32}, {"CInt": 32}]]},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "number",
+                "parameterType": {"CInt":32}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "denom",
+                "parameterType": {"CInt":32}
+              }
+          ]
+        },
+        { "foreignFunctionName": "labs",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 64},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "x",
+                "parameterType": {"CInt":32}
+              }
+          ]
+        },
+        { "foreignFunctionName": "ldiv",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CStruct": ["ldiv_t", [{"CInt":64}, {"CInt":64}]]}},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "number",
+                "parameterType": {"CInt":64}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "denom",
+                "parameterType": {"CInt":64}
+              }
+          ]
+        },
+        { "foreignFunctionName": "rand",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": []
+        },
+        { "foreignFunctionName": "srand",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CVoid":[]},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "seed",
+                "parameterType": {"CUInt":32}
+              }
+          ]
+        },
+        { "foreignFunctionName": "mblen",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PAString":[]}, {"PAArray":1}, {"PAConst":[]}, {"PANotNull":[]}],
+                "parameterName": "str",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "n",
+                "parameterType": {"CStruct": ["size_t", []]}
+              }
+          ]
+        },
+        { "foreignFunctionName": "mbstowcs",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CStruct": ["size_t", []]},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PAArray":1}, {"PANotNull":[]}],
+                "parameterName": "pwcs",
+                "parameterType": {"CPointer": {"CStruct": ["wchar_t", []]}}
+              },
+              { "parameterAnnotations": [{"PAString":[]}, {"PAArray":1}, {"PAConst":[]}, {"PANotNull":[]}],
+                "parameterName": "str",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "n",
+                "parameterType": {"CStruct": ["size_t", []]}
+              }
+          ]
+        },
+        { "foreignFunctionName": "mbtowc",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "pwc",
+                "parameterType": {"CPointer": {"CStruct": ["wchar_t", []]}}
+              },
+              { "parameterAnnotations": [{"PAConst":[]}, {"PANotNull":[]}],
+                "parameterName": "str",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "n",
+                "parameterType": {"CStruct": ["size_t", []]}
+              }
+          ]
+        },
+        { "foreignFunctionName": "wcstombs",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CStruct": ["size_t", []]},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PAString":[]}, {"PAArray":1}, {"PANotNull":[]}],
+                "parameterName": "str",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              },
+              { "parameterAnnotations": [{"PAArray":1}, {"PANotNull":[]}, {"PAConst":[]}],
+                "parameterName": "pwcs",
+                "parameterType": {"CPointer": {"CStruct": ["wchar_t", []]}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "n",
+                "parameterType": {"CStruct": ["size_t", []]}
+              }
+          ]
+        },
+        { "foreignFunctionName": "wctomb",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PAArray":[]}],
+                "parameterName": "str",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "pwc",
+                "parameterType": {"CStruct": ["wchar_t", []]}
+              }
+          ]
         }
 
     ]

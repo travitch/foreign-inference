@@ -795,6 +795,136 @@
                 "parameterType": {"CPointer": {"CVoid": []}}
               }
           ]
+        },
+        { "foreignFunctionName": "abort",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CVoid": []},
+          "foreignFunctionParameters": []
+        },
+        { "foreignFunctionName": "atexit",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PAFinalize":[]}],
+                "parameterName": "func",
+                "parameterType": {"CPointer": {"CFunction": [{"CVoid":[]}, []]}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "exit",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CVoid": []},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PAFinalize":[]}],
+                "parameterName": "status",
+                "parameterType": {"CInt": 32}
+              }
+          ]
+        },
+        { "foreignFunctionName": "getenv",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CPointer": {"CInt": 8}},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAString":[]}, {"PAArray": 1}, {"PAConst":[]}],
+                "parameterName": "name",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "setenv",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAString":[]}, {"PAArray": 1}, {"PAConst":[]}],
+                "parameterName": "name",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              },
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAString":[]}, {"PAArray": 1}, {"PAConst":[]}],
+                "parameterName": "value",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "overwrite",
+                "parameterType": {"CInt": 32}
+              }
+          ]
+        },
+        { "foreignFunctionName": "unsetenv",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAString":[]}, {"PAArray": 1}, {"PAConst":[]}],
+                "parameterName": "name",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "system",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAString":[]}, {"PAArray": 1}, {"PAConst":[]}],
+                "parameterName": "string",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "bsearch",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CPointer": {"CVoid": []}},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PAConst":[]}],
+                "parameterName": "key",
+                "parameterType": {"CPointer": {"CVoid":[]}}
+              },
+              { "parameterAnnotations": [{"PAConst":[]}],
+                "parameterName": "base",
+                "parameterType": {"CPointer": {"CVoid":[]}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "nitems",
+                "parameterType": {"CStruct": ["size_t", []]}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "size",
+                "parameterType": {"CStruct": ["size_t", []]}
+              },
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAConst":[]}],
+                "parameterName": "compar",
+                "parameterType": {"CPointer": {"CFunction": [{"CInt":32}, [{"CPointer": {"CVoid":[]}},{"CPointer": {"CVoid":[]}}]]}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "qsort",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CVoid": []},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PAConst":[]}],
+                "parameterName": "base",
+                "parameterType": {"CPointer": {"CVoid":[]}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "nitems",
+                "parameterType": {"CStruct": ["size_t", []]}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "size",
+                "parameterType": {"CStruct": ["size_t", []]}
+              },
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAConst":[]}],
+                "parameterName": "compar",
+                "parameterType": {"CPointer": {"CFunction": [{"CInt":32}, [{"CPointer": {"CVoid":[]}},{"CPointer": {"CVoid":[]}}]]}}
+              }
+          ]
         }
 
     ]

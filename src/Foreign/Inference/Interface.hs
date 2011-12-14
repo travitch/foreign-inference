@@ -343,7 +343,7 @@ typeToCType t = case t of
   TypeFloat -> CFloat
   TypeDouble -> CDouble
   TypeArray _ t' -> CPointer (typeToCType t')
-  TypeFunction r ts isVa -> CFunction (typeToCType r) (map typeToCType ts) isVa
+  TypeFunction r ts _ -> CFunction (typeToCType r) (map typeToCType ts)
   TypePointer t' _ -> CPointer (typeToCType t')
   TypeStruct (Just n) ts _ -> CStruct n (map typeToCType ts)
   TypeStruct Nothing ts _ -> CAnonStruct (map typeToCType ts)

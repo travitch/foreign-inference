@@ -104,7 +104,7 @@ data CType = CVoid
            | CUInt !Int
            | CFloat
            | CDouble
-           | CFunction CType [CType] Bool
+           | CFunction CType [CType]
            | CPointer CType
            | CStruct String [CType]
            | CAnonStruct [CType]

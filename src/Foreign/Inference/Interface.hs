@@ -64,13 +64,14 @@ data ParamAnnotation = PAArray !Int
                      | PANotNull
                      | PAString
                      | PAConst
+                     | PAFinalize
                      deriving (Show, Generic, Eq, Ord)
 instance FromJSON ParamAnnotation
 instance ToJSON ParamAnnotation
 
 -- | The annotations that can apply at the 'ForeignFunction' level.
 -- The FAVarArg annotation is not inferred but is still necessary.
-data FuncAnnotation = FAAllocator
+data FuncAnnotation = FAAllocator String -- ^ Record the associated finalizer
                     | FAVarArg
                     deriving (Show, Generic, Eq, Ord)
 instance FromJSON FuncAnnotation

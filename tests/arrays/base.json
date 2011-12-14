@@ -3,26 +3,13 @@
     "libraryFunctions": [
         {
             "foreignFunctionAnnotations": [],
-            "foreignFunctionLinkage": {
-                "LinkDefault": []
-            },
+            "foreignFunctionLinkage": { "LinkDefault": [] },
             "foreignFunctionName": "oneDimAccess",
             "foreignFunctionParameters": [
                 {
-                    "parameterAnnotations": [
-                        {
-                            "PANotNull": []
-                        },
-                        {
-                            "PAArray": 1
-                        }
-                    ],
+                    "parameterAnnotations": [{"PANotNull": []}, {"PAArray": 1}],
                     "parameterName": "arr",
-                    "parameterType": {
-                        "CPointer": {
-                            "CInt": 32
-                        }
-                    }
+                    "parameterType": {"CPointer": {"CInt": 32}}
                 },
                 {
                     "parameterAnnotations": [

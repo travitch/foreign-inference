@@ -53,6 +53,8 @@ import System.FilePath
 
 import Data.LLVM
 
+import Paths_foreign_inference
+
 -- | The extension used for all summaries
 summaryExtension :: String
 summaryExtension = "json"
@@ -194,16 +196,21 @@ saveModule summaryDir name deps m summaries = do
 --
 -- This variant will automatically include the C standard library (and
 -- eventually the C++ standard library).
-loadDependencies :: FilePath -> [String] -> IO DependencySummary
+loadDependencies :: [FilePath] -> [String] -> IO DependencySummary
 loadDependencies = loadDependencies' [CStdLib]
 
 
 -- | The same as 'loadDependencies', except it gives the option of not
 -- automatically loading standard library summaries.
-loadDependencies' :: [StdLib] -> FilePath -> [String] -> IO DependencySummary
-loadDependencies' includeStd summaryDir deps = do
-  m <- loadTransDeps summaryDir deps S.empty M.empty
+loadDependencies' :: [StdLib] -> [FilePath] -> [String] -> IO DependencySummary
+loadDependencies' includeStd summaryDirs deps = do
+  let deps' = foldl' addStdlibDeps deps includeStd
+  predefinedSummaries <- getDataFileName "stdlibs"
+  m <- loadTransDeps (predefinedSummaries : summaryDirs) deps S.empty M.empty
   return (DS m)
+  where
+    addStdlibDeps ds CStdLib = "c" : "m" : ds
+    addStdlibDeps ds CxxStdLib = "stdc++" : ds
 
 -- | Load all of the dependencies requested (transitively).  This just
 -- iterates loading interfaces and recording all of the new
@@ -213,14 +220,14 @@ loadDependencies' includeStd summaryDir deps = do
 -- descriptions because LLVM will have definitions for any public
 -- struct types already.  The type descriptions are only useful for
 -- binding generation.
-loadTransDeps :: FilePath -> [String] -> Set String -> DepMap -> IO DepMap
-loadTransDeps summaryDir deps loadedDeps m = do
+loadTransDeps :: [FilePath] -> [String] -> Set String -> DepMap -> IO DepMap
+loadTransDeps summaryDirs deps loadedDeps m = do
   let unmetDeps = filter (`S.notMember` loadedDeps) deps
-      paths = map ((summaryDir </>) . (<.> summaryExtension)) unmetDeps
+      paths = map (<.> summaryExtension) unmetDeps
   case unmetDeps of
     [] -> return m
     _ -> do
-      newInterfaces <- mapM parseInterface paths
+      newInterfaces <- mapM (parseInterface summaryDirs) paths
       let newDeps = concatMap libraryDependencies newInterfaces
           newFuncs = concatMap libraryFunctions newInterfaces
           loadedDeps' = loadedDeps `S.union` S.fromList unmetDeps
@@ -245,8 +252,11 @@ mergeFunction m f = case M.lookup fn m of
 
 -- | FIXME: Convert this to catch IO exceptions and convert to a more
 -- descriptive error type.
-parseInterface :: FilePath -> IO LibraryInterface
-parseInterface p = do
+--
+-- Try to load the named file from all possible summary repository
+-- dirs.
+parseInterface :: [FilePath] -> FilePath -> IO LibraryInterface
+parseInterface summaryDirs p = do
   c <- LBS.readFile p
   let mval = decode' c
   case mval of

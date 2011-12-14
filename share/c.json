@@ -91,7 +91,7 @@
           "foreignFunctionLinkage": { "LinkDefault": [] },
           "foreignFunctionReturnType": {"CStruct": ["size_t", []]},
           "foreignFunctionParameters": [
-              { "parameterAnnotations": [{"PAArray": 1}, {"PANotNull":[]}],
+              { "parameterAnnotations": [{"PANotNull":[]}],
                 "parameterName": "ptr",
                 "parameterType": {"CPointer": {"CVoid":[]}}
               },
@@ -167,7 +167,7 @@
           "foreignFunctionLinkage": { "LinkDefault": [] },
           "foreignFunctionReturnType": {"CStruct": ["size_t", []]},
           "foreignFunctionParameters": [
-              { "parameterAnnotations": [{"PAArray": 1}, {"PANotNull":[]}],
+              { "parameterAnnotations": [{"PANotNull":[]}],
                 "parameterName": "ptr",
                 "parameterType": {"CPointer": {"CVoid":[]}}
               },
@@ -277,5 +277,387 @@
               }
           ]
         },
+        { "foreignFunctionName": "fprintf",
+          "foreignFunctionAnnotations": [{"FAVarArg":[]}],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "stream",
+                "parameterType": {"CPointer": {"CStruct": ["FILE", []]}}
+              },
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAArray": 1}, {"PAString": []}, {"PAConst":[]}],
+                "parameterName": "format",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "printf",
+          "foreignFunctionAnnotations": [{"FAVarArg":[]}],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAArray": 1}, {"PAString": []}, {"PAConst":[]}],
+                "parameterName": "format",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "sprintf",
+          "foreignFunctionAnnotations": [{"FAVarArg":[]}],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PAArray": 1}, {"PAString": []}],
+                "parameterName": "str",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              },
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAArray": 1}, {"PAString": []}, {"PAConst":[]}],
+                "parameterName": "format",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "snprintf",
+          "foreignFunctionAnnotations": [{"FAVarArg":[]}],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PAArray": 1}, {"PAString": []}],
+                "parameterName": "str",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "size",
+                "parameterType": {"CStruct": ["size_t", []]}
+              },
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAArray": 1}, {"PAString": []}, {"PAConst":[]}],
+                "parameterName": "format",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "vprintf",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAArray": 1}, {"PAString": []}, {"PAConst":[]}],
+                "parameterName": "format",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "ap",
+                "parameterType": {"CStruct": ["va_list", []]}
+              }
+          ]
+        },
+        { "foreignFunctionName": "vfprintf",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "stream",
+                "parameterType": {"CPointer": {"CStruct": ["FILE", []]}}
+              },
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAArray": 1}, {"PAString": []}, {"PAConst":[]}],
+                "parameterName": "format",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "ap",
+                "parameterType": {"CStruct": ["va_list", []]}
+              }
+          ]
+        },
+        { "foreignFunctionName": "vsprintf",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PAArray": 1}, {"PAString":[]}],
+                "parameterName": "str",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              }
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAArray": 1}, {"PAString": []}, {"PAConst":[]}],
+                "parameterName": "format",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "ap",
+                "parameterType": {"CStruct": ["va_list", []]}
+              }
+          ]
+        },
+        { "foreignFunctionName": "vsnprintf",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PAArray": 1}, {"PAString": []}],
+                "parameterName": "str",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "size",
+                "parameterType": {"CStruct": ["size_t", []]}
+              },
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAArray": 1}, {"PAString": []}, {"PAConst":[]}],
+                "parameterName": "format",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "ap",
+                "parameterType": {"CStruct": ["va_list", []]}
+              }
+          ]
+        },
+        { "foreignFunctionName": "scanf",
+          "foreignFunctionAnnotations": [{"FAVarArg":[]}],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAArray": 1}, {"PAString": []}, {"PAConst":[]}],
+                "parameterName": "format",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "fscanf",
+          "foreignFunctionAnnotations": [{"FAVarArg":[]}],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "stream",
+                "parameterType": {"CPointer": {"CStruct": ["FILE", []]}}
+              },
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAArray": 1}, {"PAString": []}, {"PAConst":[]}],
+                "parameterName": "format",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "sscanf",
+          "foreignFunctionAnnotations": [{"FAVarArg":[]}],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAArray": 1}, {"PAString":[]}, {"PAConst":[]}],
+                "parameterName": "str",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              },
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAArray": 1}, {"PAString": []}, {"PAConst":[]}],
+                "parameterName": "format",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "vscanf",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAArray": 1}, {"PAString": []}, {"PAConst":[]}],
+                "parameterName": "format",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "ap",
+                "parameterType": {"CStruct": ["va_list", []]}
+              }
+          ]
+        },
+        { "foreignFunctionName": "vfscanf",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "stream",
+                "parameterType": {"CPointer": {"CStruct": ["FILE", []]}}
+              },
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAArray": 1}, {"PAString": []}, {"PAConst":[]}],
+                "parameterName": "format",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "ap",
+                "parameterType": {"CStruct": ["va_list", []]}
+              }
+          ]
+        },
+        { "foreignFunctionName": "vsscanf",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAArray": 1}, {"PAString":[]}, {"PAConst":[]}],
+                "parameterName": "str",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              },
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAArray": 1}, {"PAString": []}, {"PAConst":[]}],
+                "parameterName": "format",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "ap",
+                "parameterType": {"CStruct": ["va_list", []]}
+              }
+          ]
+        },
+        { "foreignFunctionName": "fgetc",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "stream",
+                "parameterType": {"CPointer": {"CStruct": ["FILE", []]}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "fgets",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAArray": 1}, {"PAString": []}],
+                "parameterName": "str",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "n",
+                "parameterType": {"CInt": 32}
+              },
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "stream",
+                "parameterType": {"CPointer": {"CStruct": ["FILE", []]}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "fputc",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "ch",
+                "parameterType": {"CInt": 32}
+              },
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "stream",
+                "parameterType": {"CPointer": {"CStruct": ["FILE", []]}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "fputs",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAArray": 1}, {"PAString": []}, {"PAConst":[]}],
+                "parameterName": "str",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              },
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "stream",
+                "parameterType": {"CPointer": {"CStruct": ["FILE", []]}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "getc",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "stream",
+                "parameterType": {"CPointer": {"CStruct": ["FILE", []]}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "getchar",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": []
+        },
+        { "foreignFunctionName": "gets",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CPointer": {"CInt": 8}},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAArray": 1}, {"PAString": []}],
+                "parameterName": "str",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "putc",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "ch",
+                "parameterType": {"CInt": 32}
+              },
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "stream",
+                "parameterType": {"CPointer": {"CStruct": ["FILE", []]}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "putchar",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "ch",
+                "parameterType": {"CInt": 32}
+              }
+          ]
+        },
+        { "foreignFunctionName": "puts",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAArray": 1}, {"PAString": []}, {"PAConst":[]}],
+                "parameterName": "str",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "ungetc",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "ch",
+                "parameterType": {"CInt": 32}
+              },
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "stream",
+                "parameterType": {"CPointer": {"CStruct": ["FILE", []]}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "perror",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CVoid": []},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAArray": 1}, {"PAString": []}, {"PAConst":[]}],
+                "parameterName": "str",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              }
+          ]
+        },
+
     ]
 }

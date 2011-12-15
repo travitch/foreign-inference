@@ -1,5 +1,7 @@
 {
     "libraryDependencies": [],
+    "libraryName": "m",
+    "libraryTypes": [],
     "libraryFunctions": [
         { "foreignFunctionName": "acos",
           "foreignFunctionAnnotations": [],

@@ -105,7 +105,7 @@
                 "parameterName": "nmemb",
                 "parameterType": {"CStruct": ["size_t", []]}
               },
-              { "parameterAnnotations": {"PANotNull":[]},
+              { "parameterAnnotations": [{"PANotNull":[]}],
                 "parameterName": "stream",
                 "parameterType": {"CPointer": {"CStruct": ["FILE", []]}}
               }

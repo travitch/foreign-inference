@@ -189,7 +189,7 @@
                 "parameterName": "x",
                 "parameterType": {"CDouble": []}
               },
-              { "parameterAnnotations": {"PAOut": []},
+              { "parameterAnnotations": [{"PAOut": []}],
                 "parameterName": "integer",
                 "parameterType": {"CPointer": {"CInt": 32}}
               }

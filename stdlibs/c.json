@@ -1,5 +1,7 @@
 {
     "libraryDependencies": [],
+    "libraryName": "c",
+    "libraryTypes": [],
     "libraryFunctions": [
         { "foreignFunctionName": "clearerr",
           "foreignFunctionAnnotations": [],
@@ -108,7 +110,7 @@
                 "parameterType": {"CPointer": {"CStruct": ["FILE", []]}}
               }
           ]
-        },,
+        },
         { "foreignFunctionName": "freopen",
           "foreignFunctionAnnotations": [],
           "foreignFunctionLinkage": { "LinkDefault": [] },
@@ -379,7 +381,7 @@
               { "parameterAnnotations": [{"PAArray": 1}, {"PAString":[]}],
                 "parameterName": "str",
                 "parameterType": {"CPointer": {"CInt": 8}}
-              }
+              },
               { "parameterAnnotations": [{"PANotNull":[]}, {"PAArray": 1}, {"PAString": []}, {"PAConst":[]}],
                 "parameterName": "format",
                 "parameterType": {"CPointer": {"CInt": 8}}
@@ -966,7 +968,7 @@
         { "foreignFunctionName": "ldiv",
           "foreignFunctionAnnotations": [],
           "foreignFunctionLinkage": { "LinkDefault": [] },
-          "foreignFunctionReturnType": {"CStruct": ["ldiv_t", [{"CInt":64}, {"CInt":64}]]}},
+          "foreignFunctionReturnType": {"CStruct": ["ldiv_t", [{"CInt":64}, {"CInt":64}]]},
           "foreignFunctionParameters": [
               { "parameterAnnotations": [],
                 "parameterName": "number",

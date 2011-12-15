@@ -1074,7 +1074,7 @@
           "foreignFunctionLinkage": { "LinkDefault": [] },
           "foreignFunctionReturnType": {"CInt": 32},
           "foreignFunctionParameters": [
-              { "parameterAnnotations": [{"PAArray":[]}],
+              { "parameterAnnotations": [{"PAArray": 1}],
                 "parameterName": "str",
                 "parameterType": {"CPointer": {"CInt": 8}}
               },
@@ -1552,6 +1552,5 @@
               }
           ]
         }
-
     ]
 }

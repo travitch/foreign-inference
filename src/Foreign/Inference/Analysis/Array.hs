@@ -18,13 +18,13 @@ import Control.Monad.RWS.Strict
 import Data.List ( foldl' )
 import Data.Map ( Map )
 import qualified Data.Map as M
-import Data.Set ( Set )
 
 import Data.LLVM
 import Data.LLVM.CallGraph
 import Data.LLVM.Analysis.CallGraphSCCTraversal
 import Data.LLVM.Analysis.Escape
 
+import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
 import Foreign.Inference.Internal.ValueArguments
 
@@ -49,9 +49,8 @@ data ArrayData = AD { dependencySummary :: DependencySummary
                     , callGraph :: CallGraph
                     , escapeResult :: EscapeResult
                     }
--- FIXME: Make a separate module to define diagnostics and have a Log
--- type to abstract them
-type AnalysisMonad = RWS ArrayData (Set String) ()
+
+type AnalysisMonad = RWS ArrayData Diagnostics ()
 
 -- | The analysis to generate array parameter summaries for an entire
 -- Module (via the CallGraph).  Example usage:
@@ -60,7 +59,7 @@ type AnalysisMonad = RWS ArrayData (Set String) ()
 -- >     cg = mkCallGraph m pta []
 -- >     er = runEscapeAnalysis m cg
 -- > in identifyArrays cg er
-identifyArrays :: DependencySummary -> CallGraph -> EscapeResult -> (ArraySummary, Set String)
+identifyArrays :: DependencySummary -> CallGraph -> EscapeResult -> (ArraySummary, Diagnostics)
 identifyArrays ds cg er = (APS summ, diags)
   where
     analysis = callGraphSCCTraversal cg arrayAnalysis M.empty

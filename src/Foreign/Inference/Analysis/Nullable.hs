@@ -39,6 +39,7 @@ import Data.LLVM.Analysis.CallGraphSCCTraversal
 import Data.LLVM.Analysis.Dataflow
 import Data.LLVM.Analysis.Escape
 
+import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
 import Foreign.Inference.Internal.ValueArguments
 
@@ -72,7 +73,7 @@ summarizeNullArgument a (NS s) = case a `S.member` nonNullableArgs of
 
 -- | The top-level entry point of the nullability analysis
 identifyNullable :: DependencySummary -> Module -> CallGraph -> EscapeResult
-                    -> (NullableSummary, Set String)
+                    -> (NullableSummary, Diagnostics)
 identifyNullable ds m cg er = (NS res, diags)
   where
     s0 = M.fromList $ zip (moduleDefinedFunctions m) (repeat S.empty)
@@ -99,7 +100,7 @@ instance MeetSemiLattice NullInfo where
 instance BoundedMeetSemiLattice NullInfo where
   top = NI S.empty S.empty
 
-type AnalysisMonad = RWS NullData (Set String) ()
+type AnalysisMonad = RWS NullData Diagnostics ()
 
 instance DataflowAnalysis AnalysisMonad NullInfo where
   transfer = nullTransfer

@@ -320,15 +320,15 @@ callTransfer eg ni calledFunc args = do
     callTransferDispatch info target = case valueContent' target of
       FunctionC f -> do
         summ <- asks moduleSummary
-        return $! definedFunctionTransfer eg summ f info args
+        definedFunctionTransfer eg summ f info args
       ExternalFunctionC e -> do
         summ <- asks dependencySummary
-        return $! externalFunctionTransfer eg summ e info args
+        externalFunctionTransfer eg summ e info args
 
 definedFunctionTransfer :: EscapeGraph -> SummaryType -> Function
-                           -> NullInfo -> [Value] -> NullInfo
+                           -> NullInfo -> [Value] -> AnalysisMonad NullInfo
 definedFunctionTransfer eg summ f ni args =
-  foldl' markArgNotNullable ni indexedNotNullArgs
+  return $! foldl' markArgNotNullable ni indexedNotNullArgs
   where
     err = error ("No Function summary for " ++ show (functionName f))
     formals = functionParameters f
@@ -339,18 +339,20 @@ definedFunctionTransfer eg summ f ni args =
     markArgNotNullable info (_, a) = addUncheckedAccess eg info a
 
 externalFunctionTransfer :: EscapeGraph -> DependencySummary -> ExternalFunction
-                            -> NullInfo -> [Value] -> NullInfo
+                            -> NullInfo -> [Value] -> AnalysisMonad NullInfo
 externalFunctionTransfer eg summ e ni args =
-  foldl' markIfNotNullable ni indexedArgs
+  foldM markIfNotNullable ni indexedArgs
   where
-    err = error ("No ExternalFunction summary for " ++ show (externalFunctionName e))
+    errMsg = "No ExternalFunction summary for " ++ show (externalFunctionName e)
     indexedArgs = zip [0..] args
     markIfNotNullable info (ix, arg) =
       case lookupArgumentSummary summ e ix of
-        Nothing -> info
+        Nothing -> do
+          emitWarning Nothing "NullAnalysis" errMsg
+          return info
         Just attrs -> case PANotNull `elem` attrs of
-          False -> info
-          True -> addUncheckedAccess eg info arg
+          False -> return info
+          True -> return $! addUncheckedAccess eg info arg
 
 -- Helpers
 toArg :: Value -> Maybe Argument

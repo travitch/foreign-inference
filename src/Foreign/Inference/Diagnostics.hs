@@ -38,6 +38,7 @@ data Classification = Debug
 
 data Diagnostic = Diagnostic { diagnosticLocation :: Maybe Location
                              , diagnosticType :: Classification
+                             , diagnosticModule :: String
                              , diagnosticContent :: String
                              }
                 deriving (Eq, Ord)
@@ -48,14 +49,16 @@ instance Show Diagnostic where
 showDiagnostic :: Diagnostic -> String
 showDiagnostic Diagnostic { diagnosticLocation = Nothing
                           , diagnosticType = t
+                          , diagnosticModule = m
                           , diagnosticContent = msg
                           } =
-  printf "[%s] %s" (show t) msg
+  printf "%s[%s] %s" (show t) m msg
 showDiagnostic Diagnostic { diagnosticLocation = Just loc
                           , diagnosticType = t
+                          , diagnosticModule = m
                           , diagnosticContent = msg
                           } =
-  printf "[%s] %s @ $s" (show t) msg (show loc)
+  printf "%s[%s] %s @ $s" (show t) m msg (show loc)
 
 -- | A set of diagnostics.  Diagnostics can be merged via the 'Monoid'
 -- interface.
@@ -63,32 +66,36 @@ newtype Diagnostics = DS (Set Diagnostic)
                     deriving (Monoid)
 
 -- | Emit fine-grained debugging information.
-emitDebugInfo :: (MonadWriter Diagnostics m) => Maybe Location -> String -> m ()
-emitDebugInfo loc msg = tell d
+emitDebugInfo :: (MonadWriter Diagnostics m)
+                 => Maybe Location -> String -> String -> m ()
+emitDebugInfo loc modName msg = tell d
   where
-    d = DS $ singleton $ Diagnostic loc Debug msg
+    d = DS $ singleton $ Diagnostic loc Debug modName msg
 
 -- | Add some diagnostic information to the current 'Diagnostics'.  This is
 -- just information that may be informative the the caller.
-emitDiagnosticInfo :: (MonadWriter Diagnostics m) => Maybe Location -> String -> m ()
-emitDiagnosticInfo loc msg = tell d
+emitDiagnosticInfo :: (MonadWriter Diagnostics m)
+                      => Maybe Location -> String -> String -> m ()
+emitDiagnosticInfo loc modName msg = tell d
   where
-    d = DS $ singleton $ Diagnostic loc Info msg
+    d = DS $ singleton $ Diagnostic loc Info modName msg
 
 -- | Add a warning diagnostic.  These are informational messages that
 -- the user may want to do something about, but do not invalidate the
 -- results at all.
-emitWarning :: (MonadWriter Diagnostics m) => Maybe Location -> String -> m ()
-emitWarning loc msg = tell d
+emitWarning :: (MonadWriter Diagnostics m)
+               => Maybe Location -> String -> String -> m ()
+emitWarning loc modName msg = tell d
   where
-    d = DS $ singleton $ Diagnostic loc Warning msg
+    d = DS $ singleton $ Diagnostic loc Warning modName msg
 
 -- | Errors are diagnostics indicating that the results of an analysis
 -- cannot be trusted.
-emitError :: (MonadWriter Diagnostics m) => Maybe Location -> String -> m ()
-emitError loc msg = tell d
+emitError :: (MonadWriter Diagnostics m)
+             => Maybe Location -> String -> String -> m ()
+emitError loc modName msg = tell d
   where
-    d = DS $ singleton $ Diagnostic loc Error msg
+    d = DS $ singleton $ Diagnostic loc Error modName msg
 
 -- | Print all of the classifications as or more severe than @c@ to
 -- stdout.

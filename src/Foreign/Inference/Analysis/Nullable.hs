@@ -1,4 +1,4 @@
-{-# LANGUAGE ViewPatterns, MultiParamTypeClasses #-}
+{-# LANGUAGE ViewPatterns, MultiParamTypeClasses, TypeSynonymInstances, FlexibleInstances #-}
 -- | This module defines a Nullable pointer analysis
 --
 -- Nullable pointers are those pointers that are checked against NULL
@@ -23,6 +23,7 @@ module Foreign.Inference.Analysis.Nullable (
   ) where
 
 import Algebra.Lattice
+import Control.Monad.RWS.Strict
 import Data.List ( foldl' )
 import Data.Map ( Map )
 import qualified Data.Map as M
@@ -70,10 +71,14 @@ summarizeNullArgument a (NS s) = case a `S.member` nonNullableArgs of
 
 
 -- | The top-level entry point of the nullability analysis
-identifyNullable :: DependencySummary -> Module -> CallGraph -> EscapeResult -> NullableSummary
-identifyNullable ds m cg er = NS $ callGraphSCCTraversal cg (nullableAnalysis cg ds er) s0
+identifyNullable :: DependencySummary -> Module -> CallGraph -> EscapeResult
+                    -> (NullableSummary, Set String)
+identifyNullable ds m cg er = (NS res, diags)
   where
     s0 = M.fromList $ zip (moduleDefinedFunctions m) (repeat S.empty)
+    analysis = callGraphSCCTraversal cg nullableAnalysis s0
+    constData = ND er undefined ds cg
+    (res, diags) = evalRWS analysis constData ()
 
 -- | The dataflow fact for this analysis
 data NullInfo = NI { mayBeNull :: Set Value  -- ^ The set of variables that may be NULL
@@ -94,7 +99,9 @@ instance MeetSemiLattice NullInfo where
 instance BoundedMeetSemiLattice NullInfo where
   top = NI S.empty S.empty
 
-instance DataflowAnalysis NullInfo NullData where
+type AnalysisMonad = RWS NullData (Set String) ()
+
+instance DataflowAnalysis AnalysisMonad NullInfo where
   transfer = nullTransfer
 
 -- | The meet operator for @NullInfo@
@@ -110,107 +117,119 @@ meetNullInfo ni1 ni2 =
 --
 -- This set of arguments is added to the global summary data (set of
 -- all non-nullable arguments).
-nullableAnalysis :: CallGraph -> DependencySummary -> EscapeResult
-                    -> Function -> SummaryType -> SummaryType
-nullableAnalysis cg ds er f summ = M.insert f justArgs summ
+nullableAnalysis :: Function -> SummaryType -> AnalysisMonad SummaryType
+nullableAnalysis f summ = do
+  -- Run this sub-analysis step with a modified environment - the
+  -- summary component is the current module summary (given to us by
+  -- the SCC traversal).
+  --
+  -- The initial state of the dataflow analysis is top -- all pointer
+  -- parameters are NULLable.
+  let envMod e = e { moduleSummary = summ }
+  localInfo <- local envMod (forwardDataflow top f)
+
+  let exitInfo = HM.lookupDefault err exitInst localInfo
+      justArgs = S.fromList $ mapMaybe toArg $ S.toList (accessedUnchecked exitInfo)
+
+  -- Update the module symmary with the set of pointer parameters that
+  -- we have proven are accessed unchecked.
+  return $! M.insert f justArgs summ
   where
-    -- The global data is the escape analysis result
-    nd = ND er summ ds cg
-    -- Start off by assuming that all pointer parameters are NULL
-    s0 = top
-    localInfo = forwardDataflow nd s0 f
     exitInst = functionExitInstruction f
     err = error "NullAnalysis: exit instruction not in dataflow result"
-    exitInfo = HM.lookupDefault err exitInst localInfo
-    justArgs = S.fromList $ mapMaybe toArg $ S.toList (accessedUnchecked exitInfo)
 
 -- | First, process the incoming CFG edges to learn about pointers
 -- that are known to be non-NULL.  Then use this updated information
 -- to identify pointers that are dereferenced when they *might* be
 -- NULL.  Also map these possibly-NULL pointers to any corresponding
 -- parameters.
-nullTransfer :: NullData -> NullInfo -> Instruction -> [CFGEdge] -> NullInfo
-nullTransfer nd ni i edges = case i {- `debug` printf "%s --> %s\n" (show i) (show ni') -} of
-  CallInst { callFunction = calledFunc, callArguments = args } ->
-    callTransfer nd eg ni' calledFunc (map fst args)
-  InvokeInst { invokeFunction = calledFunc, invokeArguments = args } ->
-    callTransfer nd eg ni' calledFunc (map fst args)
-  -- Stack allocated pointers start off as NULL
-  AllocaInst {} -> case isPointerPointer i of
-    True -> recordPossiblyNull (Value i) ni'
-    False -> ni'
-  LoadInst { loadAddress =
-    (valueContent' -> InstructionC GetElementPtrInst { getElementPtrValue =
-      (valueContent' -> InstructionC LoadInst { loadAddress = ptr })})} ->
-    let ni'' = recordIfMayBeNull eg ni' ptr
-    in case isPointer i of
-      False -> ni''
-      True -> recordPossiblyNull (Value i) ni''
-  LoadInst { loadAddress =
-    (valueContent' -> InstructionC GetElementPtrInst { getElementPtrValue = ptr })} ->
-    let ni'' = recordIfMayBeNull eg ni' ptr
-    in case isPointer i of
-      False -> ni''
-      True -> recordPossiblyNull (Value i) ni''
-  -- For these two instructions, if the ptr is in the may be null set,
-  -- it is a not-null pointer.  Note that the result of the load (if a
-  -- pointer) could also be NULL.
-  LoadInst { loadAddress =
-    (valueContent' -> InstructionC LoadInst { loadAddress = ptr }) } ->
-    let ni'' = recordIfMayBeNull eg ni' ptr
-    in case isPointer i of
-      False -> ni''
-      True -> recordPossiblyNull (Value i) ni''
-  AtomicRMWInst { atomicRMWPointer = ptr } ->
-    recordIfMayBeNull eg ni' ptr
+nullTransfer :: NullInfo -> Instruction -> [CFGEdge] -> AnalysisMonad NullInfo
+nullTransfer ni i edges = do
+  -- Figure out what the points-to escape graph is at this node, and
+  -- then compute ni' (updated info about what pointers are NULL)
+  -- based on the set of incoming CFG edges.
+  er <- asks escapeResult
+  let eg = escapeGraphAtLocation er i
+      ni' = removeNonNullPointers ni edges
 
-  -- For these instructions, if the ptr is treated the same.  However,
-  -- after these instructions execute, the location stored to could
-  -- contain NULL again.  This is conservative - we could more closely inspect
-  -- what is being assigned to the pointer, but ...
+  case i of
+    CallInst { callFunction = calledFunc, callArguments = args } ->
+      callTransfer eg ni' calledFunc (map fst args)
+    InvokeInst { invokeFunction = calledFunc, invokeArguments = args } ->
+      callTransfer eg ni' calledFunc (map fst args)
+    -- Stack allocated pointers start off as NULL
+    AllocaInst {} -> case isPointerPointer i of
+      True -> return $! recordPossiblyNull (Value i) ni'
+      False -> return ni'
+    LoadInst { loadAddress =
+      (valueContent' -> InstructionC GetElementPtrInst { getElementPtrValue =
+        (valueContent' -> InstructionC LoadInst { loadAddress = ptr })})} ->
+      let ni'' = recordIfMayBeNull eg ni' ptr
+      in case isPointer i of
+        False -> return ni''
+        True -> return $! recordPossiblyNull (Value i) ni''
+    LoadInst { loadAddress =
+      (valueContent' -> InstructionC GetElementPtrInst { getElementPtrValue = ptr })} ->
+      let ni'' = recordIfMayBeNull eg ni' ptr
+      in case isPointer i of
+        False -> return ni''
+        True -> return $! recordPossiblyNull (Value i) ni''
+    -- For these two instructions, if the ptr is in the may be null set,
+    -- it is a not-null pointer.  Note that the result of the load (if a
+    -- pointer) could also be NULL.
+    LoadInst { loadAddress =
+      (valueContent' -> InstructionC LoadInst { loadAddress = ptr }) } ->
+      let ni'' = recordIfMayBeNull eg ni' ptr
+      in case isPointer i of
+        False -> return ni''
+        True -> return $! recordPossiblyNull (Value i) ni''
+    AtomicRMWInst { atomicRMWPointer = ptr } ->
+      return $! recordIfMayBeNull eg ni' ptr
 
-  -- This case handles stores through pointers. Example:
-  --
-  -- > int * x;
-  -- > *x = 5; // This line
-  --
-  -- makes store 5 x.  If x is not known to be non-NULL here, we have
-  -- to record x as being non-nullable (accessed without being
-  -- checked).  If x is at least a pointer to pointer, then the
-  -- pointer value *may* be null after this.  &x cannot be null, of
-  -- course.
-  StoreInst { storeAddress = (valueContent' -> InstructionC LoadInst { loadAddress = ptr })
-            , storeValue = newVal } ->
-    recordAndClobber eg ni' ptr newVal
+    -- For these instructions, if the ptr is treated the same.  However,
+    -- after these instructions execute, the location stored to could
+    -- contain NULL again.  This is conservative - we could more closely inspect
+    -- what is being assigned to the pointer, but ...
 
-  -- Similar, but storing directly to an argument.  This could happen
-  -- if the module has been reg2mem-ed.  This case is a little
-  -- different because the argument acts as a location (this is the
-  -- strange off-by-one behavior of arguments versus allocas/globals).
-  StoreInst { storeAddress = (valueContent' -> ArgumentC a)
-            , storeValue = newVal
-            } ->
-    recordAndClobber eg ni' (Value a) newVal
+    -- This case handles stores through pointers. Example:
+    --
+    -- > int * x;
+    -- > *x = 5; // This line
+    --
+    -- makes store 5 x.  If x is not known to be non-NULL here, we have
+    -- to record x as being non-nullable (accessed without being
+    -- checked).  If x is at least a pointer to pointer, then the
+    -- pointer value *may* be null after this.  &x cannot be null, of
+    -- course.
+    StoreInst { storeAddress = (valueContent' -> InstructionC LoadInst { loadAddress = ptr })
+              , storeValue = newVal } ->
+      return $! recordAndClobber eg ni' ptr newVal
 
-  -- This is a simpler case - we are storing to some location.
-  -- Locations (allocas, globals) are never NULL.  At worst, the
-  -- pointer stored at the location is being clobbered.
-  --
-  -- > int * x;
-  -- > x = malloc();
-  --
-  -- makes: store (malloc) x.  Clearly &x is never NULL, but x may be
-  -- NULL after the assignment.
-  StoreInst { storeAddress = ptr
-            , storeValue = newVal } ->
-    maybeClobber ni' ptr newVal
-  AtomicCmpXchgInst { atomicCmpXchgPointer = ptr
-                    , atomicCmpXchgNewValue = newVal } ->
-    recordAndClobber eg ni' ptr newVal
-  _ -> ni'
-  where
-    ni' = removeNonNullPointers ni edges
-    eg = escapeGraphAtLocation (escapeResult nd) i
+    -- Similar, but storing directly to an argument.  This could happen
+    -- if the module has been reg2mem-ed.  This case is a little
+    -- different because the argument acts as a location (this is the
+    -- strange off-by-one behavior of arguments versus allocas/globals).
+    StoreInst { storeAddress = (valueContent' -> ArgumentC a)
+              , storeValue = newVal
+              } ->
+      return $! recordAndClobber eg ni' (Value a) newVal
+
+    -- This is a simpler case - we are storing to some location.
+    -- Locations (allocas, globals) are never NULL.  At worst, the
+    -- pointer stored at the location is being clobbered.
+    --
+    -- > int * x;
+    -- > x = malloc();
+    --
+    -- makes: store (malloc) x.  Clearly &x is never NULL, but x may be
+    -- NULL after the assignment.
+    StoreInst { storeAddress = ptr
+              , storeValue = newVal } ->
+      return $! maybeClobber ni' ptr newVal
+    AtomicCmpXchgInst { atomicCmpXchgPointer = ptr
+                      , atomicCmpXchgNewValue = newVal } ->
+      return $! recordAndClobber eg ni' ptr newVal
+    _ -> return ni'
 
 -- | Clobber the value of @ptr@ (mark it as possibly NULL due to
 -- assignment).
@@ -232,9 +251,6 @@ recordIfMayBeNull eg ni ptr =
     -- (and especially any arguments it may point to) are not
     -- NULLABLE. (accessedUnchecked)
     True -> addUncheckedAccess eg ni ptr
-      -- let args = map Value $ argumentsForValue eg ptr
-      --     newUnchecked = S.fromList (ptr : args)
-      -- in ni { accessedUnchecked = S.union (accessedUnchecked ni) newUnchecked }
 
 addUncheckedAccess :: EscapeGraph -> NullInfo -> Value -> NullInfo
 addUncheckedAccess eg ni ptr =
@@ -294,15 +310,19 @@ processCFGEdge ni cond v = case valueContent v of
 -- | A split out transfer function for function calls.  Looks up
 -- summary values for called functions/params and records relevant
 -- information in the current dataflow fact.
-callTransfer :: NullData -> EscapeGraph -> NullInfo -> Value -> [Value] -> NullInfo
-callTransfer nd eg ni calledFunc args =
-  foldl' callTransferDispatch ni callTargets
+callTransfer :: EscapeGraph -> NullInfo -> Value -> [Value] -> AnalysisMonad NullInfo
+callTransfer eg ni calledFunc args = do
+  cg <- asks callGraph
+  let callTargets = callValueTargets cg calledFunc
+  foldM callTransferDispatch ni callTargets
   where
-    callTargets = callValueTargets (callGraph nd) calledFunc
-    callTransferDispatch info target =
-      case valueContent' target of
-        FunctionC f -> definedFunctionTransfer eg (moduleSummary nd) f info args
-        ExternalFunctionC e -> externalFunctionTransfer eg (dependencySummary nd) e info args
+    callTransferDispatch info target = case valueContent' target of
+      FunctionC f -> do
+        summ <- asks moduleSummary
+        return $! definedFunctionTransfer eg summ f info args
+      ExternalFunctionC e -> do
+        summ <- asks dependencySummary
+        return $! externalFunctionTransfer eg summ e info args
 
 definedFunctionTransfer :: EscapeGraph -> SummaryType -> Function
                            -> NullInfo -> [Value] -> NullInfo

@@ -77,6 +77,6 @@ main = do
           cg = mkCallGraph m pta []
           er = runEscapeAnalysis m cg
       ds <- loadDependencies [repo] deps
-      let s = identifyNullable ds m cg er
-          a = identifyArrays ds cg er
+      let s = fst (identifyNullable ds m cg er)
+          a = fst (identifyArrays ds cg er)
       saveModule repo name deps m [ModuleSummary s, ModuleSummary a]

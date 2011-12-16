@@ -34,7 +34,7 @@ main = do
 
 
 
-analyzeArrays ds m = arraySummaryToTestFormat $ identifyArrays ds cg er
+analyzeArrays ds m = arraySummaryToTestFormat $ fst $ identifyArrays ds cg er
   where
     pta = runPointsToAnalysis m
     cg = mkCallGraph m pta []

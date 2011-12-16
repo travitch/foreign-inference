@@ -14,9 +14,11 @@ module Foreign.Inference.Analysis.Array (
   arraySummaryToTestFormat
   ) where
 
+import Control.Monad.RWS.Strict
 import Data.List ( foldl' )
 import Data.Map ( Map )
 import qualified Data.Map as M
+import Data.Set ( Set )
 
 import Data.LLVM
 import Data.LLVM.CallGraph
@@ -43,6 +45,14 @@ summarizeArrayArgument a (APS summ) = case M.lookup a summ of
   Nothing -> []
   Just depth -> [PAArray depth]
 
+data ArrayData = AD { dependencySummary :: DependencySummary
+                    , callGraph :: CallGraph
+                    , escapeResult :: EscapeResult
+                    }
+-- FIXME: Make a separate module to define diagnostics and have a Log
+-- type to abstract them
+type AnalysisMonad = RWS ArrayData (Set String) ()
+
 -- | The analysis to generate array parameter summaries for an entire
 -- Module (via the CallGraph).  Example usage:
 --
@@ -50,25 +60,31 @@ summarizeArrayArgument a (APS summ) = case M.lookup a summ of
 -- >     cg = mkCallGraph m pta []
 -- >     er = runEscapeAnalysis m cg
 -- > in identifyArrays cg er
-identifyArrays :: DependencySummary -> CallGraph -> EscapeResult -> ArraySummary
-identifyArrays ds cg er = APS $ callGraphSCCTraversal cg (arrayAnalysis cg ds er) M.empty
+identifyArrays :: DependencySummary -> CallGraph -> EscapeResult -> (ArraySummary, Set String)
+identifyArrays ds cg er = (APS summ, diags)
+  where
+    analysis = callGraphSCCTraversal cg arrayAnalysis M.empty
+    readOnlyData = AD ds cg er
+    (summ, diags) = evalRWS analysis readOnlyData ()
 
 -- | The summarization function - add a summary for the current
 -- Function to the current summary.  This function collects all of the
 -- base+offset pairs and then uses @traceFromBases@ to reconstruct
 -- them.
-arrayAnalysis :: CallGraph
-                 -> DependencySummary
-                 -> EscapeResult
-                 -> Function
+arrayAnalysis :: Function
                  -> SummaryType
-                 -> SummaryType
-arrayAnalysis cg ds er f summary =
-  M.foldlWithKey' (traceFromBases baseResultMap) summary baseResultMap
+                 -> AnalysisMonad SummaryType
+arrayAnalysis f summary = do
+  cg <- asks callGraph
+  er <- asks escapeResult
+  ds <- asks dependencySummary
+
+  let basesAndOffsets = concatMap (isArrayDeref cg ds summary er) insts
+      baseResultMap = foldr addDeref M.empty basesAndOffsets
+
+  return $! M.foldlWithKey' (traceFromBases baseResultMap) summary baseResultMap
   where
     insts = concatMap basicBlockInstructions (functionBody f)
-    basesAndOffsets = concatMap (isArrayDeref cg ds summary er) insts
-    baseResultMap = foldr addDeref M.empty basesAndOffsets
     addDeref (base, use) acc = M.insert base use acc
 
 -- | Examine a GetElementPtr instruction result.  If the base is an

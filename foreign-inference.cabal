@@ -24,7 +24,7 @@ library
   other-modules: Foreign.Inference.Internal.ValueArguments,
                  Paths_foreign_inference
   build-depends: base > 3 && < 5, containers, filepath, text, bytestring, ghc-prim,
-                 unordered-containers >= 0.1.4.0, hashable,
+                 unordered-containers >= 0.1.4.0, hashable, mtl > 2 && < 3,
                  aeson >= 0.4.0.0, aeson-pretty,
                  lattices, llvm-analysis
   ghc-options: -Wall -funbox-strict-fields

@@ -324,7 +324,7 @@ paramToExternal summaries arg =
 lookupArgumentSummary :: DependencySummary -> ExternalFunction -> Int -> Maybe [ParamAnnotation]
 lookupArgumentSummary ds ef ix =
   case fsum of
-    Nothing -> error ("No summary for " ++ show ef)
+    Nothing -> Nothing
     Just s -> case length (foreignFunctionParameters s) < ix of
       True -> error $ "lookupArgumentSummary: no parameter " ++ show ix ++ " for " ++ show ef
       False -> Just $ parameterAnnotations (foreignFunctionParameters s !! ix)

@@ -1622,6 +1622,51 @@
                 "parameterType": {"CInt":32}
               }
           ]
+        },
+        { "foreignFunctionName": "gettext",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CPointer": {"CInt": 8}},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PAString":[]}, {"PAArray":1}, {"PANotNull":[]}, {"PAConst":[]}],
+                "parameterName": "msgid",
+                "parameterType": {"CPointer": {"CInt":8}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "dgettext",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CPointer": {"CInt": 8}},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PAString":[]}, {"PAArray":1}, {"PANotNull":[]}, {"PAConst":[]}],
+                "parameterName": "domainname",
+                "parameterType": {"CPointer": {"CInt":8}}
+              },
+              { "parameterAnnotations": [{"PAString":[]}, {"PAArray":1}, {"PANotNull":[]}, {"PAConst":[]}],
+                "parameterName": "msgid",
+                "parameterType": {"CPointer": {"CInt":8}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "dcgettext",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CPointer": {"CInt": 8}},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PAString":[]}, {"PAArray":1}, {"PANotNull":[]}, {"PAConst":[]}],
+                "parameterName": "domainname",
+                "parameterType": {"CPointer": {"CInt":8}}
+              },
+              { "parameterAnnotations": [{"PAString":[]}, {"PAArray":1}, {"PANotNull":[]}, {"PAConst":[]}],
+                "parameterName": "msgid",
+                "parameterType": {"CPointer": {"CInt":8}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "category",
+                "parameterType": {"CInt": 32}
+              }
+          ]
         }
     ]
 }

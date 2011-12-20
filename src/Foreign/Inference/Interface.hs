@@ -325,13 +325,19 @@ lookupArgumentSummary :: DependencySummary -> ExternalFunction -> Int -> Maybe [
 lookupArgumentSummary ds ef ix =
   case fsum of
     Nothing -> Nothing
-    Just s -> case length (foreignFunctionParameters s) < ix of
-      True -> error $ "lookupArgumentSummary: no parameter " ++ show ix ++ " for " ++ show ef
-      False -> Just $ parameterAnnotations (foreignFunctionParameters s !! ix)
+    Just s -> case (isVarArg ef, length (foreignFunctionParameters s) < ix) of
+      (True, _) -> Just []
+      (False, True) -> error $ "lookupArgumentSummary: no parameter " ++ show ix ++ " for " ++ show ef
+      (False, False) -> Just $ parameterAnnotations (foreignFunctionParameters s !! ix)
   where
     fname = identifierContent $ externalFunctionName ef
     summ = depSummary ds
     fsum = M.lookup fname summ
+
+isVarArg :: ExternalFunction -> Bool
+isVarArg ef = isVa
+  where
+    (TypeFunction _ _ isVa) = externalFunctionType ef
 
 -- Helpers
 

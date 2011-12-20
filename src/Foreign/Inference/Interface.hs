@@ -345,8 +345,13 @@ typeToCType t = case t of
   TypeArray _ t' -> CPointer (typeToCType t')
   TypeFunction r ts _ -> CFunction (typeToCType r) (map typeToCType ts)
   TypePointer t' _ -> CPointer (typeToCType t')
-  TypeStruct (Just n) ts _ -> CStruct n (map typeToCType ts)
+  TypeStruct (Just n) _ _ -> CStruct n []
   TypeStruct Nothing ts _ -> CAnonStruct (map typeToCType ts)
+
+-- FIXME: Use a different function to translate types that are going
+-- to be used as type definitions at the beginning of a library
+-- interface spec.  In that case, actually include the contained
+-- types.
 
 -- | Convert an LLVM linkage to a type more suitable for the summary
 toLinkage :: LinkageType -> Maybe Linkage

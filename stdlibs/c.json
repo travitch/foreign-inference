@@ -88,6 +88,21 @@
               }
           ]
         },
+        { "foreignFunctionName": "fopen64",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CPointer": {"CStruct": ["FILE",[]]}},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PAArray": 1}, {"PAConst":[]}, {"PANotNull":[]}, {"PAString":[]}],
+                "parameterName": "filename",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              },
+              { "parameterAnnotations": [{"PAArray": 1}, {"PAConst":[]}, {"PANotNull":[]}, {"PAString":[]}],
+                "parameterName": "mode",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              }
+          ]
+        },
         { "foreignFunctionName": "fread",
           "foreignFunctionAnnotations": [],
           "foreignFunctionLinkage": { "LinkDefault": [] },
@@ -1262,6 +1277,32 @@
               }
           ]
         },
+        { "foreignFunctionName": "strdup",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAArray":1}, {"PAString":[]}, {"PAConst":[]}],
+                "parameterName": "s",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "strndup",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAArray":1}, {"PAString":[]}, {"PAConst":[]}],
+                "parameterName": "s",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "n",
+                "parameterType": {"CStruct": ["size_t", []]}
+              }
+          ]
+        },
         { "foreignFunctionName": "strcoll",
           "foreignFunctionAnnotations": [],
           "foreignFunctionLinkage": { "LinkDefault": [] },
@@ -1549,6 +1590,36 @@
               { "parameterAnnotations": [],
                 "parameterName": "timer",
                 "parameterType": {"CPointer": {"CStruct": ["time_t", []]}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "fnmatch",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAArray":1}, {"PAString":[]}, {"PAConst":[]}],
+                "parameterName": "pattern",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              },
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAArray":1}, {"PAString":[]}, {"PAConst":[]}],
+                "parameterName": "string",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "flags",
+                "parameterType": {"CInt":32}
+              }
+          ]
+        },
+        { "foreignFunctionName": "syscall",
+          "foreignFunctionAnnotations": [{"FAVarArg":[]}],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "number",
+                "parameterType": {"CInt":32}
               }
           ]
         }

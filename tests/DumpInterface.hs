@@ -104,5 +104,5 @@ main = do
       diags = mconcat [ nullDiags, arrayDiags ]
   case formatDiagnostics (diagnosticLevel opts) diags of
     Nothing -> return ()
-    Just diagString -> print diagString
+    Just diagString -> putStrLn diagString
   saveModule repo name deps m [ModuleSummary s, ModuleSummary a]

@@ -1639,7 +1639,7 @@
           "foreignFunctionLinkage": { "LinkDefault": [] },
           "foreignFunctionReturnType": {"CPointer": {"CInt": 8}},
           "foreignFunctionParameters": [
-              { "parameterAnnotations": [{"PAString":[]}, {"PAArray":1}, {"PANotNull":[]}, {"PAConst":[]}],
+              { "parameterAnnotations": [{"PAString":[]}, {"PAArray":1}, {"PAConst":[]}],
                 "parameterName": "domainname",
                 "parameterType": {"CPointer": {"CInt":8}}
               },
@@ -1654,7 +1654,7 @@
           "foreignFunctionLinkage": { "LinkDefault": [] },
           "foreignFunctionReturnType": {"CPointer": {"CInt": 8}},
           "foreignFunctionParameters": [
-              { "parameterAnnotations": [{"PAString":[]}, {"PAArray":1}, {"PANotNull":[]}, {"PAConst":[]}],
+              { "parameterAnnotations": [{"PAString":[]}, {"PAArray":1}, {"PAConst":[]}],
                 "parameterName": "domainname",
                 "parameterType": {"CPointer": {"CInt":8}}
               },

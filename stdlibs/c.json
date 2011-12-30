@@ -1667,6 +1667,226 @@
                 "parameterType": {"CInt": 32}
               }
           ]
+        },
+        { "foreignFunctionName": "chmod",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAString":[]}, {"PAArray":1}, {"PAConst":[]}],
+                "parameterName": "path",
+                "parameterType": {"CPointer": {"CInt":8}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "mode",
+                "parameterType": {"CStruct": ["mode_t", []]}
+              }
+          ]
+        },
+        { "foreignFunctionName": "fchmod",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "fd",
+                "parameterType": {"CInt": 32}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "mode",
+                "parameterType": {"CStruct": ["mode_t", []]}
+              }
+          ]
+        },
+        { "foreignFunctionName": "opendir",
+          "foreignFunctionAnnotations": [{"FAAllocator": "closedir"}],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CPointer": {"CStruct": ["DIR", []]}},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAString":[]}, {"PAArray":1}, {"PAConst":[]}],
+                "parameterName": "name",
+                "parameterType": {"CPointer": {"CInt":8}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "fopendir",
+          "foreignFunctionAnnotations": [{"FAAllocator": "closedir"}],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CPointer": {"CStruct": ["DIR", []]}},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "fd",
+                "parameterType": {"CInt": 32}
+              }
+          ]
+        },
+        { "foreignFunctionName": "closedir",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "dirp",
+                "parameterType": {"CPointer": {"CStruct": ["DIR", []]}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "seekdir",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CVoid": []},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "dirp",
+                "parameterType": {"CPointer": {"CStruct": ["DIR", []]}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "offset",
+                "parameterType": {"CInt": 32}
+              }
+          ]
+        },
+        { "foreignFunctionName": "telldir",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "dirp",
+                "parameterType": {"CPointer": {"CStruct": ["DIR", []]}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "readdir",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CPointer": {"CStruct": ["dirent", []]}},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "dirp",
+                "parameterType": {"CPointer": {"CStruct": ["DIR", []]}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "readdir64",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CPointer": {"CStruct": ["dirent", []]}},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "dirp",
+                "parameterType": {"CPointer": {"CStruct": ["DIR", []]}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "readdir_r",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "dirp",
+                "parameterType": {"CPointer": {"CStruct": ["DIR", []]}}
+              },
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "entry",
+                "parameterType": {"CPointer": {"CStruct": ["dirent", []]}}
+              },
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "result",
+                "parameterType": {"CPointer": {"CPointer": {"CStruct": ["dirent", []]}}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "stat",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAString":[]}, {"PAArray":1}, {"PAConst":[]}],
+                "parameterName": "path",
+                "parameterType": {"CPointer": {"CInt":8}}
+              },
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAOut":[]}],
+                "parameterName": "buf",
+                "parameterType": {"CPointer": {"CStruct": ["stat", []]}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "stat64",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAString":[]}, {"PAArray":1}, {"PAConst":[]}],
+                "parameterName": "path",
+                "parameterType": {"CPointer": {"CInt":8}}
+              },
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAOut":[]}],
+                "parameterName": "buf",
+                "parameterType": {"CPointer": {"CStruct": ["stat", []]}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "lstat",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAString":[]}, {"PAArray":1}, {"PAConst":[]}],
+                "parameterName": "path",
+                "parameterType": {"CPointer": {"CInt":8}}
+              },
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAOut":[]}],
+                "parameterName": "buf",
+                "parameterType": {"CPointer": {"CStruct": ["stat", []]}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "lstat64",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAString":[]}, {"PAArray":1}, {"PAConst":[]}],
+                "parameterName": "path",
+                "parameterType": {"CPointer": {"CInt":8}}
+              },
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAOut":[]}],
+                "parameterName": "buf",
+                "parameterType": {"CPointer": {"CStruct": ["stat", []]}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "fstat",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAString":[]}, {"PAArray":1}, {"PAConst":[]}],
+                "parameterName": "fd",
+                "parameterType": {"CInt":32}
+              },
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAOut":[]}],
+                "parameterName": "buf",
+                "parameterType": {"CPointer": {"CStruct": ["stat", []]}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "fstat64",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAString":[]}, {"PAArray":1}, {"PAConst":[]}],
+                "parameterName": "fd",
+                "parameterType": {"CInt":32}
+              },
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAOut":[]}],
+                "parameterName": "buf",
+                "parameterType": {"CPointer": {"CStruct": ["stat", []]}}
+              }
+          ]
         }
     ]
 }

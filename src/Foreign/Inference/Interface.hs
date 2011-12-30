@@ -68,6 +68,8 @@ data InterfaceException = DependencyMissing FilePath
 instance Exception InterfaceException
 
 -- | The annotations that are specific to individual parameters.
+--
+-- Other annotations:
 data ParamAnnotation = PAArray !Int
                      | PAOut
                      | PAInOut
@@ -81,6 +83,10 @@ instance ToJSON ParamAnnotation
 
 -- | The annotations that can apply at the 'ForeignFunction' level.
 -- The FAVarArg annotation is not inferred but is still necessary.
+--
+-- Other annotations:
+--
+-- * FAReentrant (use to halt at runtime if called from different threads).
 data FuncAnnotation = FAAllocator String -- ^ Record the associated finalizer
                     | FAVarArg
                     deriving (Show, Generic, Eq, Ord)

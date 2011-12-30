@@ -1887,6 +1887,218 @@
                 "parameterType": {"CPointer": {"CStruct": ["stat", []]}}
               }
           ]
+        },
+        { "foreignFunctionName": "getgrnam",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CPointer": {"CStruct": ["group", []]}},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAString":[]}, {"PAArray": 1}, {"PAConst":[]}],
+                "parameterName": "name",
+                "parameterType": {"CPointer": {"CInt":8}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "getgrgid",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CPointer": {"CStruct": ["group", []]}},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "gid",
+                "parameterType": {"CStruct": ["gid_t", []]}
+              }
+          ]
+        },
+        { "foreignFunctionName": "getgrnam_r",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAString":[]}, {"PAArray": 1}, {"PAConst":[]}],
+                "parameterName": "name",
+                "parameterType": {"CPointer": {"CInt":8}}
+              },
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "grp",
+                "parameterType": {"CPointer": {"CStruct": ["group", []]}}
+              },
+              { "parameterAnnotations": [{"PAArray": 1}, {"PANotNull":[]}],
+                "parameterName": "buf",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "buflen",
+                "parameterType": {"CStruct": ["size_t", []]}
+              },
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "result",
+                "parameterType": {"CPointer": {"CPointer": {"CStruct": ["group", []]}}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "getgrgid_r",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CPointer": {"CStruct": ["group", []]}},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "gid",
+                "parameterType": {"CStruct": ["gid_t", []]}
+              },
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "grp",
+                "parameterType": {"CPointer": {"CStruct": ["group", []]}}
+              },
+              { "parameterAnnotations": [{"PAArray": 1}, {"PANotNull":[]}],
+                "parameterName": "buf",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "buflen",
+                "parameterType": {"CStruct": ["size_t", []]}
+              },
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "result",
+                "parameterType": {"CPointer": {"CPointer": {"CStruct": ["group", []]}}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "getpwnam",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CPointer": {"CStruct": ["passwd", []]}},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAString":[]}, {"PAArray": 1}, {"PAConst":[]}],
+                "parameterName": "name",
+                "parameterType": {"CPointer": {"CInt":8}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "getpwuid",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CPointer": {"CStruct": ["passwd", []]}},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "uid",
+                "parameterType": {"CStruct": ["uid_t", []]}
+              }
+          ]
+        },
+        { "foreignFunctionName": "getpwnam_r",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAString":[]}, {"PAArray": 1}, {"PAConst":[]}],
+                "parameterName": "name",
+                "parameterType": {"CPointer": {"CInt":8}}
+              },
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "pwd",
+                "parameterType": {"CPointer": {"CStruct": ["passwd", []]}}
+              },
+              { "parameterAnnotations": [{"PAArray": 1}, {"PANotNull":[]}],
+                "parameterName": "buf",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "buflen",
+                "parameterType": {"CStruct": ["size_t", []]}
+              },
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "result",
+                "parameterType": {"CPointer": {"CPointer": {"CStruct": ["passwd", []]}}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "getpwuid_r",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CPointer": {"CStruct": ["group", []]}},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "uid",
+                "parameterType": {"CStruct": ["uid_t", []]}
+              },
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "pwd",
+                "parameterType": {"CPointer": {"CStruct": ["passwd", []]}}
+              },
+              { "parameterAnnotations": [{"PAArray": 1}, {"PANotNull":[]}],
+                "parameterName": "buf",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "buflen",
+                "parameterType": {"CStruct": ["size_t", []]}
+              },
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "result",
+                "parameterType": {"CPointer": {"CPointer": {"CStruct": ["passwd", []]}}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "getrlimit",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "resource",
+                "parameterType": {"CInt":32}
+              },
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAOut":[]}],
+                "parameterName": "rlim",
+                "parameterType": {"CPointer": {"CStruct": ["rlimit", []]}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "getrlimit64",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "resource",
+                "parameterType": {"CInt":32}
+              },
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAOut":[]}],
+                "parameterName": "rlim",
+                "parameterType": {"CPointer": {"CStruct": ["rlimit", []]}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "setrlimit",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "resource",
+                "parameterType": {"CInt":32}
+              },
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAConst":[]}],
+                "parameterName": "rlim",
+                "parameterType": {"CPointer": {"CStruct": ["rlimit", []]}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "setrlimit64",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "resource",
+                "parameterType": {"CInt":32}
+              },
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAConst":[]}],
+                "parameterName": "rlim",
+                "parameterType": {"CPointer": {"CStruct": ["rlimit", []]}}
+              }
+          ]
         }
     ]
 }

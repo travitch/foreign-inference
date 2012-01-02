@@ -92,8 +92,11 @@ main = do
       deps = inputDependencies opts
       repo = repositoryLocation opts
       name = takeBaseName inFile
-  Right m <- parseLLVMFile defaultParserOptions inFile
+      diagLevel = diagnosticLevel opts
+  m <- parseLLVMFile defaultParserOptions inFile
+  either error (dump deps repo name diagLevel) m
 
+dump deps repo name diagLevel m = do
   let pta = runPointsToAnalysis m
       cg = mkCallGraph m pta []
       er = runEscapeAnalysis m cg
@@ -102,7 +105,7 @@ main = do
   let (s, nullDiags) = identifyNullable ds m cg er
       (a, arrayDiags) = identifyArrays ds cg er
       diags = mconcat [ nullDiags, arrayDiags ]
-  case formatDiagnostics (diagnosticLevel opts) diags of
+  case formatDiagnostics diagLevel diags of
     Nothing -> return ()
     Just diagString -> putStrLn diagString
   saveModule repo name deps m [ModuleSummary s, ModuleSummary a]

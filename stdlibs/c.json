@@ -103,6 +103,40 @@
               }
           ]
         },
+        { "foreignFunctionName": "freopen",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CPointer": {"CStruct": ["FILE",[]]}},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PAArray": 1}, {"PAConst":[]}, {"PANotNull":[]}, {"PAString":[]}],
+                "parameterName": "filename",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              },
+              { "parameterAnnotations": [{"PAArray": 1}, {"PAConst":[]}, {"PANotNull":[]}, {"PAString":[]}],
+                "parameterName": "mode",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              },
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "stream",
+                "parameterType": {"CPointer": {"CStruct": ["FILE", []]}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "fdopen",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CPointer": {"CStruct": ["FILE",[]]}},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "fd",
+                "parameterType": {"CInt": 32}
+              },
+              { "parameterAnnotations": [{"PAArray": 1}, {"PAConst":[]}, {"PANotNull":[]}, {"PAString":[]}],
+                "parameterName": "mode",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              }
+          ]
+        },
         { "foreignFunctionName": "fread",
           "foreignFunctionAnnotations": [],
           "foreignFunctionLinkage": { "LinkDefault": [] },

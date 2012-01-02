@@ -2099,6 +2099,127 @@
                 "parameterType": {"CPointer": {"CStruct": ["rlimit", []]}}
               }
           ]
+        },
+        { "foreignFunctionName": "open",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAString":[]}, {"PAArray":1}, {"PAConst":[]}],
+                "parameterName": "pathname",
+                "parameterType": {"CPointer": {"CInt":8}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "flags",
+                "parameterType": {"CInt": 32}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "mode",
+                "parameterType": {"CStruct": ["mode_t", []]}
+              }
+          ]
+        },
+        { "foreignFunctionName": "creat",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAString":[]}, {"PAArray":1}, {"PAConst":[]}],
+                "parameterName": "pathname",
+                "parameterType": {"CPointer": {"CInt":8}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "mode",
+                "parameterType": {"CStruct": ["mode_t", []]}
+              }
+          ]
+        },
+        { "foreignFunctionName": "close",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "fd",
+                "parameterType": {"CInt":32}
+              }
+          ]
+        },
+        { "foreignFunctionName": "read",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CStruct": ["ssize_t", []]},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "fd",
+                "parameterType": {"CInt":32}
+              },
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "buf",
+                "parameterType": {"CPointer": {"CVoid":[]}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "count",
+                "parameterType": {"CStruct": ["size_t", []]}
+              }
+          ]
+        },
+        { "foreignFunctionName": "write",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CStruct": ["ssize_t", []]},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "fd",
+                "parameterType": {"CInt":32}
+              },
+              { "parameterAnnotations": [{"PAConst":[]}, {"PANotNull":[]}],
+                "parameterName": "buf",
+                "parameterType": {"CPointer": {"CVoid":[]}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "count",
+                "parameterType": {"CStruct": ["size_t", []]}
+              }
+          ]
+        },
+        { "foreignFunctionName": "lseek",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CStruct": ["off_t", []]},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "fd",
+                "parameterType": {"CInt":32}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "offset",
+                "parameterType": {"CStruct": ["off_t", []]}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "whence",
+                "parameterType": {"CInt":32}
+              }
+          ]
+        },
+        { "foreignFunctionName": "lseek64",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CStruct": ["off_t", []]},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "fd",
+                "parameterType": {"CInt":32}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "offset",
+                "parameterType": {"CStruct": ["off_t", []]}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "whence",
+                "parameterType": {"CInt":32}
+              }
+          ]
         }
     ]
 }

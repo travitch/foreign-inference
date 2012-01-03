@@ -14,6 +14,25 @@
 --    In theory letting may-alias relationships influence us could lead
 --    to false positives that make some functions uncallable.  Is this a
 --    problem in practice?
+--
+-- # Observations on infeasible paths #
+--
+-- Consider code like
+--
+-- > if(x > 10) *p = 5;
+--
+-- If x can never be greater than 10, the path is infeasible and we
+-- might conclude that p must not be NULL.  Even though this is not on
+-- an infeasible path, this is a safe conclusion (assuming no other
+-- references) because we do not lose any functionality by mandating
+-- that p not be NULL.
+--
+-- We do lose functionality in the presence of conditions like:
+--
+-- > if(!p) ...
+--
+-- Often, this is error handling code.  Not always, though.  Tying in
+-- the error handling code analysis will resolve these cases.
 module Foreign.Inference.Analysis.Nullable (
   -- * Interface
   NullableSummary,

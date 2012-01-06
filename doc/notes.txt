@@ -1,3 +1,7 @@
+Add an option to *warn* (maybe via a Writer monad?) when dependency
+functions without summaries are encountered.  Continue on
+conservatively.
+
 See about adding run-time checks in wrappers that take function
 pointers as parameters.  If the target is known at runtime to be a
 function that does not induce escape behavior, do not cause a leak.

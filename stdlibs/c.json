@@ -2235,6 +2235,28 @@
                 "parameterType": {"CInt":32}
               }
           ]
+        },
+        { "foreignFunctionName": "toupper",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "c",
+                "parameterType": {"CInt":32}
+              }
+          ]
+        },
+        { "foreignFunctionName": "tolower",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "c",
+                "parameterType": {"CInt":32}
+              }
+          ]
         }
     ]
 }

@@ -308,24 +308,26 @@ processCFGEdge ni cond v = case valueContent v of
   InstructionC ICmpInst { cmpPredicate = ICmpEq
                         , cmpV1 = (valueContent' -> InstructionC LoadInst { loadAddress = v1 } )
                         , cmpV2 = (valueContent -> ConstantC ConstantPointerNull {}) } ->
-    process' v1 (cond True)
+    process' ni v1 (cond True)
   InstructionC ICmpInst { cmpPredicate = ICmpEq
                         , cmpV2 = (valueContent' -> InstructionC LoadInst { loadAddress = v2 } )
                         , cmpV1 = (valueContent -> ConstantC ConstantPointerNull {}) } ->
-    process' v2 (cond True)
+    process' ni v2 (cond True)
   InstructionC ICmpInst { cmpPredicate = ICmpNe
                         , cmpV1 = (valueContent' -> InstructionC LoadInst { loadAddress = v1 } )
                         , cmpV2 = (valueContent -> ConstantC ConstantPointerNull {}) } ->
-    process' v1 (cond False)
+    process' ni v1 (cond False)
   InstructionC ICmpInst { cmpPredicate = ICmpNe
                         , cmpV2 = (valueContent' -> InstructionC LoadInst { loadAddress = v2 } )
                         , cmpV1 = (valueContent -> ConstantC ConstantPointerNull {}) } ->
-    process' v2 (cond False)
+    process' ni v2 (cond False)
   _ -> ni
-  where
-    process' val isNull = case isNull of
-      True -> ni
-      False -> recordNotNull val ni
+
+process' :: NodeInfo -> Value -> Bool -> NullInfo
+process' ni val isNull =
+  case isNull of
+    True -> ni
+    False -> recordNotNull val ni
 
 -- | A split out transfer function for function calls.  Looks up
 -- summary values for called functions/params and records relevant

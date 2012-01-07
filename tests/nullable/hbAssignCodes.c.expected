@@ -1,0 +1,1 @@
+fromList [ ("@BZ2_hbAssignCodes", fromList ["%code", "%length"]) ]

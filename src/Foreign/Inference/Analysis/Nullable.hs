@@ -125,7 +125,6 @@ data NullData = ND { escapeResult :: EscapeResult
                    , callGraph :: CallGraph
                    }
 
-
 instance MeetSemiLattice NullInfo where
   meet = meetNullInfo
 
@@ -194,74 +193,33 @@ nullTransfer ni i edges = do
     AllocaInst {} -> case isPointerPointer i of
       True -> return $! recordPossiblyNull (Value i) ni'
       False -> return ni'
-    LoadInst { loadAddress =
-      (valueContent' -> InstructionC GetElementPtrInst { getElementPtrValue =
-        (valueContent' -> InstructionC LoadInst { loadAddress = ptr })})} ->
+
+    -- Attempt at handling loads and stores more simply and uniformly.
+
+    LoadInst { loadAddress = ptr } ->
       let ni'' = recordIfMayBeNull eg ni' ptr
       in case isPointer i of
         False -> return ni''
+        -- The pointer that is returned is always considered to be
+        -- possibly null
         True -> return $! recordPossiblyNull (Value i) ni''
-    LoadInst { loadAddress =
-      (valueContent' -> InstructionC GetElementPtrInst { getElementPtrValue = ptr })} ->
+    StoreInst { storeAddress = ptr
+              , storeValue = newVal } ->
       let ni'' = recordIfMayBeNull eg ni' ptr
-      in case isPointer i of
+      in case isPointer newVal of
         False -> return ni''
-        True -> return $! recordPossiblyNull (Value i) ni''
-    -- For these two instructions, if the ptr is in the may be null set,
-    -- it is a not-null pointer.  Note that the result of the load (if a
-    -- pointer) could also be NULL.
-    LoadInst { loadAddress =
-      (valueContent' -> InstructionC LoadInst { loadAddress = ptr }) } ->
-      let ni'' = recordIfMayBeNull eg ni' ptr
-      in case isPointer i of
-        False -> return ni''
-        True -> return $! recordPossiblyNull (Value i) ni''
+        True -> return $! maybeClobber ni'' ptr newVal
+
     AtomicRMWInst { atomicRMWPointer = ptr } ->
       return $! recordIfMayBeNull eg ni' ptr
 
-    -- For these instructions, if the ptr is treated the same.  However,
-    -- after these instructions execute, the location stored to could
-    -- contain NULL again.  This is conservative - we could more closely inspect
-    -- what is being assigned to the pointer, but ...
-
-    -- This case handles stores through pointers. Example:
-    --
-    -- > int * x;
-    -- > *x = 5; // This line
-    --
-    -- makes store 5 x.  If x is not known to be non-NULL here, we have
-    -- to record x as being non-nullable (accessed without being
-    -- checked).  If x is at least a pointer to pointer, then the
-    -- pointer value *may* be null after this.  &x cannot be null, of
-    -- course.
-    StoreInst { storeAddress = (valueContent' -> InstructionC LoadInst { loadAddress = ptr })
-              , storeValue = newVal } ->
-      return $! recordAndClobber eg ni' ptr newVal
-
-    -- Similar, but storing directly to an argument.  This could happen
-    -- if the module has been reg2mem-ed.  This case is a little
-    -- different because the argument acts as a location (this is the
-    -- strange off-by-one behavior of arguments versus allocas/globals).
-    StoreInst { storeAddress = (valueContent' -> ArgumentC a)
-              , storeValue = newVal
-              } ->
-      return $! recordAndClobber eg ni' (Value a) newVal
-
-    -- This is a simpler case - we are storing to some location.
-    -- Locations (allocas, globals) are never NULL.  At worst, the
-    -- pointer stored at the location is being clobbered.
-    --
-    -- > int * x;
-    -- > x = malloc();
-    --
-    -- makes: store (malloc) x.  Clearly &x is never NULL, but x may be
-    -- NULL after the assignment.
-    StoreInst { storeAddress = ptr
-              , storeValue = newVal } ->
-      return $! maybeClobber ni' ptr newVal
     AtomicCmpXchgInst { atomicCmpXchgPointer = ptr
                       , atomicCmpXchgNewValue = newVal } ->
-      return $! recordAndClobber eg ni' ptr newVal
+      let ni'' = recordIfMayBeNull eg ni' ptr
+      in case isPointer newVal of
+        False -> return ni''
+        True -> return $! maybeClobber ni'' ptr newVal
+
     _ -> return ni'
 
 -- | Clobber the value of @ptr@ (mark it as possibly NULL due to
@@ -269,38 +227,67 @@ nullTransfer ni i edges = do
 maybeClobber :: NullInfo -> Value -> Value -> NullInfo
 maybeClobber ni ptr newVal = recordPossiblyNull ptr ni
 
--- | Check if the *exact* pointer is in the set of may-be-null
--- pointers.  If it is, try to map it back to an argument before
--- inserting it into the non-nullable set.
 recordIfMayBeNull :: EscapeGraph -> NullInfo -> Value -> NullInfo
 recordIfMayBeNull eg ni ptr =
-  case S.member ptr (mayBeNull ni) of -- FIXME: Or if it is a field
-                                      -- access?  Fields might always
-                                      -- be null
+  let base = memAccessBase ptr
+  in case base of
+    -- We don't reason about all pointer dereferences.  The direct
+    -- dereference of an alloca or global variable is *always* safe
+    -- (since those pointers are maintained by the compiler/runtime).
+    Nothing -> ni
+    Just b ->
+      case S.member b (mayBeNull ni) of
+        False -> ni
+        True -> addUncheckedAccess eg ni b
 
-    -- The access is safe
-    False -> ni
-    -- The access is unsafe and we need to record that this pointer
-    -- (and especially any arguments it may point to) are not
-    -- NULLABLE. (accessedUnchecked)
-    True -> addUncheckedAccess eg ni ptr
+-- | Given a value that is being dereferenced by an instruction
+-- (either a load, store, or atomic memory op), determine the *base*
+-- address that is being dereferenced.
+--
+-- Not all base values need to be analyzed.  For example, globals and
+-- allocas are *always* safe to dereference.
+--
+-- This function strips off intermediate bitcasts.
+memAccessBase :: Value -> Maybe Value
+memAccessBase ptr =
+  case valueContent' ptr of
+    GlobalVariableC _ -> Nothing
+    InstructionC AllocaInst {} -> Nothing
+    -- For optimized code, arguments (which we care about) can be
+    -- loaded/stored to directly (without an intervening alloca).
+    ArgumentC _ -> Just ptr
+    -- In this case, we have two levels of dereference.  The first
+    -- level (la) is a global or alloca (or result of another
+    -- load/GEP).  This represents a source-level dereference of a
+    -- local pointer.
+    InstructionC LoadInst { loadAddress = la } -> Just $ stripBitcasts la
+    -- This case captures array/field accesses: a[x] The base
+    -- loadAddress here represents the load of a from a local or
+    -- global.
+    InstructionC GetElementPtrInst { getElementPtrValue =
+      (valueContent' -> InstructionC LoadInst { loadAddress = la}) } ->
+      Just $ stripBitcasts la
+    -- This case might not really be necessary...
+    InstructionC GetElementPtrInst { getElementPtrValue = v } ->
+      Just $ stripBitcasts v
+    _ -> Just $ stripBitcasts ptr
 
+-- | Record the given @ptr@ as being accessed unchecked.
+-- Additionally, determine which function arguments @ptr@ may alias at
+-- this program point (based on the points-to escape graph) and also
+-- record that as being accessed unchecked.
+--
+-- FIXME: Look into adding a separate annotation here for arguments
+-- that *may* be accessed unchecked versus arguments that *must* be
+-- accessed unchecked.  Just check the size of the set returned by
+-- argumentsForValue to determine which case we are in.
 addUncheckedAccess :: EscapeGraph -> NullInfo -> Value -> NullInfo
 addUncheckedAccess eg ni ptr =
-  ni { accessedUnchecked = S.union (accessedUnchecked ni) newUnchecked }
+  let ni' = ni { accessedUnchecked = S.union (accessedUnchecked ni) newUnchecked }
+  in ni'
   where
     args = map Value $ argumentsForValue eg ptr
     newUnchecked = S.fromList (ptr : args)
-
--- | As in @recordIfMayBeNull@, record ptr as non-nullable if
--- necessary.  Additionally, clobber @ptr@ since it could be NULL
--- again after this operation.  Only clobber if @newVal@ might be
--- NULL.  Various pointer values can never be NULL (e.g., variables).
-recordAndClobber :: EscapeGraph -> NullInfo -> Value -> Value -> NullInfo
-recordAndClobber eg ni ptr newVal =
-  recordPossiblyNull ptr ni'
-  where
-    ni' = recordIfMayBeNull eg ni ptr
 
 -- | Examine the incoming edges and, if any tell us that a variable is
 -- *not* NULL, remove that variable from the set of maybe null

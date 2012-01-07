@@ -310,20 +310,40 @@ processCFGEdge ni cond v = case valueContent v of
                         , cmpV2 = (valueContent -> ConstantC ConstantPointerNull {}) } ->
     process' ni v1 (cond True)
   InstructionC ICmpInst { cmpPredicate = ICmpEq
+                        , cmpV1 = (valueContent' -> ArgumentC v1)
+                        , cmpV2 = (valueContent -> ConstantC ConstantPointerNull {}) } ->
+    process' ni (Value v1) (cond True)
+
+  InstructionC ICmpInst { cmpPredicate = ICmpEq
                         , cmpV2 = (valueContent' -> InstructionC LoadInst { loadAddress = v2 } )
                         , cmpV1 = (valueContent -> ConstantC ConstantPointerNull {}) } ->
     process' ni v2 (cond True)
+  InstructionC ICmpInst { cmpPredicate = ICmpEq
+                        , cmpV2 = (valueContent' -> ArgumentC v2)
+                        , cmpV1 = (valueContent -> ConstantC ConstantPointerNull {}) } ->
+    process' ni (Value v2) (cond True)
+
   InstructionC ICmpInst { cmpPredicate = ICmpNe
                         , cmpV1 = (valueContent' -> InstructionC LoadInst { loadAddress = v1 } )
                         , cmpV2 = (valueContent -> ConstantC ConstantPointerNull {}) } ->
     process' ni v1 (cond False)
   InstructionC ICmpInst { cmpPredicate = ICmpNe
+                        , cmpV1 = (valueContent' -> ArgumentC v1)
+                        , cmpV2 = (valueContent -> ConstantC ConstantPointerNull {}) } ->
+    process' ni (Value v1) (cond False)
+
+  InstructionC ICmpInst { cmpPredicate = ICmpNe
                         , cmpV2 = (valueContent' -> InstructionC LoadInst { loadAddress = v2 } )
                         , cmpV1 = (valueContent -> ConstantC ConstantPointerNull {}) } ->
     process' ni v2 (cond False)
+  InstructionC ICmpInst { cmpPredicate = ICmpNe
+                        , cmpV2 = (valueContent' -> ArgumentC v2)
+                        , cmpV1 = (valueContent -> ConstantC ConstantPointerNull {}) } ->
+    process' ni (Value v2) (cond False)
+
   _ -> ni
 
-process' :: NodeInfo -> Value -> Bool -> NullInfo
+process' :: NullInfo -> Value -> Bool -> NullInfo
 process' ni val isNull =
   case isNull of
     True -> ni

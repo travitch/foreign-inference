@@ -81,8 +81,10 @@ type SummaryType = Map Function (Set Argument)
 -- | Note, this could be a Set (Argument, Instruction) where the
 -- Instruction is the fact we saw that led us to believe that Argument
 -- is not nullable.
-newtype NullableSummary = NS SummaryType
-                        deriving (Eq)
+newtype NullableSummary = NS { unNS :: SummaryType }
+
+instance Eq NullableSummary where
+  (NS s1) == (NS s2) = s1 == s2
 
 instance SummarizeModule NullableSummary where
   summarizeFunction _ _ = []

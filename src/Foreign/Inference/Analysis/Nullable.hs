@@ -15,6 +15,14 @@
 --    to false positives that make some functions uncallable.  Is this a
 --    problem in practice?
 --
+-- 3) Should we be tracking stores of arguments through globals?
+--    Technically they could change out from under us in some
+--    potential threaded interleavings, leaving us with incorrect
+--    assumptions.  On the other hand, there are interleavings where
+--    this gives us the correct answer and, as C doesn't really have
+--    anything to say about threads, this is a legitimate
+--    interpretation of the program.
+--
 -- # Observations on infeasible paths #
 --
 -- Consider code like

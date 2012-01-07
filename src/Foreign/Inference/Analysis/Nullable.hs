@@ -303,6 +303,9 @@ removeNonNullPointers ni [TrueEdge v] = processCFGEdge ni id v
 removeNonNullPointers ni [FalseEdge v] = processCFGEdge ni not v
 removeNonNullPointers ni _ = ni
 
+-- | Given a condition from a CFG edge, determine if the condition
+-- gives us information about the NULL-ness of a pointer.  If so,
+-- update the NullInfo.
 processCFGEdge :: NullInfo -> (Bool -> Bool) -> Value -> NullInfo
 processCFGEdge ni cond v = case valueContent v of
   InstructionC ICmpInst { cmpPredicate = ICmpEq

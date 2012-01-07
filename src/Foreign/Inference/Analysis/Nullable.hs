@@ -107,10 +107,13 @@ identifyNullable ds m cg er = (NS res, diags)
   where
     s0 = M.fromList $ zip (moduleDefinedFunctions m) (repeat S.empty)
     analysis = callGraphSCCTraversal cg nullableAnalysis s0
-    constData = ND er undefined ds cg
+    constData = ND er M.empty ds cg
     (res, diags) = evalRWS analysis constData ()
 
--- | The dataflow fact for this analysis
+-- | The dataflow fact for this analysis.  The @mayBeNull@ set tracks
+-- the arguments and local variables that may be null at a program
+-- point.  For locals, the only thing in the set is the alloca
+-- representing it.
 data NullInfo = NI { mayBeNull :: Set Value  -- ^ The set of variables that may be NULL
                    , accessedUnchecked :: Set Value -- ^ Variables that were accessed before they were known to be not NULL
                    }

@@ -143,13 +143,6 @@ meetNullInfo ni1 ni2 =
      , accessedUnchecked = accessedUnchecked ni1 `S.union` accessedUnchecked ni2
      }
 
-mdCtxt f = case metaSubprogramContext md' of
-  Nothing -> Nothing
-  Just ctxt -> Just (ctxt, metaSubprogramLine md')
-  where
-    md' = metaValueContent md
-    [md] = functionMetadata f
-
 -- | The analysis that is applied to every function in the call graph.
 -- It runs a dataflow analysis over the function to identify the
 -- parameters that are used before they are known to be non-NULL.
@@ -165,7 +158,7 @@ nullableAnalysis f summ = do
   -- The initial state of the dataflow analysis is top -- all pointer
   -- parameters are NULLable.
   let envMod e = e { moduleSummary = summ }
-  localInfo <- local envMod (forwardDataflow top f) `debug` show (mdCtxt f)
+  localInfo <- local envMod (forwardDataflow top f)
 
   let exitInfo = HM.lookupDefault err exitInst localInfo
       justArgs = S.fromList $ mapMaybe toArg $ S.toList (accessedUnchecked exitInfo)

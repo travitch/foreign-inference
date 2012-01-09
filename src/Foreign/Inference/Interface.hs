@@ -33,7 +33,9 @@ module Foreign.Inference.Interface (
   loadDependencies',
   moduleToLibraryInterface,
   saveInterface,
-  saveModule
+  saveModule,
+  summarizeArgument',
+  summarizeFunction'
   ) where
 
 import Prelude hiding ( catch )

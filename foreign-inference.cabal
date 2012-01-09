@@ -10,7 +10,8 @@ build-type: Simple
 cabal-version: >=1.10
 tested-with: GHC == 7.0.3
 
-data-files: stdlibs/*.json
+data-files: stdlibs/*.json,
+            static/*.css
 
 -- extra-source-files:
 -- description:
@@ -22,15 +23,19 @@ library
                    Foreign.Inference.Interface,
                    Foreign.Inference.Analysis.Array,
                    Foreign.Inference.Analysis.Nullable,
-                   Foreign.Inference.Visualization
+                   Foreign.Inference.Report
   other-modules: Foreign.Inference.Internal.ValueArguments,
+                 Foreign.Inference.Report.FunctionText,
+                 Foreign.Inference.Report.Html,
+                 Foreign.Inference.Report.Types,
                  Paths_foreign_inference
   build-depends: base > 3 && < 5, containers, filepath, text, bytestring, ghc-prim,
                  unordered-containers >= 0.1.4.0, hashable, mtl > 2 && < 3,
                  aeson >= 0.4.0.0, aeson-pretty,
                  lattices, llvm-analysis,
                  attoparsec >= 0.10 && < 1.0,
-                 archive-inspection, directory, blaze-html >= 0.4
+                 archive-inspection, directory,
+                 blaze-html >= 0.4, highlighting-kate >= 0.3, xhtml
   ghc-options: -Wall -funbox-strict-fields
   ghc-prof-options: -auto-all
 

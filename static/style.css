@@ -1,0 +1,11 @@
+.code {
+    font-family: "Consolas", monospace;
+}
+
+.code-type {
+    color: blue;
+}
+
+.code-comment {
+    color: green;
+}

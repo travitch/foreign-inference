@@ -10,6 +10,9 @@ import System.Exit
 import System.FilePath
 import System.IO.Error ( isDoesNotExistError )
 
+import Codec.Archive
+
+import Data.LLVM
 import Data.LLVM.CallGraph
 import Data.LLVM.Analysis.Escape
 import Data.LLVM.Analysis.PointsTo.TrivialFunction
@@ -17,6 +20,7 @@ import Data.LLVM.Parse
 
 import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
+import Foreign.Inference.Report
 import Foreign.Inference.Analysis.Array
 import Foreign.Inference.Analysis.Nullable
 
@@ -26,8 +30,10 @@ cmdOpts defs = mode "DumpInterface" defs desc bitcodeArg as
     bitcodeArg = (flagArg setBitcode "BITCODE")
     desc = "A frontend for the FFI Inference engine"
     as = [ flagReq ["dependency", "dep"] addDependency "DEPENDENCY" "A dependency of the library being analyzed."
-         , flagReq ["repository"] setRepository "REPOSITORY" "The directory containing dependency summaries.  The summary of the input library will be stored here. (Default: consult environment)"
+         , flagReq ["repository"] setRepository "DIRECTORY" "The directory containing dependency summaries.  The summary of the input library will be stored here. (Default: consult environment)"
          , flagReq ["diagnostics"] setDiagnostics "DIAGNOSTIC" "The level of diagnostics to show (Debug, Info, Warning, Error).  Default: Warning"
+         , flagReq ["source"] setSource "FILE" "The source for the library being analyzed (tarball or zip archive).  If provided, a report will be generated"
+         , flagReq ["reportDir"] setReportDir "DIRECTORY" "The directory in which the summary report will be produced.  Defaults to the REPOSITORY."
          , flagHelpSimple setHelp
          ]
 
@@ -37,6 +43,8 @@ cmdOpts defs = mode "DumpInterface" defs desc bitcodeArg as
 -- argument must be specified.
 data Opts = Opts { inputDependencies :: [String]
                  , repositoryLocation :: FilePath
+                 , librarySource :: Maybe FilePath
+                 , reportDir :: Maybe FilePath
                  , inputFile :: [FilePath]
                  , diagnosticLevel :: Classification
                  , wantsHelp :: Bool
@@ -46,6 +54,8 @@ data Opts = Opts { inputDependencies :: [String]
 defOpts :: FilePath -> Opts
 defOpts rl = Opts { inputDependencies = []
                   , repositoryLocation = rl
+                  , librarySource = Nothing
+                  , reportDir = Nothing
                   , inputFile = []
                   , diagnosticLevel = Info
                   , wantsHelp = False
@@ -61,6 +71,12 @@ setBitcode _ _ = Left "Only one input library is allowed"
 
 setRepository :: String -> Opts -> Either String Opts
 setRepository r opts = Right opts { repositoryLocation = r }
+
+setSource :: String -> Opts -> Either String Opts
+setSource s opts = Right opts { librarySource = Just s }
+
+setReportDir :: String -> Opts -> Either String Opts
+setReportDir d opts = Right opts { reportDir = Just d }
 
 setDiagnostics :: String -> Opts -> Either String Opts
 setDiagnostics d opts =
@@ -89,23 +105,36 @@ main = do
   when (length (inputFile opts) /= 1) (showHelpAndExit arguments exitFailure)
 
   let [inFile] = inputFile opts
-      deps = inputDependencies opts
-      repo = repositoryLocation opts
       name = takeBaseName inFile
-      diagLevel = diagnosticLevel opts
-  m <- parseLLVMFile defaultParserOptions inFile
-  either error (dump deps repo name diagLevel) m
+  mm <- parseLLVMFile defaultParserOptions inFile
+  either error (dump opts name) mm
 
-dump deps repo name diagLevel m = do
+dump :: Opts -> String -> Module -> IO ()
+dump opts name m = do
   let pta = runPointsToAnalysis m
       cg = mkCallGraph m pta []
       er = runEscapeAnalysis m cg
+      deps = inputDependencies opts
+      repo = repositoryLocation opts
   ds <- loadDependencies [repo] deps
 
   let (s, nullDiags) = identifyNullable ds m cg er
       (a, arrayDiags) = identifyArrays ds cg er
       diags = mconcat [ nullDiags, arrayDiags ]
-  case formatDiagnostics diagLevel diags of
+      summaries = [ModuleSummary s, ModuleSummary a]
+  case formatDiagnostics (diagnosticLevel opts) diags of
     Nothing -> return ()
     Just diagString -> putStrLn diagString
-  saveModule repo name deps m [ModuleSummary s, ModuleSummary a]
+
+  -- Persist the module summary
+  saveModule repo name deps m summaries
+  -- Write out a report if requested
+  let defaultRepDir = repo </> name
+  maybe (return ()) (writeReport opts m summaries defaultRepDir) (librarySource opts)
+
+writeReport :: Opts -> Module -> [ModuleSummary] -> FilePath -> FilePath -> IO ()
+writeReport opts m summaries defDir fp = do
+  arc <- readArchive fp
+  let rep = compileReport m arc summaries
+      repDir = maybe defDir id (reportDir opts)
+  writeHTMLReport rep repDir

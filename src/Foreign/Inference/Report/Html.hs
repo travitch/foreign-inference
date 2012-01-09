@@ -11,7 +11,7 @@ import Data.Monoid
 import Data.Text ( Text )
 import Data.Text.Encoding ( decodeUtf8 )
 import qualified Data.Text as T
-import Text.Blaze.Html5
+import Text.Blaze.Html5 ( toValue, toHtml, (!), Html, AttributeValue )
 import qualified Text.Blaze.Html5 as H
 import qualified Text.Blaze.Html5.Attributes as A
 import qualified Text.Highlighting.Kate as K
@@ -22,13 +22,20 @@ import Data.LLVM
 import Foreign.Inference.Interface
 import Foreign.Inference.Report.Types
 
+-- | This page is a drilled-down view for a particular function.  The
+-- function body is syntax highlighted using the kate syntax
+-- definitions.
 htmlFunctionPage :: InterfaceReport -> Function -> FilePath -> Int -> Text -> Html
-htmlFunctionPage r f srcFile startLine functionText = docTypeHtml $ do
+htmlFunctionPage r f srcFile startLine functionText = H.docTypeHtml $ do
   H.head $ do
     H.title (toHtml pageTitle)
     H.link ! A.href "../style.css" ! A.rel "stylesheet" ! A.type_ "text/css"
     H.link ! A.href "../hk-tango.css" ! A.rel "stylesheet" ! A.type_ "text/css"
+    H.script ! A.type_ "text/javascript" ! A.src "../jquery-1.7.1.js" $ return ()
+    H.script ! A.type_ "text/javascript" ! A.src "../highlight.js" $ return ()
   H.body $ do
+    H.div $ do
+      H.ul $ forM_ (functionParameters f) (drilldownArgumentEntry r)
     case highlightedSrc of
       Right (lang, srclines) -> do
         let fmtOpts = [ K.OptNumberLines
@@ -43,6 +50,8 @@ htmlFunctionPage r f srcFile startLine functionText = docTypeHtml $ do
         H.h3 $ H.toHtml $ "Error highlighting source: " ++ err
         H.pre $ toHtml functionText
 
+    H.script ! A.type_ "text/javascript" $ H.preEscapedText (initialScript calledFunctions)
+
   where
     pageTitle = "Breakdown of " `mappend` decodeUtf8 (identifierContent (functionName f))
     fileLang = K.languagesByFilename srcFile
@@ -52,9 +61,50 @@ htmlFunctionPage r f srcFile startLine functionText = docTypeHtml $ do
           Left err -> Left err
           Right srcLines -> Right (lang, srcLines)
       _ -> Left ("No sytnax definition for file: " ++ srcFile)
+    allInstructions = concatMap basicBlockInstructions (functionBody f)
+    calledFunctions = foldr extractCalledFunctionNames [] allInstructions
 
+extractCalledFunctionNames :: Instruction -> [Text] -> [Text]
+extractCalledFunctionNames i acc =
+  case valueContent i of
+    InstructionC CallInst { callFunction = cv } -> maybeExtract cv acc
+    InstructionC InvokeInst { invokeFunction = cv } -> maybeExtract cv acc
+    _ -> acc
+  where
+    maybeExtract cv names =
+      case valueContent cv of
+        FunctionC f ->
+          let fname = decodeUtf8 $ identifierContent (functionName f)
+          in fname : names
+        _ -> names
+
+initialScript :: [Text] -> Text
+initialScript calledFuncNames = mconcat [ "$(window).bind(\"load\", function () {\n"
+                                        , "  initializeHighlighting();\n"
+                                        , "  linkCalledFunctions(["
+                                        , funcNameList
+                                        , "]);\n"
+                                        , "});"
+                                        ]
+  where
+    quotedNames = map (\txt -> mconcat ["'", txt, "'"]) calledFuncNames
+    funcNameList = T.intercalate ", " quotedNames
+
+
+drilldownArgumentEntry :: InterfaceReport -> Argument -> Html
+drilldownArgumentEntry r arg = H.li $ do
+  H.a ! A.href "#" ! A.onclick (H.preEscapedTextValue clickScript) $ toHtml argName
+  indexArgumentAnnotations annots
+  where
+    argName = decodeUtf8 (identifierContent (argumentName arg))
+    clickScript = mconcat [ "highlight('", argName, "');" ]
+    annots = concatMap (summarizeArgument' arg) (reportSummaries r)
+
+-- | Generate an index page listing all of the functions in a module.
+-- Each listing shows the parameters and their inferred annotations.
+-- Each function name is a link to its source code (if it was found).
 htmlIndexPage :: InterfaceReport -> Html
-htmlIndexPage r = docTypeHtml $ do
+htmlIndexPage r = H.docTypeHtml $ do
   H.head $ do
     H.title (toHtml pageTitle)
     H.link ! A.href "style.css" ! A.rel "stylesheet" ! A.type_ "text/css"

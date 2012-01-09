@@ -11,7 +11,9 @@ cabal-version: >=1.10
 tested-with: GHC == 7.0.3
 
 data-files: stdlibs/*.json,
-            static/*.css
+            static/*.css,
+            static/jquery-1.7.1.js,
+            static/highlight.js
 
 -- extra-source-files:
 -- description:

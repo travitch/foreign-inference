@@ -1,4 +1,12 @@
 {-# LANGUAGE OverloadedStrings #-}
+-- | This module provides some functions to generate HTML reports for
+-- a Module and its inferred annotations.  This module handles the
+-- extraction of source code (from tarballs/zip files) and mapping
+-- Functions to their associated source code using various heuristics.
+--
+-- FIXME: The drilldowns for functions may be overwritten by functions
+-- of the same name... this probably won't be a problem in practice
+-- since there would be linker errors of that happens.
 module Foreign.Inference.Report (
   -- * Types
   InterfaceReport,
@@ -9,7 +17,6 @@ module Foreign.Inference.Report (
 
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Lazy as LBS
--- import Data.Map ( Map )
 import qualified Data.Map as M
 import Data.Text ( Text )
 import System.Directory ( copyFile, createDirectoryIfMissing )
@@ -51,8 +58,12 @@ writeHTMLReport r dir = do
                                 , "hk-pyg.css"
                                 , "hk-tango.css"
                                 , "hk-kate.css"
+                                , "jquery-1.7.1.js"
+                                , "highlight.js"
                                 ]
 
+-- | Install a file from the project share directory to the target
+-- report directory (top-level).
 installStaticFile :: FilePath -> FilePath -> IO ()
 installStaticFile dir name = do
   file <- getDataFileName ("static" </> name)

@@ -313,13 +313,16 @@ functionToExternal summaries f = case toLinkage (functionLinkage f) of
   Just l ->
     Just ForeignFunction { foreignFunctionName = identifierContent (functionName f)
                          , foreignFunctionLinkage = l
-                         , foreignFunctionReturnType = typeToCType (functionType f)
+                         , foreignFunctionReturnType = typeToCType fretType
                          , foreignFunctionParameters = params
                          , foreignFunctionAnnotations = annots
                          }
   where
     annots = concatMap (summarizeFunction' f) summaries
     params = map (paramToExternal summaries) (functionParameters f)
+    fretType = case functionType f of
+      TypeFunction rt _ _ -> rt
+      t -> t
 
 paramToExternal :: [ModuleSummary] -> Argument -> Parameter
 paramToExternal summaries arg =
@@ -368,6 +371,9 @@ typeToCType t = case t of
 -- types.
 
 -- | Convert an LLVM linkage to a type more suitable for the summary
+-- If this function returns a Linkage, the function is exported in the
+-- shared library interface.  Private (internal linkage) functions are
+-- not exported and therefore not shown in the interface.
 toLinkage :: LinkageType -> Maybe Linkage
 toLinkage l = case l of
   LTExternal -> Just LinkDefault

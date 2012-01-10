@@ -390,7 +390,7 @@ definedFunctionTransfer eg summ f ni args =
     isNotNullable (a, _) = S.member a notNullableArgs
     -- | Pairs of not-nullable formals/actuals
     indexedNotNullArgs = filter isNotNullable $ zip formals args
-    markArgNotNullable info (_, a) = addUncheckedAccess eg info a
+    markArgNotNullable info (_, a) = recordIfMayBeNull eg info a
 
 externalFunctionTransfer :: EscapeGraph -> DependencySummary -> ExternalFunction
                             -> NullInfo -> [Value] -> AnalysisMonad NullInfo
@@ -406,7 +406,7 @@ externalFunctionTransfer eg summ e ni args =
           return info
         Just attrs -> case PANotNull `elem` attrs of
           False -> return info
-          True -> return $! addUncheckedAccess eg info arg
+          True -> return $! recordIfMayBeNull eg info arg
 
 -- Helpers
 toArg :: Value -> Maybe Argument

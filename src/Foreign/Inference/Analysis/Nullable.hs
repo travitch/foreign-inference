@@ -71,10 +71,10 @@ import Foreign.Inference.Interface
 import Foreign.Inference.Internal.ValueArguments
 
 -- import Text.Printf
-import Debug.Trace
+-- import Debug.Trace
 
-debug :: c -> String -> c
-debug = flip trace
+-- debug :: c -> String -> c
+-- debug = flip trace
 
 type SummaryType = Map Function (Set Argument)
 
@@ -359,7 +359,10 @@ callTransfer :: EscapeGraph -> NullInfo -> Value -> [Value] -> AnalysisMonad Nul
 callTransfer eg ni calledFunc args = do
   cg <- asks callGraph
   let callTargets = callValueTargets cg calledFunc
-  foldM callTransferDispatch ni callTargets
+  ni' <- foldM callTransferDispatch ni callTargets
+  case isIndirectCallee calledFunc of
+    False -> return ni'
+    True -> return (recordIfMayBeNull eg ni' calledFunc)
   where
     callTransferDispatch info target = case valueContent' target of
       FunctionC f -> do
@@ -368,6 +371,13 @@ callTransfer eg ni calledFunc args = do
       ExternalFunctionC e -> do
         summ <- asks dependencySummary
         externalFunctionTransfer eg summ e info args
+
+isIndirectCallee :: Value -> Bool
+isIndirectCallee val =
+  case valueContent' val of
+    FunctionC _ -> False
+    ExternalFunctionC _ -> False
+    _ -> True
 
 definedFunctionTransfer :: EscapeGraph -> SummaryType -> Function
                            -> NullInfo -> [Value] -> AnalysisMonad NullInfo

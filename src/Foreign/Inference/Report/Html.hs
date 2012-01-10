@@ -34,6 +34,7 @@ htmlFunctionPage r f srcFile startLine functionText = H.docTypeHtml $ do
     H.script ! A.type_ "text/javascript" ! A.src "../jquery-1.7.1.js" $ return ()
     H.script ! A.type_ "text/javascript" ! A.src "../highlight.js" $ return ()
   H.body $ do
+    "Breakdown of " >> toHtml funcName >> " defined in " >> toHtml srcFile
     H.div $ do
       H.ul $ forM_ (functionParameters f) (drilldownArgumentEntry r)
     case highlightedSrc of
@@ -53,7 +54,8 @@ htmlFunctionPage r f srcFile startLine functionText = H.docTypeHtml $ do
     H.script ! A.type_ "text/javascript" $ H.preEscapedText (initialScript calledFunctions)
 
   where
-    pageTitle = "Breakdown of " `mappend` decodeUtf8 (identifierContent (functionName f))
+    funcName = decodeUtf8 (identifierContent (functionName f))
+    pageTitle = "Breakdown of " `mappend` funcName
     fileLang = K.languagesByFilename srcFile
     highlightedSrc = case fileLang of
       lang : _ ->
@@ -93,6 +95,7 @@ initialScript calledFuncNames = mconcat [ "$(window).bind(\"load\", function () 
 
 drilldownArgumentEntry :: InterfaceReport -> Argument -> Html
 drilldownArgumentEntry r arg = H.li $ do
+  H.span ! A.class_ "code-type" $ toHtml (show (argumentType arg))
   H.a ! A.href "#" ! A.onclick (H.preEscapedTextValue clickScript) $ toHtml argName
   indexArgumentAnnotations annots
   where
@@ -109,6 +112,9 @@ htmlIndexPage r = H.docTypeHtml $ do
     H.title (toHtml pageTitle)
     H.link ! A.href "style.css" ! A.rel "stylesheet" ! A.type_ "text/css"
   H.body $ do
+    H.h1 "Module Information"
+    H.div ! A.id "module-info" $ do
+      "Name: " >> toHtml (decodeUtf8 (moduleIdentifier m))
     H.h1 "Exposed Functions"
     indexPageFunctionListing r "exposed-functions" externs
     H.h1 "Private Functions"
@@ -147,14 +153,16 @@ indexPageFunctionEntry r f = do
       "("
       commaSepList args (indexPageArgument r)
       ") -> "
-      H.span ! A.class_ "code-type" $ do
-        toHtml (show (functionType f))
+      H.span ! A.class_ "code-type" $ toHtml (show fretType)
   where
     fname = decodeUtf8 (identifierContent (functionName f))
     -- Use a bit of trickery to flag when we need to insert commas
     -- after arguments (so we don't end up with a trailing comma in
     -- the argument list)
     args = functionParameters f
+    fretType = case functionType f of
+      TypeFunction rt _ _ -> rt
+      rtype -> rtype
 
 indexPageArgument :: InterfaceReport -> Argument -> Html
 indexPageArgument r arg = do

@@ -25,6 +25,12 @@ import Foreign.Inference.Report.Types
 -- | This page is a drilled-down view for a particular function.  The
 -- function body is syntax highlighted using the kate syntax
 -- definitions.
+--
+-- FIXME: Provide a table of aggregate stats (counts of each inferred
+-- annotation)
+--
+-- FIXME: It would also be awesome to include call graph information
+-- (as in doxygen)
 htmlFunctionPage :: InterfaceReport -> Function -> FilePath -> Int -> Text -> Html
 htmlFunctionPage r f srcFile startLine functionText = H.docTypeHtml $ do
   H.head $ do
@@ -105,7 +111,7 @@ drilldownArgumentEntry r arg = H.li $ do
 
 -- | Generate an index page listing all of the functions in a module.
 -- Each listing shows the parameters and their inferred annotations.
--- Each function name is a link to its source code (if it was found).
+-- Each function name is a link to its source code (if it was found.)
 htmlIndexPage :: InterfaceReport -> Html
 htmlIndexPage r = H.docTypeHtml $ do
   H.head $ do

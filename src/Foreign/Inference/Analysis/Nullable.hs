@@ -1,4 +1,5 @@
 {-# LANGUAGE ViewPatterns, MultiParamTypeClasses, TypeSynonymInstances, FlexibleInstances #-}
+{-# LANGUAGE TemplateHaskell #-}
 -- | This module defines a Nullable pointer analysis
 --
 -- Nullable pointers are those pointers that are checked against NULL
@@ -58,6 +59,7 @@ import qualified Data.HashMap.Strict as HM
 import Data.Maybe ( mapMaybe )
 import Data.Set ( Set )
 import qualified Data.Set as S
+import FileLocation
 
 import Data.LLVM
 import Data.LLVM.CallGraph
@@ -69,12 +71,12 @@ import Data.LLVM.Analysis.Escape
 import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
 import Foreign.Inference.Internal.ValueArguments
-
 -- import Text.Printf
 -- import Debug.Trace
 
 -- debug :: c -> String -> c
 -- debug = flip trace
+
 
 type SummaryType = Map Function (Set Argument)
 
@@ -96,8 +98,8 @@ summarizeNullArgument a (NS s) = case a `S.member` nonNullableArgs of
   True -> [PANotNull]
   where
     f = argumentFunction a
-    err = error ("Function not in summary: " ++ show (functionName f))
-    nonNullableArgs = M.findWithDefault err f s
+    errMsg = error ("Function not in summary: " ++ show (functionName f))
+    nonNullableArgs = M.findWithDefault errMsg f s
 
 
 -- | The top-level entry point of the nullability analysis
@@ -160,7 +162,7 @@ nullableAnalysis f summ = do
   let envMod e = e { moduleSummary = summ }
   localInfo <- local envMod (forwardDataflow top f)
 
-  let exitInfo = HM.lookupDefault err exitInst localInfo
+  let exitInfo = HM.lookupDefault errMsg exitInst localInfo
       justArgs = S.fromList $ mapMaybe toArg $ S.toList (accessedUnchecked exitInfo)
 
   -- Update the module symmary with the set of pointer parameters that
@@ -168,7 +170,7 @@ nullableAnalysis f summ = do
   return $! M.insert f justArgs summ
   where
     exitInst = functionExitInstruction f
-    err = error "NullAnalysis: exit instruction not in dataflow result"
+    errMsg = $(err "NullAnalysis: exit instruction not in dataflow result")
 
 -- | First, process the incoming CFG edges to learn about pointers
 -- that are known to be non-NULL.  Then use this updated information
@@ -371,6 +373,13 @@ callTransfer eg ni calledFunc args = do
       ExternalFunctionC e -> do
         summ <- asks dependencySummary
         externalFunctionTransfer eg summ e info args
+      ArgumentC _ -> $(err "Unexpected Argument, indirect calls should be resolved")
+      BasicBlockC _ -> $(err "Unexpected BasicBlock, indirect calls should be resolved")
+      GlobalVariableC _ -> $(err "Unexpected Global, indirect calls should be resolved")
+      ExternalValueC _ -> $(err "Unexpected Extern, indirect calls should be resolved")
+      GlobalAliasC _ -> $(err "Unexpected Alias, indirect calls should be resolved")
+      InstructionC _ -> $(err "Unexpected Instruction, indirect calls should be resolved")
+      ConstantC _ -> $(err "Unexpected Constant, indirect calls should be resolved")
 
 isIndirectCallee :: Value -> Bool
 isIndirectCallee val =
@@ -384,9 +393,9 @@ definedFunctionTransfer :: EscapeGraph -> SummaryType -> Function
 definedFunctionTransfer eg summ f ni args =
   return $! foldl' markArgNotNullable ni indexedNotNullArgs
   where
-    err = error ("No Function summary for " ++ show (functionName f))
+    errMsg = error ("No Function summary for " ++ show (functionName f))
     formals = functionParameters f
-    notNullableArgs = M.findWithDefault err f summ
+    notNullableArgs = M.findWithDefault errMsg f summ
     isNotNullable (a, _) = S.member a notNullableArgs
     -- | Pairs of not-nullable formals/actuals
     indexedNotNullArgs = filter isNotNullable $ zip formals args

@@ -29,7 +29,7 @@ cmdOpts defs = mode "DumpInterface" defs desc bitcodeArg as
   where
     bitcodeArg = (flagArg setBitcode "BITCODE")
     desc = "A frontend for the FFI Inference engine"
-    as = [ flagReq ["dependency", "dep"] addDependency "DEPENDENCY" "A dependency of the library being analyzed."
+    as = [ flagReq ["dependency"] addDependency "DEPENDENCY" "A dependency of the library being analyzed."
          , flagReq ["repository"] setRepository "DIRECTORY" "The directory containing dependency summaries.  The summary of the input library will be stored here. (Default: consult environment)"
          , flagReq ["diagnostics"] setDiagnostics "DIAGNOSTIC" "The level of diagnostics to show (Debug, Info, Warning, Error).  Default: Warning"
          , flagReq ["source"] setSource "FILE" "The source for the library being analyzed (tarball or zip archive).  If provided, a report will be generated"
@@ -61,32 +61,6 @@ defOpts rl = Opts { inputDependencies = []
                   , wantsHelp = False
                   }
 
-addDependency :: String -> Opts -> Either String Opts
-addDependency dep opts =
-  Right opts { inputDependencies = dep : inputDependencies opts }
-
-setBitcode :: String -> Opts -> Either String Opts
-setBitcode inf opts@Opts { inputFile = [] } = Right opts { inputFile = [inf] }
-setBitcode _ _ = Left "Only one input library is allowed"
-
-setRepository :: String -> Opts -> Either String Opts
-setRepository r opts = Right opts { repositoryLocation = r }
-
-setSource :: String -> Opts -> Either String Opts
-setSource s opts = Right opts { librarySource = Just s }
-
-setReportDir :: String -> Opts -> Either String Opts
-setReportDir d opts = Right opts { reportDir = Just d }
-
-setDiagnostics :: String -> Opts -> Either String Opts
-setDiagnostics d opts =
-  case reads d of
-    [] -> Left $ "Invalid diagnostic level: " ++ d
-    [(diagLevel, "")] -> Right opts { diagnosticLevel = diagLevel }
-    _ -> Left $ "Invalid diagnostic level: " ++ d
-
-setHelp :: Opts -> Opts
-setHelp opts = opts { wantsHelp = True }
 
 showHelpAndExit :: Mode a -> IO b -> IO b
 showHelpAndExit arguments exitCmd = do
@@ -132,9 +106,44 @@ dump opts name m = do
   let defaultRepDir = repo </> name
   maybe (return ()) (writeReport opts m summaries defaultRepDir) (librarySource opts)
 
+-- | Called when a source tarball was provided.  This generates and
+-- writes the report for the Module in the location specified by the
+-- user.
 writeReport :: Opts -> Module -> [ModuleSummary] -> FilePath -> FilePath -> IO ()
 writeReport opts m summaries defDir fp = do
   arc <- readArchive fp
   let rep = compileReport m arc summaries
       repDir = maybe defDir id (reportDir opts)
   writeHTMLReport rep repDir
+
+
+
+
+
+-- Command line helpers
+addDependency :: String -> Opts -> Either String Opts
+addDependency dep opts =
+  Right opts { inputDependencies = dep : inputDependencies opts }
+
+setBitcode :: String -> Opts -> Either String Opts
+setBitcode inf opts@Opts { inputFile = [] } = Right opts { inputFile = [inf] }
+setBitcode _ _ = Left "Only one input library is allowed"
+
+setRepository :: String -> Opts -> Either String Opts
+setRepository r opts = Right opts { repositoryLocation = r }
+
+setSource :: String -> Opts -> Either String Opts
+setSource s opts = Right opts { librarySource = Just s }
+
+setReportDir :: String -> Opts -> Either String Opts
+setReportDir d opts = Right opts { reportDir = Just d }
+
+setDiagnostics :: String -> Opts -> Either String Opts
+setDiagnostics d opts =
+  case reads d of
+    [] -> Left $ "Invalid diagnostic level: " ++ d
+    [(diagLevel, "")] -> Right opts { diagnosticLevel = diagLevel }
+    _ -> Left $ "Invalid diagnostic level: " ++ d
+
+setHelp :: Opts -> Opts
+setHelp opts = opts { wantsHelp = True }

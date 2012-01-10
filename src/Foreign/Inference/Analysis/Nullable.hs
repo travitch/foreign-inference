@@ -373,13 +373,7 @@ callTransfer eg ni calledFunc args = do
       ExternalFunctionC e -> do
         summ <- asks dependencySummary
         externalFunctionTransfer eg summ e info args
-      ArgumentC _ -> $(err "Unexpected Argument, indirect calls should be resolved")
-      BasicBlockC _ -> $(err "Unexpected BasicBlock, indirect calls should be resolved")
-      GlobalVariableC _ -> $(err "Unexpected Global, indirect calls should be resolved")
-      ExternalValueC _ -> $(err "Unexpected Extern, indirect calls should be resolved")
-      GlobalAliasC _ -> $(err "Unexpected Alias, indirect calls should be resolved")
-      InstructionC _ -> $(err "Unexpected Instruction, indirect calls should be resolved")
-      ConstantC _ -> $(err "Unexpected Constant, indirect calls should be resolved")
+      _ -> $(err "Unexpected value; indirect calls should be resolved")
 
 isIndirectCallee :: Value -> Bool
 isIndirectCallee val =

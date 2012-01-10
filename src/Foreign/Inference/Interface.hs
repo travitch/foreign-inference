@@ -1,4 +1,5 @@
 {-# LANGUAGE DeriveGeneric, OverloadedStrings, ExistentialQuantification, DeriveDataTypeable #-}
+{-# LANGUAGE TemplateHaskell #-}
 -- | This module defines an external representation of library
 -- interfaces.  Individual libraries are represented by the
 -- 'LibraryInterface'.  The analysis reads these in and writes these
@@ -55,6 +56,7 @@ import Data.Maybe ( mapMaybe )
 import Data.Set ( Set )
 import qualified Data.Set as S
 import Data.List ( foldl' )
+import FileLocation
 import System.FilePath
 
 import Data.LLVM
@@ -364,6 +366,13 @@ typeToCType t = case t of
   TypePointer t' _ -> CPointer (typeToCType t')
   TypeStruct (Just n) _ _ -> CStruct n []
   TypeStruct Nothing ts _ -> CAnonStruct (map typeToCType ts)
+  TypeFP128 -> $(err "Type fp128 is not supported in external interfaces")
+  TypeX86FP80 -> $(err "Type x86fp80 is not supported in external interfaces")
+  TypePPCFP128 -> $(err "Type ppcfp128 is not supported in external interfaces")
+  TypeX86MMX -> $(err "Type x86mmx is not supported in external interfaces")
+  TypeLabel -> $(err "Type label is not supported in external interfaces")
+  TypeMetadata -> $(err "Type metadata is not supported in external interfaces")
+  TypeVector _ _ -> $(err "Type vector is not supported in external interfaces")
 
 -- FIXME: Use a different function to translate types that are going
 -- to be used as type definitions at the beginning of a library

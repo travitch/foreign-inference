@@ -1,4 +1,4 @@
-{-# LANGUAGE ViewPatterns #-}
+{-# LANGUAGE ViewPatterns, TemplateHaskell #-}
 -- | This module defines the Array Analysis from the PLDI 2009 paper.
 --
 -- The analysis identifies which pointer parameters of a function are
@@ -18,6 +18,7 @@ import Control.Monad.RWS.Strict
 import Data.List ( foldl' )
 import Data.Map ( Map )
 import qualified Data.Map as M
+import FileLocation
 
 import Data.LLVM
 import Data.LLVM.CallGraph
@@ -178,7 +179,7 @@ collectArrayArgsForCallee ds summ eg ix arg lst callee =
         True -> case M.lookup (funcArgs !! ix) summ of
           Nothing -> lst
           Just depth -> (arg, CallArgument depth eg) : lst
-        False -> error "ArrayAnalysis: argument index out of range"
+        False -> $(err "ArrayAnalysis: argument index out of range")
     -- Look up the ixth argument of the callee in the
     -- DependencySummary and record it if it is tagged with a PAArray
     -- annotation
@@ -188,6 +189,8 @@ collectArrayArgsForCallee ds summ eg ix arg lst callee =
         Just annots -> case filter isArrayAnnot annots of
           [] -> lst
           [PAArray depth] -> (arg, CallArgument depth eg) : lst
+          _ -> $(err "This summary should only produce singleton or empty lists")
+    _ -> $(err "Unexpected value; indirect calls should already be resolved")
 
 isArrayAnnot :: ParamAnnotation -> Bool
 isArrayAnnot (PAArray _) = True

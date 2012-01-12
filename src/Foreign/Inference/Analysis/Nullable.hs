@@ -227,7 +227,7 @@ nullTransfer ni i edges = do
 -- | Clobber the value of @ptr@ (mark it as possibly NULL due to
 -- assignment).
 maybeClobber :: NullInfo -> Value -> Value -> NullInfo
-maybeClobber ni ptr newVal = recordPossiblyNull ptr ni
+maybeClobber ni ptr _ {-newVal-} = recordPossiblyNull ptr ni
 
 recordIfMayBeNull :: EscapeGraph -> NullInfo -> Value -> NullInfo
 recordIfMayBeNull eg ni ptr =

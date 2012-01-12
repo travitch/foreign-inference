@@ -33,10 +33,10 @@ library
                  Paths_foreign_inference
   build-depends: base > 3 && < 5, containers, filepath, text, bytestring, ghc-prim,
                  unordered-containers >= 0.1.4.0, hashable, mtl > 2 && < 3,
-                 aeson >= 0.4.0.0, aeson-pretty, file-location,
+                 aeson >= 0.4.0.0, file-location,
                  lattices, llvm-analysis,
-                 attoparsec >= 0.10 && < 1.0,
-                 archive-inspection, directory,
+                 -- For the reporting code
+                 archive-inspection, directory, attoparsec >= 0.10 && < 1.0,
                  blaze-html >= 0.4, highlighting-kate >= 0.3, xhtml
   ghc-options: -Wall -funbox-strict-fields
   ghc-prof-options: -auto-all

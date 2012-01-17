@@ -1,5 +1,6 @@
+extern int v;
 void g(int * arr, int * x) {
-  (void)arr[*x];
+  v = arr[*x];
 }
 
 int f(int * arr, int x) {

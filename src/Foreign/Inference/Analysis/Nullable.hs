@@ -51,11 +51,12 @@ module Foreign.Inference.Analysis.Nullable (
   ) where
 
 import Algebra.Lattice
+import Control.DeepSeq
 import Control.Monad.RWS.Strict
 import Data.List ( foldl' )
 import Data.Map ( Map )
 import qualified Data.Map as M
-import qualified Data.HashMap.Strict as HM
+-- import qualified Data.HashMap.Strict as HM
 import Data.Maybe ( mapMaybe )
 import Data.Set ( Set )
 import qualified Data.Set as S
@@ -127,6 +128,9 @@ data NullData = ND { escapeResult :: EscapeResult
                    , callGraph :: CallGraph
                    }
 
+instance NFData NullInfo where
+  rnf ni@(NI s1 s2) = s1 `deepseq` s2 `deepseq` ni `seq` ()
+
 instance MeetSemiLattice NullInfo where
   meet = meetNullInfo
 
@@ -160,17 +164,19 @@ nullableAnalysis f summ = do
   -- The initial state of the dataflow analysis is top -- all pointer
   -- parameters are NULLable.
   let envMod e = e { moduleSummary = summ }
-  localInfo <- local envMod (forwardDataflow top f)
+  localInfo <- local envMod (forwardBlockDataflow top f)
 
-  let exitInfo = HM.lookupDefault errMsg exitInst localInfo
-      justArgs = S.fromList $ mapMaybe toArg $ S.toList (accessedUnchecked exitInfo)
+  exitInfo <- local envMod (dataflowResult localInfo exitInst)
+--  let exitInfo = dataflowResult
+--    exitInfo = HM.lookupDefault errMsg exitInst localInfo
+  let justArgs = S.fromList $ mapMaybe toArg $ S.toList (accessedUnchecked exitInfo)
 
   -- Update the module symmary with the set of pointer parameters that
   -- we have proven are accessed unchecked.
   return $! M.insert f justArgs summ
   where
     exitInst = functionExitInstruction f
-    errMsg = $(err "NullAnalysis: exit instruction not in dataflow result")
+--    errMsg = $(err "NullAnalysis: exit instruction not in dataflow result")
 
 -- | First, process the incoming CFG edges to learn about pointers
 -- that are known to be non-NULL.  Then use this updated information

@@ -1,5 +1,6 @@
 module Main ( main ) where
 
+import Control.DeepSeq
 import Control.Exception ( tryJust )
 import Control.Monad ( guard, when )
 import Data.Monoid
@@ -91,7 +92,7 @@ dump opts name m = do
       deps = inputDependencies opts
       repo = repositoryLocation opts
   ds <- loadDependencies [repo] deps
-
+  er `deepseq` return ()
   let (s, nullDiags) = identifyNullable ds m cg er
       (a, arrayDiags) = identifyArrays ds cg er
       diags = mconcat [ nullDiags, arrayDiags ]

@@ -14,6 +14,8 @@
 -- target ABI and it is a bit difficult to map the result exactly back
 -- to how it appeared in the source.  This will have to be done with
 -- some metadata.
+--
+-- NOTE! A possible name for the project: Inferred Interface Glue - IIGlue
 module Foreign.Inference.Interface (
   -- * Classes
   SummarizeModule(..),

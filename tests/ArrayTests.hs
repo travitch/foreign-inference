@@ -7,13 +7,15 @@ import Test.HUnit ( assertEqual )
 import Data.LLVM
 import Data.LLVM.CallGraph
 import Data.LLVM.Parse
-import Data.LLVM.Analysis.Escape
 import Data.LLVM.Analysis.PointsTo
 import Data.LLVM.Analysis.PointsTo.TrivialFunction
 import Data.LLVM.Testing
 
 import Foreign.Inference.Interface
 import Foreign.Inference.Analysis.Array
+
+import Debug.Trace
+debug = flip trace
 
 main :: IO ()
 main = do
@@ -28,14 +30,11 @@ main = do
                                          , testResultComparator = assertEqual
                                          }
                         ]
-  withArgs [] $ testAgainstExpected bcParser testDescriptors
+  withArgs [] $ testAgainstExpected ["-O1"] bcParser testDescriptors
   where
     bcParser = parseLLVMFile defaultParserOptions
 
-
-
-analyzeArrays ds m = arraySummaryToTestFormat $ fst $ identifyArrays ds cg er
+analyzeArrays ds m = arraySummaryToTestFormat $ fst $ identifyArrays ds cg
   where
     pta = runPointsToAnalysis m
     cg = mkCallGraph m pta []
-    er = runEscapeAnalysis m cg

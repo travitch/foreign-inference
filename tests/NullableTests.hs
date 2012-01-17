@@ -30,7 +30,7 @@ main = do
                                          , testResultComparator = assertEqual
                                          }
                         ]
-  withArgs [] $ testAgainstExpected parser testDescriptors
+  withArgs [] $ testAgainstExpected ["-O1"] parser testDescriptors
   where
     parser = parseLLVMFile defaultParserOptions
 

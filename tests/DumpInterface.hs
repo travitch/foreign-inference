@@ -94,7 +94,7 @@ dump opts name m = do
   ds <- loadDependencies [repo] deps
   er `deepseq` return ()
   let (s, nullDiags) = identifyNullable ds m cg er
-      (a, arrayDiags) = identifyArrays ds cg er
+      (a, arrayDiags) = identifyArrays ds cg -- er
       diags = mconcat [ nullDiags, arrayDiags ]
       summaries = [ModuleSummary s, ModuleSummary a]
   case formatDiagnostics (diagnosticLevel opts) diags of

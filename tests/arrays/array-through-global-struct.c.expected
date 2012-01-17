@@ -1,3 +1,2 @@
-fromList [ (("@f", "%arr1"), 1)
-         , (("@f", "%arr2"), 2)
+fromList [ (("@f", "%arr2"), 2)
          ]

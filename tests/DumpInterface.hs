@@ -1,6 +1,5 @@
 module Main ( main ) where
 
-import Control.DeepSeq
 import Control.Exception ( tryJust )
 import Control.Monad ( guard, when )
 import Data.Monoid
@@ -15,13 +14,13 @@ import Codec.Archive
 
 import Data.LLVM
 import Data.LLVM.CallGraph
-import Data.LLVM.Analysis.Escape
 import Data.LLVM.Analysis.PointsTo.TrivialFunction
 import Data.LLVM.Parse
 
 import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
 import Foreign.Inference.Report
+import Foreign.Inference.Preprocessing
 import Foreign.Inference.Analysis.Array
 import Foreign.Inference.Analysis.Nullable
 
@@ -81,20 +80,19 @@ main = do
 
   let [inFile] = inputFile opts
       name = takeBaseName inFile
-  mm <- parseLLVMFile defaultParserOptions inFile
+  mm <- readBitcode (parseLLVMFile defaultParserOptions) inFile
   either error (dump opts name) mm
 
 dump :: Opts -> String -> Module -> IO ()
 dump opts name m = do
   let pta = runPointsToAnalysis m
       cg = mkCallGraph m pta []
-      er = runEscapeAnalysis m cg
       deps = inputDependencies opts
       repo = repositoryLocation opts
   ds <- loadDependencies [repo] deps
-  er `deepseq` return ()
-  let (s, nullDiags) = identifyNullable ds m cg er
-      (a, arrayDiags) = identifyArrays ds cg -- er
+
+  let (s, nullDiags) = identifyNullable ds m cg
+      (a, arrayDiags) = identifyArrays ds cg
       diags = mconcat [ nullDiags, arrayDiags ]
       summaries = [ModuleSummary s, ModuleSummary a]
   case formatDiagnostics (diagnosticLevel opts) diags of

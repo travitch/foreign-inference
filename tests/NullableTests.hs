@@ -8,7 +8,6 @@ import Test.HUnit ( assertEqual )
 
 import Data.LLVM
 import Data.LLVM.CallGraph
-import Data.LLVM.Analysis.Escape
 import Data.LLVM.Analysis.PointsTo
 import Data.LLVM.Analysis.PointsTo.TrivialFunction
 import Data.LLVM.Parse
@@ -30,12 +29,11 @@ main = do
                                          , testResultComparator = assertEqual
                                          }
                         ]
-  withArgs [] $ testAgainstExpected ["-O1"] parser testDescriptors
+  withArgs [] $ testAgainstExpected ["-mem2reg", "-gvn", "-basicaa"] parser testDescriptors
   where
     parser = parseLLVMFile defaultParserOptions
 
-analyzeNullable ds m = nullSummaryToTestFormat $ fst $ identifyNullable ds m cg er
+analyzeNullable ds m = nullSummaryToTestFormat $ fst $ identifyNullable ds m cg
   where
     pta = runPointsToAnalysis m
     cg = mkCallGraph m pta []
-    er = runEscapeAnalysis m cg

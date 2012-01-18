@@ -30,7 +30,7 @@ main = do
                                          , testResultComparator = assertEqual
                                          }
                         ]
-  withArgs [] $ testAgainstExpected ["-O1"] bcParser testDescriptors
+  withArgs [] $ testAgainstExpected ["-mem2reg", "-gvn", "-basicaa"] bcParser testDescriptors
   where
     bcParser = parseLLVMFile defaultParserOptions
 

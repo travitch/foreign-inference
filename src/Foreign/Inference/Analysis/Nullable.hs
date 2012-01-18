@@ -56,7 +56,6 @@ import Control.Monad.RWS.Strict
 import Data.List ( foldl' )
 import Data.Map ( Map )
 import qualified Data.Map as M
--- import qualified Data.HashMap.Strict as HM
 import Data.Maybe ( mapMaybe )
 import Data.Set ( Set )
 import qualified Data.Set as S
@@ -67,11 +66,12 @@ import Data.LLVM.CallGraph
 import Data.LLVM.CFG
 import Data.LLVM.Analysis.CallGraphSCCTraversal
 import Data.LLVM.Analysis.Dataflow
-import Data.LLVM.Analysis.Escape
+-- import Data.LLVM.Analysis.Escape
 
 import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
-import Foreign.Inference.Internal.ValueArguments
+-- import Foreign.Inference.Internal.ValueArguments
+
 -- import Text.Printf
 -- import Debug.Trace
 
@@ -104,13 +104,13 @@ summarizeNullArgument a (NS s) = case a `S.member` nonNullableArgs of
 
 
 -- | The top-level entry point of the nullability analysis
-identifyNullable :: DependencySummary -> Module -> CallGraph -> EscapeResult
+identifyNullable :: DependencySummary -> Module -> CallGraph
                     -> (NullableSummary, Diagnostics)
-identifyNullable ds m cg er = (NS res, diags)
+identifyNullable ds m cg = (NS res, diags)
   where
     s0 = M.fromList $ zip (moduleDefinedFunctions m) (repeat S.empty)
     analysis = callGraphSCCTraversal cg nullableAnalysis s0
-    constData = ND er M.empty ds cg
+    constData = ND M.empty ds cg
     (res, diags) = evalRWS analysis constData ()
 
 -- | The dataflow fact for this analysis.  The @mayBeNull@ set tracks
@@ -122,8 +122,7 @@ data NullInfo = NI { mayBeNull :: Set Value  -- ^ The set of variables that may 
                    }
                 deriving (Eq, Ord, Show)
 
-data NullData = ND { escapeResult :: EscapeResult
-                   , moduleSummary :: SummaryType
+data NullData = ND { moduleSummary :: SummaryType
                    , dependencySummary :: DependencySummary
                    , callGraph :: CallGraph
                    }
@@ -164,7 +163,8 @@ nullableAnalysis f summ = do
   -- The initial state of the dataflow analysis is top -- all pointer
   -- parameters are NULLable.
   let envMod e = e { moduleSummary = summ }
-  localInfo <- local envMod (forwardBlockDataflow top f)
+      fact0 = top { mayBeNull = S.fromList (map Value (functionParameters f)) }
+  localInfo <- local envMod (forwardBlockDataflow fact0 f)
 
   exitInfo <- local envMod (dataflowResult localInfo exitInst)
 --  let exitInfo = dataflowResult
@@ -185,18 +185,15 @@ nullableAnalysis f summ = do
 -- parameters.
 nullTransfer :: NullInfo -> Instruction -> [CFGEdge] -> AnalysisMonad NullInfo
 nullTransfer ni i edges = do
-  -- Figure out what the points-to escape graph is at this node, and
-  -- then compute ni' (updated info about what pointers are NULL)
-  -- based on the set of incoming CFG edges.
-  er <- asks escapeResult
-  let eg = escapeGraphAtLocation er i
-      ni' = removeNonNullPointers ni edges
+  -- Compute ni' (updated info about what pointers are NULL) based on
+  -- the set of incoming CFG edges.
+  let ni' = removeNonNullPointers ni edges
 
   case i of
     CallInst { callFunction = calledFunc, callArguments = args } ->
-      callTransfer eg ni' calledFunc (map fst args)
+      callTransfer ni' calledFunc (map fst args)
     InvokeInst { invokeFunction = calledFunc, invokeArguments = args } ->
-      callTransfer eg ni' calledFunc (map fst args)
+      callTransfer ni' calledFunc (map fst args)
     -- Stack allocated pointers start off as NULL
     AllocaInst {} -> case isPointerPointer i of
       True -> return $! recordPossiblyNull (Value i) ni'
@@ -205,7 +202,7 @@ nullTransfer ni i edges = do
     -- Attempt at handling loads and stores more simply and uniformly.
 
     LoadInst { loadAddress = ptr } ->
-      let ni'' = recordIfMayBeNull eg ni' ptr
+      let ni'' = recordIfMayBeNull ni' ptr
       in case isPointer i of
         False -> return ni''
         -- The pointer that is returned is always considered to be
@@ -213,17 +210,17 @@ nullTransfer ni i edges = do
         True -> return $! recordPossiblyNull (Value i) ni''
     StoreInst { storeAddress = ptr
               , storeValue = newVal } ->
-      let ni'' = recordIfMayBeNull eg ni' ptr
+      let ni'' = recordIfMayBeNull ni' ptr
       in case isPointer newVal of
         False -> return ni''
         True -> return $! maybeClobber ni'' ptr newVal
 
     AtomicRMWInst { atomicRMWPointer = ptr } ->
-      return $! recordIfMayBeNull eg ni' ptr
+      return $! recordIfMayBeNull ni' ptr
 
     AtomicCmpXchgInst { atomicCmpXchgPointer = ptr
                       , atomicCmpXchgNewValue = newVal } ->
-      let ni'' = recordIfMayBeNull eg ni' ptr
+      let ni'' = recordIfMayBeNull ni' ptr
       in case isPointer newVal of
         False -> return ni''
         True -> return $! maybeClobber ni'' ptr newVal
@@ -235,8 +232,8 @@ nullTransfer ni i edges = do
 maybeClobber :: NullInfo -> Value -> Value -> NullInfo
 maybeClobber ni ptr _ {-newVal-} = recordPossiblyNull ptr ni
 
-recordIfMayBeNull :: EscapeGraph -> NullInfo -> Value -> NullInfo
-recordIfMayBeNull eg ni ptr =
+recordIfMayBeNull :: NullInfo -> Value -> NullInfo
+recordIfMayBeNull ni ptr =
   let base = memAccessBase ptr
   in case base of
     -- We don't reason about all pointer dereferences.  The direct
@@ -246,7 +243,7 @@ recordIfMayBeNull eg ni ptr =
     Just b ->
       case S.member b (mayBeNull ni) of
         False -> ni
-        True -> addUncheckedAccess eg ni b
+        True -> addUncheckedAccess ni b
 
 -- | Given a value that is being dereferenced by an instruction
 -- (either a load, store, or atomic memory op), determine the *base*
@@ -263,7 +260,7 @@ memAccessBase ptr =
     InstructionC AllocaInst {} -> Nothing
     -- For optimized code, arguments (which we care about) can be
     -- loaded/stored to directly (without an intervening alloca).
-    ArgumentC _ -> Just ptr
+    ArgumentC a -> Just (Value a)
     -- In this case, we have two levels of dereference.  The first
     -- level (la) is a global or alloca (or result of another
     -- load/GEP).  This represents a source-level dereference of a
@@ -289,12 +286,16 @@ memAccessBase ptr =
 -- that *may* be accessed unchecked versus arguments that *must* be
 -- accessed unchecked.  Just check the size of the set returned by
 -- argumentsForValue to determine which case we are in.
-addUncheckedAccess :: EscapeGraph -> NullInfo -> Value -> NullInfo
-addUncheckedAccess eg ni ptr =
+addUncheckedAccess :: NullInfo -> Value -> NullInfo
+addUncheckedAccess ni ptr =
   let ni' = ni { accessedUnchecked = S.union (accessedUnchecked ni) newUnchecked }
   in ni'
   where
-    args = map Value $ argumentsForValue eg ptr
+    -- | FIXME: Here is the spot we need to pick out arguments
+    args = case valueContent' ptr of
+      ArgumentC a -> [Value a]
+      _ -> []
+--      [] -- map Value $ argumentsForValue eg ptr
     newUnchecked = S.fromList (ptr : args)
 
 -- | Examine the incoming edges and, if any tell us that a variable is
@@ -363,22 +364,22 @@ process' ni val isNull =
 -- | A split out transfer function for function calls.  Looks up
 -- summary values for called functions/params and records relevant
 -- information in the current dataflow fact.
-callTransfer :: EscapeGraph -> NullInfo -> Value -> [Value] -> AnalysisMonad NullInfo
-callTransfer eg ni calledFunc args = do
+callTransfer :: NullInfo -> Value -> [Value] -> AnalysisMonad NullInfo
+callTransfer ni calledFunc args = do
   cg <- asks callGraph
   let callTargets = callValueTargets cg calledFunc
   ni' <- foldM callTransferDispatch ni callTargets
   case isIndirectCallee calledFunc of
     False -> return ni'
-    True -> return (recordIfMayBeNull eg ni' calledFunc)
+    True -> return (recordIfMayBeNull ni' calledFunc)
   where
     callTransferDispatch info target = case valueContent' target of
       FunctionC f -> do
         summ <- asks moduleSummary
-        definedFunctionTransfer eg summ f info args
+        definedFunctionTransfer summ f info args
       ExternalFunctionC e -> do
         summ <- asks dependencySummary
-        externalFunctionTransfer eg summ e info args
+        externalFunctionTransfer summ e info args
       _ -> $(err "Unexpected value; indirect calls should be resolved")
 
 isIndirectCallee :: Value -> Bool
@@ -388,9 +389,9 @@ isIndirectCallee val =
     ExternalFunctionC _ -> False
     _ -> True
 
-definedFunctionTransfer :: EscapeGraph -> SummaryType -> Function
+definedFunctionTransfer :: SummaryType -> Function
                            -> NullInfo -> [Value] -> AnalysisMonad NullInfo
-definedFunctionTransfer eg summ f ni args =
+definedFunctionTransfer summ f ni args =
   return $! foldl' markArgNotNullable ni indexedNotNullArgs
   where
     errMsg = error ("No Function summary for " ++ show (functionName f))
@@ -399,11 +400,11 @@ definedFunctionTransfer eg summ f ni args =
     isNotNullable (a, _) = S.member a notNullableArgs
     -- | Pairs of not-nullable formals/actuals
     indexedNotNullArgs = filter isNotNullable $ zip formals args
-    markArgNotNullable info (_, a) = recordIfMayBeNull eg info a
+    markArgNotNullable info (_, a) = recordIfMayBeNull info a
 
-externalFunctionTransfer :: EscapeGraph -> DependencySummary -> ExternalFunction
+externalFunctionTransfer :: DependencySummary -> ExternalFunction
                             -> NullInfo -> [Value] -> AnalysisMonad NullInfo
-externalFunctionTransfer eg summ e ni args =
+externalFunctionTransfer summ e ni args =
   foldM markIfNotNullable ni indexedArgs
   where
     errMsg = "No ExternalFunction summary for " ++ show (externalFunctionName e)
@@ -415,7 +416,7 @@ externalFunctionTransfer eg summ e ni args =
           return info
         Just attrs -> case PANotNull `elem` attrs of
           False -> return info
-          True -> return $! recordIfMayBeNull eg info arg
+          True -> return $! recordIfMayBeNull info arg
 
 -- Helpers
 toArg :: Value -> Maybe Argument

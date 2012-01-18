@@ -27,9 +27,6 @@ import Data.LLVM.Analysis.CallGraphSCCTraversal
 import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
 
-import Debug.Trace
-debug' = flip trace
-
 -- | The real type of the summary (without the wrapper that is exposed
 -- to clients).
 type SummaryType = Map Argument Int
@@ -87,8 +84,6 @@ arrayAnalysis f summary = do
 
   let basesAndOffsets = concatMap (isArrayDeref cg ds summary) insts
       baseResultMap = foldr addDeref M.empty basesAndOffsets
-  debugM f
-  debugM baseResultMap
   return $! M.foldlWithKey' (traceFromBases baseResultMap) summary baseResultMap
   where
     insts = concatMap basicBlockInstructions (functionBody f)

@@ -279,16 +279,19 @@ memAccessBase ptr =
     _ -> map stripBitcasts (flattenPhi ptr)
 
 flattenPhi :: Value -> [Value]
-flattenPhi (valueContent' -> InstructionC PhiNode { phiIncomingValues = pvs } ) =
-  S.toList $ foldr flatten' S.empty (map fst pvs)
+flattenPhi = S.toList . flatten' S.empty
   where
-    flatten' v acc =
+    flatten' acc v =
       case v `S.member` acc of
         True -> acc
-        False -> foldr (\x a -> S.insert x a)  acc $ flattenPhi v
-flattenPhi (valueContent' -> InstructionC SelectInst { }) = undefined
-flattenPhi v = [v]
-
+        False ->
+          let acc' = S.insert v acc
+          in case valueContent' v of
+            InstructionC PhiNode { phiIncomingValues = pvs } ->
+              let vs = map fst pvs
+              in foldl' flatten' acc' vs
+            InstructionC SelectInst {} -> undefined
+            _ -> v `S.insert` acc'
 
 -- | Record the given @ptr@ as being accessed unchecked.
 -- Additionally, determine which function arguments @ptr@ may alias at

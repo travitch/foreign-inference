@@ -292,7 +292,6 @@ addUncheckedAccess ni ptr =
     args = case valueContent' ptr of
       ArgumentC a -> [Value a]
       _ -> []
---      [] -- map Value $ argumentsForValue eg ptr
     newUnchecked = S.fromList (ptr : args)
 
 -- | Examine the incoming edges and, if any tell us that a variable is

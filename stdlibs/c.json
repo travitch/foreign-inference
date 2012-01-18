@@ -1878,7 +1878,7 @@
           "foreignFunctionLinkage": { "LinkDefault": [] },
           "foreignFunctionReturnType": {"CInt": 32},
           "foreignFunctionParameters": [
-              { "parameterAnnotations": [{"PANotNull":[]}, {"PAString":[]}, {"PAArray":1}, {"PAConst":[]}],
+              { "parameterAnnotations": [],
                 "parameterName": "fd",
                 "parameterType": {"CInt":32}
               },
@@ -1893,7 +1893,7 @@
           "foreignFunctionLinkage": { "LinkDefault": [] },
           "foreignFunctionReturnType": {"CInt": 32},
           "foreignFunctionParameters": [
-              { "parameterAnnotations": [{"PANotNull":[]}, {"PAString":[]}, {"PAArray":1}, {"PAConst":[]}],
+              { "parameterAnnotations": [],
                 "parameterName": "fd",
                 "parameterType": {"CInt":32}
               },

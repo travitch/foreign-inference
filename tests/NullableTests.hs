@@ -14,6 +14,7 @@ import Data.LLVM.Parse
 import Data.LLVM.Testing
 
 import Foreign.Inference.Interface
+import Foreign.Inference.Preprocessing
 import Foreign.Inference.Analysis.Nullable
 
 main :: IO ()
@@ -29,7 +30,7 @@ main = do
                                          , testResultComparator = assertEqual
                                          }
                         ]
-  withArgs [] $ testAgainstExpected ["-mem2reg", "-gvn", "-basicaa"] parser testDescriptors
+  withArgs [] $ testAgainstExpected requiredOptimizations parser testDescriptors
   where
     parser = parseLLVMFile defaultParserOptions
 

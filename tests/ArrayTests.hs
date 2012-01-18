@@ -12,6 +12,7 @@ import Data.LLVM.Analysis.PointsTo.TrivialFunction
 import Data.LLVM.Testing
 
 import Foreign.Inference.Interface
+import Foreign.Inference.Preprocessing
 import Foreign.Inference.Analysis.Array
 
 import Debug.Trace
@@ -30,7 +31,7 @@ main = do
                                          , testResultComparator = assertEqual
                                          }
                         ]
-  withArgs [] $ testAgainstExpected ["-mem2reg", "-gvn", "-basicaa"] bcParser testDescriptors
+  withArgs [] $ testAgainstExpected requiredOptimizations bcParser testDescriptors
   where
     bcParser = parseLLVMFile defaultParserOptions
 

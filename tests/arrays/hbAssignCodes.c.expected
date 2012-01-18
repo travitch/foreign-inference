@@ -1,0 +1,4 @@
+fromList [ (("@BZ2_hbAssignCodes", "%code"), 1)
+         , (("@BZ2_hbAssignCodes", "%length"), 1)
+         ]
+

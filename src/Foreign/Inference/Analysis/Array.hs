@@ -146,12 +146,23 @@ isArrayDeref cg ds summ inst = case valueContent' inst of
   InstructionC LoadInst { loadAddress = (valueContent ->
      InstructionC GetElementPtrInst { getElementPtrValue = base
                                     , getElementPtrIndices = idxs
-                                    })} -> case idxs of
-    [] -> error ("GEP <isArrayDeref> with no indices")
-    [_] -> [(base, IndexOperation (Value inst) idxs)]
-    (valueContent' -> ConstantC ConstantInt { constantIntValue = 0 }) :
-      (valueContent' -> ConstantC ConstantInt {}) : _ -> []
-    _ -> [(base, IndexOperation (Value inst) idxs )]
+                                    })} ->
+    buildArrayDeref inst base idxs
+  InstructionC StoreInst { storeAddress = (valueContent ->
+     InstructionC GetElementPtrInst { getElementPtrValue = base
+                                    , getElementPtrIndices = idxs
+                                    })} ->
+    buildArrayDeref inst base idxs
+  InstructionC AtomicCmpXchgInst { atomicCmpXchgPointer = (valueContent ->
+    InstructionC GetElementPtrInst { getElementPtrValue = base
+                                    , getElementPtrIndices = idxs
+                                    })} ->
+    buildArrayDeref inst base idxs
+  InstructionC AtomicRMWInst { atomicRMWPointer = (valueContent ->
+    InstructionC GetElementPtrInst { getElementPtrValue = base
+                                    , getElementPtrIndices = idxs
+                                    })} ->
+    buildArrayDeref inst base idxs
   InstructionC CallInst { callFunction = f, callArguments = args } ->
     let indexedArgs = zip [0..] (map fst args)
     in foldl' (collectArrayArgs cg ds summ f) [] indexedArgs
@@ -159,6 +170,15 @@ isArrayDeref cg ds summ inst = case valueContent' inst of
     let indexedArgs = zip [0..] (map fst args)
     in foldl' (collectArrayArgs cg ds summ f) [] indexedArgs
   _ -> []
+
+buildArrayDeref :: Instruction -> Value -> [Value] -> [(Value, PointerUse)]
+buildArrayDeref inst base idxs =
+  case idxs of
+    [] -> $err' ("GEP with no indices: " ++ show inst)
+    [_] -> [(base, IndexOperation (Value inst) idxs)]
+    (valueContent' -> ConstantC ConstantInt { constantIntValue = 0 }) :
+      (valueContent' -> ConstantC ConstantInt {}) : _ -> []
+    _ -> [(base, IndexOperation (Value inst) idxs )]
 
 -- | If the argument is an array (according to either the module
 -- summary or the dependency summary), make a CallArgument tag for it.

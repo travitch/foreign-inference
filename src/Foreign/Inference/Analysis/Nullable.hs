@@ -236,11 +236,18 @@ recordIfMayBeNull ni ptr =
     -- We don't reason about all pointer dereferences.  The direct
     -- dereference of an alloca or global variable is *always* safe
     -- (since those pointers are maintained by the compiler/runtime).
-    Nothing -> ni
-    Just b ->
-      case S.member b (mayBeNull ni) of
-        False -> ni
-        True -> addUncheckedAccess ni b
+    [] -> ni
+--    Nothing -> ni
+    bases ->
+      let accumulator b acc =
+            case b `S.member` mayBeNull acc of
+              False -> acc
+              True -> addUncheckedAccess acc b
+      in foldr accumulator ni bases
+    -- Just b ->
+    --   case S.member b (mayBeNull ni) of
+    --     False -> ni
+    --     True -> addUncheckedAccess ni b
 
 -- | Given a value that is being dereferenced by an instruction
 -- (either a load, store, or atomic memory op), determine the *base*
@@ -250,25 +257,38 @@ recordIfMayBeNull ni ptr =
 -- allocas are *always* safe to dereference.
 --
 -- This function strips off intermediate bitcasts.
-memAccessBase :: Value -> Maybe Value
+memAccessBase :: Value -> [Value]
 memAccessBase ptr =
   case valueContent' ptr of
-    GlobalVariableC _ -> Nothing
-    InstructionC AllocaInst {} -> Nothing
+    GlobalVariableC _ -> []
+    InstructionC AllocaInst {} -> []
     -- For optimized code, arguments (which we care about) can be
     -- loaded/stored to directly (without an intervening alloca).
-    ArgumentC a -> Just (Value a)
+    ArgumentC a -> [Value a]
     -- In this case, we have two levels of dereference.  The first
     -- level (la) is a global or alloca (or result of another
     -- load/GEP).  This represents a source-level dereference of a
     -- local pointer.
-    InstructionC LoadInst { loadAddress = la } -> Just $ stripBitcasts la
+    InstructionC LoadInst { loadAddress = la } ->
+      map stripBitcasts (flattenPhi la)
     -- GEP instructions can appear in sequence for nested field
     -- accesses.  We want the base of the access chain, so walk back
     -- as far as possible and return the lowest-level GEP base.
     InstructionC GetElementPtrInst { getElementPtrValue = base } ->
       memAccessBase base
-    _ -> Just $ stripBitcasts ptr
+    _ -> map stripBitcasts (flattenPhi ptr)
+
+flattenPhi :: Value -> [Value]
+flattenPhi (valueContent' -> InstructionC PhiNode { phiIncomingValues = pvs } ) =
+  S.toList $ foldr flatten' S.empty (map fst pvs)
+  where
+    flatten' v acc =
+      case v `S.member` acc of
+        True -> acc
+        False -> foldr (\x a -> S.insert x a)  acc $ flattenPhi v
+flattenPhi (valueContent' -> InstructionC SelectInst { }) = undefined
+flattenPhi v = [v]
+
 
 -- | Record the given @ptr@ as being accessed unchecked.
 -- Additionally, determine which function arguments @ptr@ may alias at

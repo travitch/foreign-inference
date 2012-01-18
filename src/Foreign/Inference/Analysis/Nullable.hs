@@ -66,17 +66,15 @@ import Data.LLVM.CallGraph
 import Data.LLVM.CFG
 import Data.LLVM.Analysis.CallGraphSCCTraversal
 import Data.LLVM.Analysis.Dataflow
--- import Data.LLVM.Analysis.Escape
 
 import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
--- import Foreign.Inference.Internal.ValueArguments
 
 -- import Text.Printf
 -- import Debug.Trace
 
--- debug :: c -> String -> c
--- debug = flip trace
+-- debug' :: c -> String -> c
+-- debug' = flip trace
 
 
 type SummaryType = Map Function (Set Argument)
@@ -234,8 +232,7 @@ maybeClobber ni ptr _ {-newVal-} = recordPossiblyNull ptr ni
 
 recordIfMayBeNull :: NullInfo -> Value -> NullInfo
 recordIfMayBeNull ni ptr =
-  let base = memAccessBase ptr
-  in case base of
+  case memAccessBase ptr of
     -- We don't reason about all pointer dereferences.  The direct
     -- dereference of an alloca or global variable is *always* safe
     -- (since those pointers are maintained by the compiler/runtime).
@@ -353,6 +350,16 @@ processCFGEdge ni cond v = case valueContent v of
                         , cmpV1 = (valueContent -> ConstantC ConstantPointerNull {}) } ->
     process' ni (Value v2) (cond False)
 
+  -- FIXME: If we use gvn, we need to be able to handle conditions
+  -- that are Phi nodes here.  One approach would be to accumulate all
+  -- of the (Value, IsNull) pairs here and, if they are all the same,
+  -- conclude that the value is indeed null...
+  --
+  -- GVN is useful to look through some memory references to improve
+  -- precision, so this would be worth trying.  On the other hand, it
+  -- could potentially make this analysis a little imprecise if GVN is
+  -- too aggressive and combines unrelated branches.
+
   _ -> ni
 
 process' :: NullInfo -> Value -> Bool -> NullInfo
@@ -369,6 +376,9 @@ callTransfer ni calledFunc args = do
   cg <- asks callGraph
   let callTargets = callValueTargets cg calledFunc
   ni' <- foldM callTransferDispatch ni callTargets
+  -- We also learn information about pointers that are not null if
+  -- this is a call through a function pointer (calling a NULL
+  -- function pointer is illegal)
   case isIndirectCallee calledFunc of
     False -> return ni'
     True -> return (recordIfMayBeNull ni' calledFunc)

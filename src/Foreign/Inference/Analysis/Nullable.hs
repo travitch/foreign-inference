@@ -263,9 +263,9 @@ memAccessBase ptr =
     -- load/GEP).  This represents a source-level dereference of a
     -- local pointer.
     InstructionC LoadInst { loadAddress = la } -> Just $ stripBitcasts la
-    -- This case captures array/field accesses: a[x] The base
-    -- loadAddress here represents the load of a from a local or
-    -- global.
+    -- GEP instructions can appear in sequence for nested field
+    -- accesses.  We want the base of the access chain, so walk back
+    -- as far as possible and return the lowest-level GEP base.
     InstructionC GetElementPtrInst { getElementPtrValue = base } ->
       memAccessBase base
     _ -> Just $ stripBitcasts ptr

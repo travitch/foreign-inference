@@ -266,12 +266,8 @@ memAccessBase ptr =
     -- This case captures array/field accesses: a[x] The base
     -- loadAddress here represents the load of a from a local or
     -- global.
-    InstructionC GetElementPtrInst { getElementPtrValue =
-      (valueContent' -> InstructionC LoadInst { loadAddress = la}) } ->
-      Just $ stripBitcasts la
-    -- This case might not really be necessary...
-    InstructionC GetElementPtrInst { getElementPtrValue = v } ->
-      Just $ stripBitcasts v
+    InstructionC GetElementPtrInst { getElementPtrValue = base } ->
+      memAccessBase base
     _ -> Just $ stripBitcasts ptr
 
 -- | Record the given @ptr@ as being accessed unchecked.

@@ -176,8 +176,7 @@ buildArrayDeref inst base idxs =
   case idxs of
     [] -> $err' ("GEP with no indices: " ++ show inst)
     [_] -> [(base, IndexOperation (Value inst) idxs)]
-    (valueContent' -> ConstantC ConstantInt { constantIntValue = 0 }) :
-      (valueContent' -> ConstantC ConstantInt {}) : _ -> []
+    (valueContent' -> ConstantC ConstantInt { constantIntValue = 0 }) : _ -> []
     _ -> [(base, IndexOperation (Value inst) idxs )]
 
 -- | If the argument is an array (according to either the module

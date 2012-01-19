@@ -222,8 +222,7 @@ nullTransfer ni i edges = do
         -- The pointer that is returned is always considered to be
         -- possibly null
         True -> return $! recordPossiblyNull (Value i) ni''
-    StoreInst { storeAddress = ptr
-              , storeValue = newVal } ->
+    StoreInst { storeAddress = ptr } ->
       return $! recordIfMayBeNull ni' ptr
 
     AtomicRMWInst { atomicRMWPointer = ptr } ->

@@ -165,8 +165,6 @@ nullableAnalysis f summ = do
   localInfo <- local envMod (forwardBlockDataflow fact0 f)
 
   exitInfo <- local envMod (dataflowResult localInfo exitInst)
---  let exitInfo = dataflowResult
---    exitInfo = HM.lookupDefault errMsg exitInst localInfo
   let justArgs = S.fromList $ mapMaybe toArg $ S.toList (accessedUnchecked exitInfo)
 
   -- Update the module symmary with the set of pointer parameters that
@@ -237,17 +235,12 @@ recordIfMayBeNull ni ptr =
     -- dereference of an alloca or global variable is *always* safe
     -- (since those pointers are maintained by the compiler/runtime).
     [] -> ni
---    Nothing -> ni
     bases ->
       let accumulator b acc =
             case b `S.member` mayBeNull acc of
               False -> acc
               True -> addUncheckedAccess acc b
       in foldr accumulator ni bases
-    -- Just b ->
-    --   case S.member b (mayBeNull ni) of
-    --     False -> ni
-    --     True -> addUncheckedAccess ni b
 
 -- | Given a value that is being dereferenced by an instruction
 -- (either a load, store, or atomic memory op), determine the *base*

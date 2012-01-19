@@ -69,6 +69,7 @@ import Data.LLVM.Analysis.Dataflow
 
 import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
+import Foreign.Inference.Internal.FlattenValue
 
 -- import Text.Printf
 -- import Debug.Trace
@@ -172,7 +173,6 @@ nullableAnalysis f summ = do
   return $! M.insert f justArgs summ
   where
     exitInst = functionExitInstruction f
---    errMsg = $(err "NullAnalysis: exit instruction not in dataflow result")
 
 -- | First, process the incoming CFG edges to learn about pointers
 -- that are known to be non-NULL.  Then use this updated information
@@ -186,14 +186,32 @@ nullTransfer ni i edges = do
   let ni' = removeNonNullPointers ni edges
 
   case i of
-    CallInst { callFunction = calledFunc, callArguments = args } ->
-      callTransfer ni' calledFunc (map fst args)
-    InvokeInst { invokeFunction = calledFunc, invokeArguments = args } ->
-      callTransfer ni' calledFunc (map fst args)
+    CallInst { callFunction = calledFunc, callArguments = args } -> do
+      ni'' <- callTransfer ni' calledFunc (map fst args)
+      return $! recordPossiblyNull (Value i) ni''
+    InvokeInst { invokeFunction = calledFunc, invokeArguments = args } -> do
+      ni'' <- callTransfer ni' calledFunc (map fst args)
+      return $! recordPossiblyNull (Value i) ni''
+
     -- Stack allocated pointers start off as NULL
     AllocaInst {} -> case isPointerPointer i of
       True -> return $! recordPossiblyNull (Value i) ni'
       False -> return ni'
+
+    -- When we introduce a new Phi node, assume that it can be NULL
+    -- unless checked.  FIXME: We don't need to consider it NULL IFF
+    -- all of its incoming values are not null.
+    PhiNode {} -> return $! recordPossiblyNull (Value i) ni'
+    SelectInst {} -> return $! recordPossiblyNull (Value i) ni'
+
+    VaArgInst {} -> return $! recordPossiblyNull (Value i) ni'
+
+    -- GEP instructions produce a pointer value from another pointer.
+    -- If the original base pointer was NULL, then the result is NULL.
+    GetElementPtrInst { getElementPtrValue = v } ->
+      case stripBitcasts v `S.member` mayBeNull ni' of
+        False -> return ni'
+        True -> return $! recordPossiblyNull (Value i) ni'
 
     -- Attempt at handling loads and stores more simply and uniformly.
 
@@ -212,7 +230,8 @@ nullTransfer ni i edges = do
         True -> return $! maybeClobber ni'' ptr newVal
 
     AtomicRMWInst { atomicRMWPointer = ptr } ->
-      return $! recordIfMayBeNull ni' ptr
+      let ni'' = recordIfMayBeNull ni' ptr
+      in return $! recordPossiblyNull (Value i) ni''
 
     AtomicCmpXchgInst { atomicCmpXchgPointer = ptr
                       , atomicCmpXchgNewValue = newVal } ->
@@ -234,13 +253,21 @@ recordIfMayBeNull ni ptr =
     -- We don't reason about all pointer dereferences.  The direct
     -- dereference of an alloca or global variable is *always* safe
     -- (since those pointers are maintained by the compiler/runtime).
-    [] -> ni
-    bases ->
-      let accumulator b acc =
-            case b `S.member` mayBeNull acc of
-              False -> acc
-              True -> addUncheckedAccess acc b
-      in foldr accumulator ni bases
+    Nothing -> ni
+    Just b ->
+      case b `S.member` mayBeNull ni of
+        -- There was an explicit check to ensure that the pointer in
+        -- this operation was not NULL, so we know for sure that it is
+        -- safe.
+        False -> ni
+        -- In this case, there was no explicit test for the pointer in
+        -- use.  However, if this is a phi or select instruction then
+        -- we might have some information about some of the incoming
+        -- values that must not be NULL.  Do not report these known to
+        -- be not-null pointers.
+        True ->
+          let nullVals = filter (`S.member` mayBeNull ni) (flattenValue b)
+          in foldl' addUncheckedAccess ni nullVals
 
 -- | Given a value that is being dereferenced by an instruction
 -- (either a load, store, or atomic memory op), determine the *base*
@@ -250,41 +277,27 @@ recordIfMayBeNull ni ptr =
 -- allocas are *always* safe to dereference.
 --
 -- This function strips off intermediate bitcasts.
-memAccessBase :: Value -> [Value]
+memAccessBase :: Value -> Maybe Value
 memAccessBase ptr =
   case valueContent' ptr of
-    GlobalVariableC _ -> []
-    InstructionC AllocaInst {} -> []
+    GlobalVariableC _ -> Nothing
+    InstructionC AllocaInst {} -> Nothing
     -- For optimized code, arguments (which we care about) can be
     -- loaded/stored to directly (without an intervening alloca).
-    ArgumentC a -> [Value a]
+    ArgumentC a -> Just (Value a)
     -- In this case, we have two levels of dereference.  The first
     -- level (la) is a global or alloca (or result of another
     -- load/GEP).  This represents a source-level dereference of a
     -- local pointer.
     InstructionC LoadInst { loadAddress = la } ->
-      map stripBitcasts (flattenPhi la)
+      Just (stripBitcasts la)
     -- GEP instructions can appear in sequence for nested field
     -- accesses.  We want the base of the access chain, so walk back
     -- as far as possible and return the lowest-level GEP base.
     InstructionC GetElementPtrInst { getElementPtrValue = base } ->
       memAccessBase base
-    _ -> map stripBitcasts (flattenPhi ptr)
+    _ -> Just (stripBitcasts ptr)
 
-flattenPhi :: Value -> [Value]
-flattenPhi = S.toList . flatten' S.empty
-  where
-    flatten' acc v =
-      case v `S.member` acc of
-        True -> acc
-        False ->
-          let acc' = S.insert v acc
-          in case valueContent' v of
-            InstructionC PhiNode { phiIncomingValues = pvs } ->
-              let vs = map fst pvs
-              in foldl' flatten' acc' vs
-            InstructionC SelectInst {} -> undefined
-            _ -> v `S.insert` acc'
 
 -- | Record the given @ptr@ as being accessed unchecked.
 -- Additionally, determine which function arguments @ptr@ may alias at
@@ -323,6 +336,11 @@ removeNonNullPointers ni _ = ni
 -- | Given a condition from a CFG edge, determine if the condition
 -- gives us information about the NULL-ness of a pointer.  If so,
 -- update the NullInfo.
+--
+-- If a Phi node (or Select) is checked against NULL, put that node in
+-- the not-null set.  Later on, if there is a use of a phi node, any
+-- of the values that the phi node could represent are guarded/not
+-- guarded.
 processCFGEdge :: NullInfo -> (Bool -> Bool) -> Value -> NullInfo
 processCFGEdge ni cond v = case valueContent v of
   InstructionC ICmpInst { cmpPredicate = ICmpEq
@@ -331,6 +349,10 @@ processCFGEdge ni cond v = case valueContent v of
     process' ni v1 (cond True)
   InstructionC ICmpInst { cmpPredicate = ICmpEq
                         , cmpV1 = (valueContent' -> ArgumentC v1)
+                        , cmpV2 = (valueContent -> ConstantC ConstantPointerNull {}) } ->
+    process' ni (Value v1) (cond True)
+  InstructionC ICmpInst { cmpPredicate = ICmpEq
+                        , cmpV1 = (valueContent' -> InstructionC v1@PhiNode {})
                         , cmpV2 = (valueContent -> ConstantC ConstantPointerNull {}) } ->
     process' ni (Value v1) (cond True)
 
@@ -342,6 +364,10 @@ processCFGEdge ni cond v = case valueContent v of
                         , cmpV2 = (valueContent' -> ArgumentC v2)
                         , cmpV1 = (valueContent -> ConstantC ConstantPointerNull {}) } ->
     process' ni (Value v2) (cond True)
+  InstructionC ICmpInst { cmpPredicate = ICmpEq
+                        , cmpV2 = (valueContent' -> InstructionC v2@PhiNode {})
+                        , cmpV1 = (valueContent -> ConstantC ConstantPointerNull {}) } ->
+    process' ni (Value v2) (cond True)
 
   InstructionC ICmpInst { cmpPredicate = ICmpNe
                         , cmpV1 = (valueContent' -> InstructionC LoadInst { loadAddress = v1 } )
@@ -349,6 +375,10 @@ processCFGEdge ni cond v = case valueContent v of
     process' ni v1 (cond False)
   InstructionC ICmpInst { cmpPredicate = ICmpNe
                         , cmpV1 = (valueContent' -> ArgumentC v1)
+                        , cmpV2 = (valueContent -> ConstantC ConstantPointerNull {}) } ->
+    process' ni (Value v1) (cond False)
+  InstructionC ICmpInst { cmpPredicate = ICmpNe
+                        , cmpV1 = (valueContent' -> InstructionC v1@PhiNode{})
                         , cmpV2 = (valueContent -> ConstantC ConstantPointerNull {}) } ->
     process' ni (Value v1) (cond False)
 
@@ -360,6 +390,12 @@ processCFGEdge ni cond v = case valueContent v of
                         , cmpV2 = (valueContent' -> ArgumentC v2)
                         , cmpV1 = (valueContent -> ConstantC ConstantPointerNull {}) } ->
     process' ni (Value v2) (cond False)
+  InstructionC ICmpInst { cmpPredicate = ICmpNe
+                        , cmpV2 = (valueContent' -> InstructionC v2@PhiNode{})
+                        , cmpV1 = (valueContent -> ConstantC ConstantPointerNull {}) } ->
+    process' ni (Value v2) (cond False)
+  -- FIXME: Do we need these separate cases here?  We don't really
+  -- care what type of value v1 and v2 are...
 
   -- FIXME: If we use gvn, we need to be able to handle conditions
   -- that are Phi nodes here.  One approach would be to accumulate all
@@ -421,7 +457,8 @@ definedFunctionTransfer summ f ni args =
     isNotNullable (a, _) = S.member a notNullableArgs
     -- | Pairs of not-nullable formals/actuals
     indexedNotNullArgs = filter isNotNullable $ zip formals args
-    markArgNotNullable info (_, a) = recordIfMayBeNull info a
+    markArgNotNullable info (_, a) =
+      recordIfMayBeNull info a
 
 externalFunctionTransfer :: DependencySummary -> ExternalFunction
                             -> NullInfo -> [Value] -> AnalysisMonad NullInfo

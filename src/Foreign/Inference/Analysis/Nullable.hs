@@ -53,7 +53,7 @@ module Foreign.Inference.Analysis.Nullable (
 import Algebra.Lattice
 import Control.DeepSeq
 import Control.Monad.RWS.Strict
-import Data.List ( foldl' )
+import Data.List ( find, foldl' )
 import Data.Map ( Map )
 import qualified Data.Map as M
 import Data.Maybe ( mapMaybe )
@@ -139,6 +139,7 @@ type AnalysisMonad = RWS NullData Diagnostics ()
 
 instance DataflowAnalysis AnalysisMonad NullInfo where
   transfer = nullTransfer
+  phiTransfer = nullPhiTransfer
 
 -- | The meet operator for @NullInfo@
 meetNullInfo :: NullInfo -> NullInfo -> NullInfo
@@ -162,7 +163,9 @@ nullableAnalysis f summ = do
   -- The initial state of the dataflow analysis is top -- all pointer
   -- parameters are NULLable.
   let envMod e = e { moduleSummary = summ }
-      fact0 = top { mayBeNull = S.fromList (map Value (functionParameters f)) }
+      args = map Value (functionParameters f)
+      fact0 = top { mayBeNull = S.fromList args
+                  }
   localInfo <- local envMod (forwardBlockDataflow fact0 f)
 
   exitInfo <- local envMod (dataflowResult localInfo exitInst)
@@ -179,7 +182,10 @@ nullableAnalysis f summ = do
 -- to identify pointers that are dereferenced when they *might* be
 -- NULL.  Also map these possibly-NULL pointers to any corresponding
 -- parameters.
-nullTransfer :: NullInfo -> Instruction -> [CFGEdge] -> AnalysisMonad NullInfo
+nullTransfer :: NullInfo
+                -> Instruction
+                -> [CFGEdge]
+                -> AnalysisMonad NullInfo
 nullTransfer ni i edges = do
   -- Compute ni' (updated info about what pointers are NULL) based on
   -- the set of incoming CFG edges.
@@ -201,7 +207,8 @@ nullTransfer ni i edges = do
     -- When we introduce a new Phi node, assume that it can be NULL
     -- unless checked.  FIXME: We don't need to consider it NULL IFF
     -- all of its incoming values are not null.
-    PhiNode {} -> return $! recordPossiblyNull (Value i) ni'
+    -- PhiNode {} -> return $! recordPossiblyNull (Value i) ni'
+
     SelectInst {} -> return $! recordPossiblyNull (Value i) ni'
 
     VaArgInst {} -> return $! recordPossiblyNull (Value i) ni'
@@ -238,6 +245,41 @@ nullTransfer ni i edges = do
 
     _ -> return ni'
 
+-- At each Phi function, we can say that the Phi value is not null if
+-- all of its incoming values are not null on their respective
+-- branches.
+--
+-- Otherwise, if any incoming value may be NULL, the phi node is NULL
+-- too.
+nullPhiTransfer :: NullInfo
+                   -> Instruction
+                   -> [(BasicBlock, NullInfo, CFGEdge)]
+                   -> AnalysisMonad NullInfo
+nullPhiTransfer ni i@PhiNode { phiIncomingValues = pvs } edges =
+  let ni' = removeNonNullPointers ni $ map (\(_,_,e) -> e) edges
+  in case any (nullOnIncoming edges) pvs of
+    False -> return ni'
+    True -> return $! recordPossiblyNull (Value i) ni'
+
+nullPhiTransfer _ i _ = $err' ("Non-phi instruction: " ++ show i)
+
+lookup3 :: (Eq a) => a -> [(a, b, c)] -> Maybe (a, b, c)
+lookup3 k = find (\(k', _, _) -> k == k')
+
+nullOnIncoming :: [(BasicBlock, NullInfo, CFGEdge)]
+                      -> (Value, Value)
+                      -> Bool
+nullOnIncoming predOuts (v, bbv) =
+  case valueContent bbv of
+    BasicBlockC bb ->
+      case bb `lookup3` predOuts of
+        Nothing -> $err' ("No predecessor value for " ++ show bbv)
+        Just (_, ni, e) ->
+          let ni' = removeNonNullPointers ni [e]
+              isNull = v `S.member` mayBeNull ni'
+          in isNull -- `debug'` ("Null? " ++ show v ++ " " ++ show isNull)
+    _ -> $err' ("Not a basic block: " ++ show bbv)
+
 -- | Clobber the value of @ptr@ (mark it as possibly NULL due to
 -- assignment).
 maybeClobber :: NullInfo -> Value -> Value -> NullInfo
@@ -261,9 +303,11 @@ recordIfMayBeNull ni ptr =
         -- we might have some information about some of the incoming
         -- values that must not be NULL.  Do not report these known to
         -- be not-null pointers.
+        --
+        -- Again in the case of Phi nodes,
         True ->
           let nullVals = filter (`S.member` mayBeNull ni) (flattenValue b)
-          in foldl' addUncheckedAccess ni nullVals
+          in foldl' addUncheckedAccess ni nullVals -- `debug'` show nullVals
 
 -- | Given a value that is being dereferenced by an instruction
 -- (either a load, store, or atomic memory op), determine the *base*
@@ -414,7 +458,10 @@ process' ni val isNull =
 -- | A split out transfer function for function calls.  Looks up
 -- summary values for called functions/params and records relevant
 -- information in the current dataflow fact.
-callTransfer :: NullInfo -> Value -> [Value] -> AnalysisMonad NullInfo
+callTransfer :: NullInfo
+                -> Value
+                -> [Value]
+                -> AnalysisMonad NullInfo
 callTransfer ni calledFunc args = do
   cg <- asks callGraph
   let callTargets = callValueTargets cg calledFunc

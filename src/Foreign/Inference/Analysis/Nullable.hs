@@ -224,10 +224,7 @@ nullTransfer ni i edges = do
         True -> return $! recordPossiblyNull (Value i) ni''
     StoreInst { storeAddress = ptr
               , storeValue = newVal } ->
-      let ni'' = recordIfMayBeNull ni' ptr
-      in case isPointer newVal of
-        False -> return ni''
-        True -> return $! maybeClobber ni'' ptr newVal
+      return $! recordIfMayBeNull ni' ptr
 
     AtomicRMWInst { atomicRMWPointer = ptr } ->
       let ni'' = recordIfMayBeNull ni' ptr

@@ -26,6 +26,7 @@ import Data.LLVM.Analysis.CallGraphSCCTraversal
 
 import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
+import Foreign.Inference.Internal.FlattenValue
 
 -- | The real type of the summary (without the wrapper that is exposed
 -- to clients).
@@ -147,32 +148,34 @@ isArrayDeref cg ds summ inst = case valueContent' inst of
      InstructionC GetElementPtrInst { getElementPtrValue = base
                                     , getElementPtrIndices = idxs
                                     })} ->
-    buildArrayDeref inst base idxs
+    concatMap (buildArrayDeref inst idxs) (flattenValue base)
   InstructionC StoreInst { storeAddress = (valueContent ->
      InstructionC GetElementPtrInst { getElementPtrValue = base
                                     , getElementPtrIndices = idxs
                                     })} ->
-    buildArrayDeref inst base idxs
+    concatMap (buildArrayDeref inst idxs) (flattenValue base)
   InstructionC AtomicCmpXchgInst { atomicCmpXchgPointer = (valueContent ->
     InstructionC GetElementPtrInst { getElementPtrValue = base
                                     , getElementPtrIndices = idxs
                                     })} ->
-    buildArrayDeref inst base idxs
+    concatMap (buildArrayDeref inst idxs) (flattenValue base)
   InstructionC AtomicRMWInst { atomicRMWPointer = (valueContent ->
     InstructionC GetElementPtrInst { getElementPtrValue = base
                                     , getElementPtrIndices = idxs
                                     })} ->
-    buildArrayDeref inst base idxs
+    concatMap (buildArrayDeref inst idxs) (flattenValue base)
   InstructionC CallInst { callFunction = f, callArguments = args } ->
     let indexedArgs = zip [0..] (map fst args)
-    in foldl' (collectArrayArgs cg ds summ f) [] indexedArgs
+    in foldl' (collectArrayArgs cg ds summ f) [] (concatMap expand indexedArgs)
   InstructionC InvokeInst { invokeFunction = f, invokeArguments = args } ->
     let indexedArgs = zip [0..] (map fst args)
-    in foldl' (collectArrayArgs cg ds summ f) [] indexedArgs
+    in foldl' (collectArrayArgs cg ds summ f) [] (concatMap expand indexedArgs)
   _ -> []
+  where
+    expand (ix, a) = zip (repeat ix) (flattenValue a)
 
-buildArrayDeref :: Instruction -> Value -> [Value] -> [(Value, PointerUse)]
-buildArrayDeref inst base idxs =
+buildArrayDeref :: Instruction -> [Value] -> Value -> [(Value, PointerUse)]
+buildArrayDeref inst idxs base =
   case idxs of
     [] -> $err' ("GEP with no indices: " ++ show inst)
     [_] -> [(base, IndexOperation (Value inst) idxs)]

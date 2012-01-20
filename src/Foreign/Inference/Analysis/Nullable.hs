@@ -53,7 +53,7 @@ module Foreign.Inference.Analysis.Nullable (
 import Algebra.Lattice
 import Control.DeepSeq
 import Control.Monad.RWS.Strict
-import Data.List ( find, foldl' )
+import Data.List ( find, foldl', partition )
 import Data.Map ( Map )
 import qualified Data.Map as M
 import Data.Maybe ( mapMaybe )
@@ -204,11 +204,6 @@ nullTransfer ni i edges = do
       True -> return $! recordPossiblyNull (Value i) ni'
       False -> return ni'
 
-    -- When we introduce a new Phi node, assume that it can be NULL
-    -- unless checked.  FIXME: We don't need to consider it NULL IFF
-    -- all of its incoming values are not null.
-    -- PhiNode {} -> return $! recordPossiblyNull (Value i) ni'
-
     SelectInst {} -> return $! recordPossiblyNull (Value i) ni'
 
     VaArgInst {} -> return $! recordPossiblyNull (Value i) ni'
@@ -251,25 +246,30 @@ nullTransfer ni i edges = do
 --
 -- Otherwise, if any incoming value may be NULL, the phi node is NULL
 -- too.
-nullPhiTransfer :: NullInfo
-                   -> Instruction
-                   -> [(BasicBlock, NullInfo, CFGEdge)]
+--
+-- We process all Phi instructions in parallel.  Each one corresponds
+-- to one variable.  Our job here is to decide which phi variables are
+-- definitely not null and to remove them from the null info (and mark
+-- the rest as possibly null).
+nullPhiTransfer :: [Instruction] -> [(BasicBlock, NullInfo, CFGEdge)]
                    -> AnalysisMonad NullInfo
-nullPhiTransfer ni i@PhiNode { phiIncomingValues = pvs } edges =
-  let ni' = removeNonNullPointers ni $ map (\(_,_,e) -> e) edges
-  in case any (nullOnIncoming edges) pvs of
-    False -> return ni'
-    True -> return $! recordPossiblyNull (Value i) ni'
-
-nullPhiTransfer _ i _ = $err' ("Non-phi instruction: " ++ show i)
+nullPhiTransfer phis incomingEdges = do
+  let (newNotNullVals, newNullVals) = partition (phiIsNotNull incomingEdges) phis
+      ni' = foldr recordPossiblyNull ni (map Value newNullVals)
+  return $! foldr recordNotNull ni' (map Value newNotNullVals)
+  where
+    ni = meets $ map (\(_, i, _) -> i) incomingEdges
+    phiIsNotNull es PhiNode { phiIncomingValues = pvs } =
+      all (notNullOnIncoming es) pvs
+    phiIsNotNull _ i = $err' ("Non-phi instruction: " ++ show i)
 
 lookup3 :: (Eq a) => a -> [(a, b, c)] -> Maybe (a, b, c)
 lookup3 k = find (\(k', _, _) -> k == k')
 
-nullOnIncoming :: [(BasicBlock, NullInfo, CFGEdge)]
-                      -> (Value, Value)
-                      -> Bool
-nullOnIncoming predOuts (v, bbv) =
+notNullOnIncoming :: [(BasicBlock, NullInfo, CFGEdge)]
+                     -> (Value, Value)
+                     -> Bool
+notNullOnIncoming predOuts (v, bbv) =
   case valueContent bbv of
     BasicBlockC bb ->
       case bb `lookup3` predOuts of
@@ -277,7 +277,7 @@ nullOnIncoming predOuts (v, bbv) =
         Just (_, ni, e) ->
           let ni' = removeNonNullPointers ni [e]
               isNull = v `S.member` mayBeNull ni'
-          in isNull -- `debug'` ("Null? " ++ show v ++ " " ++ show isNull)
+          in not isNull
     _ -> $err' ("Not a basic block: " ++ show bbv)
 
 -- | Clobber the value of @ptr@ (mark it as possibly NULL due to
@@ -307,7 +307,7 @@ recordIfMayBeNull ni ptr =
         -- Again in the case of Phi nodes,
         True ->
           let nullVals = filter (`S.member` mayBeNull ni) (flattenValue b)
-          in foldl' addUncheckedAccess ni nullVals -- `debug'` show nullVals
+          in foldl' addUncheckedAccess ni nullVals
 
 -- | Given a value that is being dereferenced by an instruction
 -- (either a load, store, or atomic memory op), determine the *base*

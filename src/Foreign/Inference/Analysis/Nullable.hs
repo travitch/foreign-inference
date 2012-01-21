@@ -193,10 +193,10 @@ nullTransfer ni i edges = do
 
   case i of
     CallInst { callFunction = calledFunc, callArguments = args } -> do
-      ni'' <- callTransfer ni' calledFunc (map fst args)
+      ni'' <- callTransfer ni' (stripBitcasts calledFunc) (map fst args)
       return $! recordPossiblyNull (Value i) ni''
     InvokeInst { invokeFunction = calledFunc, invokeArguments = args } -> do
-      ni'' <- callTransfer ni' calledFunc (map fst args)
+      ni'' <- callTransfer ni' (stripBitcasts calledFunc) (map fst args)
       return $! recordPossiblyNull (Value i) ni''
 
     -- Stack allocated pointers start off as NULL

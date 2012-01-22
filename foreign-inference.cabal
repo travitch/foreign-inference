@@ -39,7 +39,7 @@ library
                  llvm-analysis, deepseq, lattices,
                  -- For the reporting code
                  archive-inspection, directory, attoparsec >= 0.10 && < 1.0,
-                 blaze-html >= 0.4, highlighting-kate >= 0.3, xhtml
+                 blaze-html >= 0.4, highlighting-kate >= 0.4
   ghc-options: -Wall -funbox-strict-fields
   ghc-prof-options: -auto-all
 

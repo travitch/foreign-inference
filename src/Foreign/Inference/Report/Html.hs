@@ -16,7 +16,7 @@ import Text.Blaze.Html5 ( toValue, toHtml, (!), Html, AttributeValue )
 import qualified Text.Blaze.Html5 as H
 import qualified Text.Blaze.Html5.Attributes as A
 import qualified Text.Highlighting.Kate as K
-import qualified Text.XHtml as X
+import Text.Highlighting.Kate.Types ( defaultFormatOpts, FormatOptions(..) )
 
 import Data.LLVM
 
@@ -44,38 +44,24 @@ htmlFunctionPage r f srcFile startLine functionText = H.docTypeHtml $ do
     "Breakdown of " >> toHtml funcName >> " defined in " >> toHtml srcFile
     H.div $ do
       H.ul $ forM_ (functionParameters f) (drilldownArgumentEntry r)
-    case highlightedSrc of
-      Right (lang, srclines) -> do
-        let fmtOpts = [ K.OptNumberLines
-                      , K.OptNumberFrom startLine
-                      , K.OptDetailed
-                      , K.OptLineAnchors
-                      ]
-            xhtml = K.formatAsXHtml fmtOpts lang srclines
-            xhtmlString = X.showHtmlFragment xhtml
-        H.preEscapedString xhtmlString
-      Left err -> do
-        H.h3 $ H.toHtml $ "Error highlighting source: " ++ err
-        H.pre $ toHtml functionText
-
+    let lang : _ = K.languagesByFilename srcFile
+        highlightedSrc = K.highlightAs lang (T.unpack functionText)
+        fmtOpts = defaultFormatOpts { numberLines = True
+                                    , startNumber = startLine
+                                    , lineAnchors = True
+                                    }
+    K.formatHtmlBlock fmtOpts highlightedSrc
     H.script ! A.type_ "text/javascript" $ H.preEscapedText (initialScript calledFunctions)
 
   where
     funcName = decodeUtf8 (identifierContent (functionName f))
     pageTitle = "Breakdown of " `mappend` funcName
-    fileLang = K.languagesByFilename srcFile
-    highlightedSrc = case fileLang of
-      lang : _ ->
-        case K.highlightAs lang (T.unpack functionText) of
-          Left err -> Left err
-          Right srcLines -> Right (lang, srcLines)
-      _ -> Left ("No sytnax definition for file: " ++ srcFile)
     allInstructions = concatMap basicBlockInstructions (functionBody f)
     calledFunctions = foldr extractCalledFunctionNames [] allInstructions
 
 extractCalledFunctionNames :: Instruction -> [Text] -> [Text]
 extractCalledFunctionNames i acc =
-  case valueContent i of
+  case valueContent' i of
     InstructionC CallInst { callFunction = cv } -> maybeExtract cv acc
     InstructionC InvokeInst { invokeFunction = cv } -> maybeExtract cv acc
     _ -> acc

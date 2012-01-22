@@ -268,6 +268,146 @@
                 "parameterType": {"CDouble": []}
               }
           ]
+        },
+        { "foreignFunctionName": "finite",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "x",
+                "parameterType": {"CDouble": []}
+              }
+          ]
+        },
+        { "foreignFunctionName": "finitef",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "x",
+                "parameterType": {"CFloat": []}
+              }
+          ]
+        },
+        { "foreignFunctionName": "hypot",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CDouble": []},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "x",
+                "parameterType": {"CDouble": []}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "y",
+                "parameterType": {"CDouble": []}
+              }
+          ]
+        },
+        { "foreignFunctionName": "hypotf",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CFloat": []},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "x",
+                "parameterType": {"CFloat": []}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "y",
+                "parameterType": {"CFloat": []}
+              }
+          ]
+        },
+        { "foreignFunctionName": "log1p",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CDouble": []},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "x",
+                "parameterType": {"CDouble": []}
+              }
+          ]
+        },
+        { "foreignFunctionName": "log1pf",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CFloat": []},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "x",
+                "parameterType": {"CFloat": []}
+              }
+          ]
+        },
+        { "foreignFunctionName": "expm1",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CDouble": []},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "x",
+                "parameterType": {"CDouble": []}
+              }
+          ]
+        },
+        { "foreignFunctionName": "expm1f",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CFloat": []},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "x",
+                "parameterType": {"CFloat": []}
+              }
+          ]
+        },
+        { "foreignFunctionName": "atanh",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CDouble": []},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "x",
+                "parameterType": {"CDouble": []}
+              }
+          ]
+        },
+        { "foreignFunctionName": "atanhf",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CFloat": []},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "x",
+                "parameterType": {"CFloat": []}
+              }
+          ]
+        },
+        { "foreignFunctionName": "acosh",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CDouble": []},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "x",
+                "parameterType": {"CDouble": []}
+              }
+          ]
+        },
+        { "foreignFunctionName": "acoshf",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CFloat": []},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "x",
+                "parameterType": {"CFloat": []}
+              }
+          ]
         }
     ]
 }

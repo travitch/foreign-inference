@@ -305,34 +305,39 @@ moduleToLibraryInterface m name deps summaries =
                    , libraryDependencies = deps
                    }
   where
-    -- | FIXME: Need a way to get all types from a Module
-    types = map typeToCType []
+    -- | FIXME: Need a way to get all types from a Module Perhaps
+    -- replace unsupported types with char[] of the equivalent number
+    -- of bytes.
+    types = [] -- map typeToCType []
     funcs = mapMaybe (functionToExternal summaries) (moduleDefinedFunctions m)
 
--- | Summarize a single function
+-- | Summarize a single function.  Functions with types in their
+-- signatures that have certain exotic types are not supported in
+-- interfaces.
 functionToExternal :: [ModuleSummary] -> Function -> Maybe ForeignFunction
-functionToExternal summaries f = case toLinkage (functionLinkage f) of
-  Nothing -> Nothing
-  Just l ->
-    Just ForeignFunction { foreignFunctionName = identifierContent (functionName f)
-                         , foreignFunctionLinkage = l
-                         , foreignFunctionReturnType = typeToCType fretType
+functionToExternal summaries f = do
+  lnk <- toLinkage (functionLinkage f)
+  fretty <- typeToCType fretType
+  params <- mapM (paramToExternal summaries) (functionParameters f)
+  return ForeignFunction { foreignFunctionName = identifierContent (functionName f)
+                         , foreignFunctionLinkage = lnk
+                         , foreignFunctionReturnType = fretty
                          , foreignFunctionParameters = params
                          , foreignFunctionAnnotations = annots
                          }
   where
     annots = concatMap (summarizeFunction' f) summaries
-    params = map (paramToExternal summaries) (functionParameters f)
     fretType = case functionType f of
       TypeFunction rt _ _ -> rt
       t -> t
 
-paramToExternal :: [ModuleSummary] -> Argument -> Parameter
-paramToExternal summaries arg =
-  Parameter { parameterType = typeToCType (argumentType arg)
-            , parameterName = SBS.unpack (identifierContent (argumentName arg))
-            , parameterAnnotations = concatMap (summarizeArgument' arg) summaries
-            }
+paramToExternal :: [ModuleSummary] -> Argument -> Maybe Parameter
+paramToExternal summaries arg = do
+  ptype <- typeToCType (argumentType arg)
+  return Parameter { parameterType = ptype
+                   , parameterName = SBS.unpack (identifierContent (argumentName arg))
+                   , parameterAnnotations = concatMap (summarizeArgument' arg) summaries
+                   }
 
 -- | Look up the summary information for the indicated parameter.
 lookupArgumentSummary :: DependencySummary -> ExternalFunction -> Int -> Maybe [ParamAnnotation]
@@ -356,24 +361,37 @@ isVarArg ef = isVa
 -- Helpers
 
 -- | FIXME: Need to consult some metadata here to get sign information
-typeToCType :: Type -> CType
+--
+-- Convert an LLVM type to an external type.  Note that some types are
+-- not supported in external interfaces (vectors and exotic floating
+-- point types).
+typeToCType :: Type -> Maybe CType
 typeToCType t = case t of
-  TypeVoid -> CVoid
-  TypeInteger i -> CInt i
-  TypeFloat -> CFloat
-  TypeDouble -> CDouble
-  TypeArray _ t' -> CPointer (typeToCType t')
-  TypeFunction r ts _ -> CFunction (typeToCType r) (map typeToCType ts)
-  TypePointer t' _ -> CPointer (typeToCType t')
-  TypeStruct (Just n) _ _ -> CStruct n []
-  TypeStruct Nothing ts _ -> CAnonStruct (map typeToCType ts)
-  TypeFP128 -> $(err "Type fp128 is not supported in external interfaces")
-  TypeX86FP80 -> $(err "Type x86fp80 is not supported in external interfaces")
-  TypePPCFP128 -> $(err "Type ppcfp128 is not supported in external interfaces")
-  TypeX86MMX -> $(err "Type x86mmx is not supported in external interfaces")
-  TypeLabel -> $(err "Type label is not supported in external interfaces")
-  TypeMetadata -> $(err "Type metadata is not supported in external interfaces")
-  TypeVector _ _ -> $(err "Type vector is not supported in external interfaces")
+  TypeVoid -> return CVoid
+  TypeInteger i -> return $! CInt i
+  TypeFloat -> return CFloat
+  TypeDouble -> return CDouble
+  TypeArray _ t' -> do
+    tt <- typeToCType t'
+    return $! CPointer tt
+  TypeFunction r ts _ -> do
+    rt <- typeToCType r
+    tts <- mapM typeToCType ts
+    return $! CFunction rt tts
+  TypePointer t' _ -> do
+    tt <- typeToCType t'
+    return $! CPointer tt
+  TypeStruct (Just n) _ _ -> return $! CStruct n []
+  TypeStruct Nothing ts _ -> do
+    tts <- mapM typeToCType ts
+    return $! CAnonStruct tts
+  TypeFP128 -> Nothing
+  TypeX86FP80 -> Nothing
+  TypePPCFP128 -> Nothing
+  TypeX86MMX -> Nothing
+  TypeLabel -> Nothing
+  TypeMetadata -> Nothing
+  TypeVector _ _ -> Nothing
 
 -- FIXME: Use a different function to translate types that are going
 -- to be used as type definitions at the beginning of a library

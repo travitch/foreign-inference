@@ -266,7 +266,7 @@ mergeFunction m f = case M.lookup fn m of
   Just f' -> case foreignFunctionLinkage f of
     LinkWeak -> m
     LinkDefault ->
-      error $ "Functions with overlapping linkage: " ++ show f ++ " and " ++ show f'
+      $err' ("Functions with overlapping linkage: " ++ show f ++ " and " ++ show f')
   where
     fn = foreignFunctionName f
 
@@ -280,7 +280,7 @@ parseInterface summaryDirs p = do
   c <- loadFromSources summaryDirs p
   let mval = decode' c
   case mval of
-    Nothing -> error $ "Failed to decode " ++ p
+    Nothing -> $err' ("Failed to decode " ++ p)
     Just li -> return li
 
 loadFromSources :: [FilePath] -> FilePath -> IO LBS.ByteString
@@ -339,10 +339,10 @@ lookupArgumentSummary :: DependencySummary -> ExternalFunction -> Int -> Maybe [
 lookupArgumentSummary ds ef ix =
   case fsum of
     Nothing -> Nothing
-    Just s -> case (isVarArg ef, length (foreignFunctionParameters s) < ix) of
-      (True, _) -> Just []
-      (False, True) -> error $ "lookupArgumentSummary: no parameter " ++ show ix ++ " for " ++ show ef
-      (False, False) -> Just $ parameterAnnotations (foreignFunctionParameters s !! ix)
+    Just s -> case (isVarArg ef, ix < length (foreignFunctionParameters s)) of
+      (True, False) -> Just [] -- Vararg and we don't have a summary for the given function
+      (False, False) -> $err' ("lookupArgumentSummary: no parameter " ++ show ix ++ " for " ++ show ef)
+      (_, True) -> Just $ parameterAnnotations (foreignFunctionParameters s !! ix)
   where
     fname = identifierContent $ externalFunctionName ef
     summ = depSummary ds

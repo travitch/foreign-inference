@@ -175,6 +175,9 @@ nullableAnalysis f summ = do
   -- we have proven are accessed unchecked.
   return $! M.insert f justArgs summ
   where
+    -- FIXME: This isn't correct for functions that call longjmp; the
+    -- ret instruction isn't reachable for these functions and it
+    -- doesn't have any useful dataflow information.
     exitInst = functionExitInstruction f
 
 -- | First, process the incoming CFG edges to learn about pointers
@@ -240,7 +243,7 @@ nullTransfer ni i edges = do
 
     _ -> return ni'
 
--- At each Phi function, we can say that the Phi value is not null if
+-- | At each Phi function, we can say that the Phi value is not null if
 -- all of its incoming values are not null on their respective
 -- branches.
 --
@@ -252,9 +255,13 @@ nullTransfer ni i edges = do
 -- definitely not null and to remove them from the null info (and mark
 -- the rest as possibly null).
 --
--- FIXME: Maybe only consider phi incoming values that are arguments.
--- Other values don't really matter since they aren't provided by the
--- caller.
+-- A phi node is considered to be not-null if all of its incoming
+-- values that are Arguments are not-null on their respective
+-- branches.  The rationale for this is that only Arguments are really
+-- under the control of the caller; if the function checks the
+-- argument against null and replaces null arguments with some other
+-- value of its own, that means that it has some (intended) non-fatal
+-- alternative behavior for null arguments.
 nullPhiTransfer :: [Instruction] -> [(BasicBlock, NullInfo, CFGEdge)]
                    -> AnalysisMonad NullInfo
 nullPhiTransfer phis incomingEdges = do
@@ -264,25 +271,32 @@ nullPhiTransfer phis incomingEdges = do
   where
     ni = meets $ map (\(_, i, _) -> i) incomingEdges
     phiIsNotNull es PhiNode { phiIncomingValues = pvs } =
-      all (notNullOnIncoming es) pvs
+      all (argNotNullOnIncoming es) pvs
     phiIsNotNull _ i = $err' ("Non-phi instruction: " ++ show i)
 
 lookup3 :: (Eq a) => a -> [(a, b, c)] -> Maybe (a, b, c)
 lookup3 k = find (\(k', _, _) -> k == k')
 
-notNullOnIncoming :: [(BasicBlock, NullInfo, CFGEdge)]
-                     -> (Value, Value)
-                     -> Bool
-notNullOnIncoming predOuts (v, bbv) =
-  case valueContent bbv of
-    BasicBlockC bb ->
-      case bb `lookup3` predOuts of
-        Nothing -> $err' ("No predecessor value for " ++ show bbv)
-        Just (_, ni, e) ->
-          let ni' = removeNonNullPointers ni [e]
-              isNull = v `S.member` mayBeNull ni'
-          in not isNull
-    _ -> $err' ("Not a basic block: " ++ show bbv)
+argNotNullOnIncoming :: [(BasicBlock, NullInfo, CFGEdge)]
+                        -> (Value, Value)
+                        -> Bool
+argNotNullOnIncoming predOuts (v, bbv) =
+  case valueContent' v of
+    ArgumentC _ ->
+      case valueContent bbv of
+        BasicBlockC bb ->
+          case bb `lookup3` predOuts of
+            Nothing -> $err' ("No predecessor value for " ++ show bbv)
+            Just (_, ni, e) ->
+              let ni' = removeNonNullPointers ni [e]
+                  isNull = v `S.member` mayBeNull ni'
+              in not isNull
+        _ -> $err' ("Not a basic block: " ++ show bbv)
+    -- If it isn't an argument, don't count it against the phi node.
+    -- Only arguments are provided by the caller.  If the value is not
+    -- provided by the caller, assume that the library is doing
+    -- something reasonable and safe internally.
+    _ -> True
 
 -- | Clobber the value of @ptr@ (mark it as possibly NULL due to
 -- assignment).

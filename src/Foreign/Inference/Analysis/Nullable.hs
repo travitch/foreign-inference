@@ -98,7 +98,7 @@ summarizeNullArgument a (NS s) = case a `S.member` nonNullableArgs of
   True -> [PANotNull]
   where
     f = argumentFunction a
-    errMsg = error ("Function not in summary: " ++ show (functionName f))
+    errMsg = $err' ("Function not in summary: " ++ show (functionName f))
     nonNullableArgs = M.findWithDefault errMsg f s
 
 
@@ -513,7 +513,7 @@ definedFunctionTransfer :: SummaryType -> Function
 definedFunctionTransfer summ f ni args =
   return $! foldl' markArgNotNullable ni indexedNotNullArgs
   where
-    errMsg = error ("No Function summary for " ++ show (functionName f))
+    errMsg = $err' ("No Function summary for " ++ show (functionName f))
     formals = functionParameters f
     notNullableArgs = M.findWithDefault errMsg f summ
     isNotNullable (a, _) = S.member a notNullableArgs

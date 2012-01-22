@@ -15,10 +15,10 @@ module Foreign.Inference.Report (
   writeHTMLReport
   ) where
 
+import Data.ByteString.Char8 ( ByteString )
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.Map as M
-import Data.Text ( Text )
 import System.Directory ( copyFile, createDirectoryIfMissing )
 import System.FilePath
 import Text.Blaze.Renderer.Utf8 ( renderHtml )
@@ -71,7 +71,7 @@ installStaticFile dir name = do
 
 writeFunctionBodyPage :: InterfaceReport
                          -> FilePath
-                         -> (Function, (FilePath, Int, Text))
+                         -> (Function, (FilePath, Int, ByteString))
                          -> IO ()
 writeFunctionBodyPage r dir (f, (srcFile, startLine, body)) = do
   let funcName = BS8.unpack (identifierContent (functionName f))

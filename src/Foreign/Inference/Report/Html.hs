@@ -6,6 +6,7 @@ module Foreign.Inference.Report.Html (
   ) where
 
 import Control.Monad ( forM_, when )
+import Data.ByteString.Char8 ( ByteString, unpack )
 import Data.List ( partition )
 import qualified Data.Map as M
 import Data.Monoid
@@ -32,7 +33,7 @@ import Foreign.Inference.Report.Types
 --
 -- FIXME: It would also be awesome to include call graph information
 -- (as in doxygen)
-htmlFunctionPage :: InterfaceReport -> Function -> FilePath -> Int -> Text -> Html
+htmlFunctionPage :: InterfaceReport -> Function -> FilePath -> Int -> ByteString -> Html
 htmlFunctionPage r f srcFile startLine functionText = H.docTypeHtml $ do
   H.head $ do
     H.title (toHtml pageTitle)
@@ -45,7 +46,7 @@ htmlFunctionPage r f srcFile startLine functionText = H.docTypeHtml $ do
     H.div $ do
       H.ul $ forM_ (functionParameters f) (drilldownArgumentEntry r)
     let lang : _ = K.languagesByFilename srcFile
-        highlightedSrc = K.highlightAs lang (T.unpack functionText)
+        highlightedSrc = K.highlightAs lang (unpack functionText)
         fmtOpts = defaultFormatOpts { numberLines = True
                                     , startNumber = startLine
                                     , lineAnchors = True

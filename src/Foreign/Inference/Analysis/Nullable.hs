@@ -251,6 +251,10 @@ nullTransfer ni i edges = do
 -- to one variable.  Our job here is to decide which phi variables are
 -- definitely not null and to remove them from the null info (and mark
 -- the rest as possibly null).
+--
+-- FIXME: Maybe only consider phi incoming values that are arguments.
+-- Other values don't really matter since they aren't provided by the
+-- caller.
 nullPhiTransfer :: [Instruction] -> [(BasicBlock, NullInfo, CFGEdge)]
                    -> AnalysisMonad NullInfo
 nullPhiTransfer phis incomingEdges = do
@@ -465,7 +469,8 @@ callTransfer :: NullInfo
 callTransfer ni calledFunc args = do
   cg <- asks callGraph
   let callTargets = callValueTargets cg calledFunc
-  ni' <- foldM callTransferDispatch ni callTargets
+  ni' <- foldM callTransferDispatch ni callTargets -- `debug'`
+         -- printf "Call (%s) targets: %s\n" (show (valueName calledFunc)) (show (map valueName callTargets))
   -- We also learn information about pointers that are not null if
   -- this is a call through a function pointer (calling a NULL
   -- function pointer is illegal)

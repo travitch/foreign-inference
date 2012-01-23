@@ -1724,6 +1724,36 @@
               }
           ]
         },
+        { "foreignFunctionName": "utime",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAString":[]}, {"PAArray":1}, {"PAConst":[]}],
+                "parameterName": "path",
+                "parameterType": {"CPointer": {"CInt":8}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "times",
+                "parameterType": {"CPointer": {"CStruct": ["utimebuf", []]}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "utimes",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAString":[]}, {"PAArray":1}, {"PAConst":[]}],
+                "parameterName": "path",
+                "parameterType": {"CPointer": {"CInt":8}}
+              },
+              { "parameterAnnotations": [{"PAArray": 1}],
+                "parameterName": "times",
+                "parameterType": {"CPointer": {"CStruct": ["timeval", []]}}
+              }
+          ]
+        },
         { "foreignFunctionName": "chmod",
           "foreignFunctionAnnotations": [],
           "foreignFunctionLinkage": { "LinkDefault": [] },
@@ -2175,6 +2205,25 @@
               }
           ]
         },
+        { "foreignFunctionName": "open64",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAString":[]}, {"PAArray":1}, {"PAConst":[]}],
+                "parameterName": "pathname",
+                "parameterType": {"CPointer": {"CInt":8}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "flags",
+                "parameterType": {"CInt": 32}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "mode",
+                "parameterType": {"CStruct": ["mode_t", []]}
+              }
+          ]
+        },
         { "foreignFunctionName": "creat",
           "foreignFunctionAnnotations": [],
           "foreignFunctionLinkage": { "LinkDefault": [] },
@@ -2190,7 +2239,55 @@
               }
           ]
         },
+        { "foreignFunctionName": "access",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAString":[]}, {"PAArray":1}, {"PAConst":[]}],
+                "parameterName": "pathname",
+                "parameterType": {"CPointer": {"CInt":8}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "mode",
+                "parameterType": {"CInt": 32}
+              }
+          ]
+        },
+        { "foreignFunctionName": "unlink",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAString":[]}, {"PAArray":1}, {"PAConst":[]}],
+                "parameterName": "pathname",
+                "parameterType": {"CPointer": {"CInt":8}}
+              }
+          ]
+        },
         { "foreignFunctionName": "close",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "fd",
+                "parameterType": {"CInt":32}
+              }
+          ]
+        },
+        { "foreignFunctionName": "fsync",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "fd",
+                "parameterType": {"CInt":32}
+              }
+          ]
+        },
+        { "foreignFunctionName": "fdatasync",
           "foreignFunctionAnnotations": [],
           "foreignFunctionLinkage": { "LinkDefault": [] },
           "foreignFunctionReturnType": {"CInt": 32},
@@ -2296,6 +2393,17 @@
               { "parameterAnnotations": [],
                 "parameterName": "c",
                 "parameterType": {"CInt":32}
+              }
+          ]
+        },
+        { "foreignFunctionName": "sleep",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CUInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "seconds",
+                "parameterType": {"CUInt": 32}
               }
           ]
         }

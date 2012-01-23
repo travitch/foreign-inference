@@ -199,11 +199,13 @@ collectArrayArgsForCallee ds summ ix arg lst callee =
   case valueContent' callee of
     FunctionC f ->
       let funcArgs = functionParameters f
-      in case length funcArgs > ix of
-        True -> case M.lookup (funcArgs !! ix) summ of
+      in case (ix < length funcArgs, functionIsVararg f) of
+        (True, _) -> case M.lookup (funcArgs !! ix) summ of
           Nothing -> lst
           Just depth -> (arg, CallArgument depth) : lst
-        False -> $(err "ArrayAnalysis: argument index out of range")
+        -- Args passed as varargs don't give us any information (in general)
+        (False, True) -> []
+        (False, False) -> $err' ("ArrayAnalysis: argument index out of range: " ++ show (functionName f) ++ " : " ++ show arg)
     -- Look up the ixth argument of the callee in the
     -- DependencySummary and record it if it is tagged with a PAArray
     -- annotation

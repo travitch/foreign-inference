@@ -28,6 +28,9 @@ import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
 import Foreign.Inference.Internal.FlattenValue
 
+-- import Debug.Trace
+-- debug' = flip trace
+
 -- | The real type of the summary (without the wrapper that is exposed
 -- to clients).
 type SummaryType = Map Argument Int
@@ -184,11 +187,17 @@ buildArrayDeref inst idxs base =
 
 -- | If the argument is an array (according to either the module
 -- summary or the dependency summary), make a CallArgument tag for it.
+-- Only bother inspecting direct calls.  Information gained from
+-- indirect calls is unreliable since we don't have all possible
+-- callees, even with a very powerful points-to analysis.
 collectArrayArgs :: CallGraph -> DependencySummary -> SummaryType
                     -> Value -> [(Value, PointerUse)] -> (Int, Value)
                     -> [(Value, PointerUse)]
 collectArrayArgs cg ds summ f lst (ix, arg) =
-  foldl' (collectArrayArgsForCallee ds summ ix arg) lst callTargets
+  case callTargets of
+    [ct] -> collectArrayArgsForCallee ds summ ix arg lst ct
+    _ -> []
+  -- foldl' (collectArrayArgsForCallee ds summ ix arg) lst callTargets
   where
     callTargets = callValueTargets cg f
 
@@ -216,7 +225,7 @@ collectArrayArgsForCallee ds summ ix arg lst callee =
           [] -> lst
           [PAArray depth] -> (arg, CallArgument depth) : lst
           _ -> $(err "This summary should only produce singleton or empty lists")
-    _ -> $(err "Unexpected value; indirect calls should already be resolved")
+    _ -> $err' $ "Unexpected value; indirect calls should already be resolved: " ++ show callee
 
 isArrayAnnot :: ParamAnnotation -> Bool
 isArrayAnnot (PAArray _) = True

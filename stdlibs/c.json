@@ -584,6 +584,17 @@
               }
           ]
         },
+        { "foreignFunctionName": "ftell",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "stream",
+                "parameterType": {"CPointer": {"CStruct": ["FILE", []]}}
+              }
+          ]
+        },
         { "foreignFunctionName": "fputs",
           "foreignFunctionAnnotations": [],
           "foreignFunctionLinkage": { "LinkDefault": [] },
@@ -1605,6 +1616,36 @@
               { "parameterAnnotations": [],
                 "parameterName": "timer",
                 "parameterType": {"CPointer": {"CStruct": ["time_t", []]}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "gettimeofday",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "tv",
+                "parameterType": {"CPointer": {"CStruct": ["timeval", []]}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "tz",
+                "parameterType": {"CPointer": {"CStruct": ["timezone", []]}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "settimeofday",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAConst":[]}],
+                "parameterName": "tv",
+                "parameterType": {"CPointer": {"CStruct": ["timeval", []]}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "tz",
+                "parameterType": {"CPointer": {"CStruct": ["timezone", []]}}
               }
           ]
         },

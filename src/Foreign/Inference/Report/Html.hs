@@ -45,6 +45,9 @@ htmlFunctionPage r f srcFile startLine functionText = H.docTypeHtml $ do
     "Breakdown of " >> toHtml funcName >> " defined in " >> toHtml srcFile
     H.div $ do
       H.ul $ forM_ (functionParameters f) (drilldownArgumentEntry r)
+
+    toHtml funcName >> "(" >> commaSepList args (indexPageArgument r) >> ") -> "
+    H.span ! A.class_ "code-type" $ toHtml (show fretType)
     let lang : _ = K.languagesByFilename srcFile
         highlightedSrc = K.highlightAs lang (unpack functionText)
         fmtOpts = defaultFormatOpts { numberLines = True
@@ -56,9 +59,13 @@ htmlFunctionPage r f srcFile startLine functionText = H.docTypeHtml $ do
 
   where
     funcName = decodeUtf8 (identifierContent (functionName f))
-    pageTitle = "Breakdown of " `mappend` funcName
+    pageTitle = funcName `mappend` " [function breakdown]"
     allInstructions = concatMap basicBlockInstructions (functionBody f)
     calledFunctions = foldr extractCalledFunctionNames [] allInstructions
+    args = functionParameters f
+    fretType = case functionType f of
+      TypeFunction rt _ _ -> rt
+      rtype -> rtype
 
 extractCalledFunctionNames :: Instruction -> [Text] -> [Text]
 extractCalledFunctionNames i acc =
@@ -115,7 +122,7 @@ htmlIndexPage r = H.docTypeHtml $ do
     indexPageFunctionListing r "private-functions" privates
   where
     pageTitle :: Text
-    pageTitle = "Summary report for " `mappend` decodeUtf8 (moduleIdentifier m)
+    pageTitle = decodeUtf8 (moduleIdentifier m) `mappend` " summary report"
     m = reportModule r
     (externs, privates) =
       partition isExtern (moduleDefinedFunctions m)
@@ -161,9 +168,7 @@ indexPageFunctionEntry r f = do
 indexPageArgument :: InterfaceReport -> Argument -> Html
 indexPageArgument r arg = do
   H.span ! A.class_ "code-type" $ do
-    toHtml paramType
-  " "
-  toHtml paramName
+    toHtml paramType >> " " >> toHtml paramName
   indexArgumentAnnotations annots
   where
     paramType = show (argumentType arg)

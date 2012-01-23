@@ -33,16 +33,15 @@ ignoreLine = do
 
 -- | Extract the definition of the named function, which starts at
 -- approximately the given line.
-isolator :: BSC.ByteString -- ^ Function name
-            -> Int -- ^ Approximate starting line number
+isolator :: Int -- ^ Approximate starting line number
             -> Parser ByteString
-isolator fident line = do
+isolator line = do
   -- Skip many lines up to near the start of the function
-  _ <- P.count line' ignoreLine
+  _ <- P.count (line - 1) ignoreLine
 
   -- We want the prefix of the function up until we see the opening
   -- curly brace.
-  pfx <- P.takeWhile (/= (ascii '{'))
+  _ <- P.takeWhile (/= (ascii '{'))
 
   -- Now just match curly braces in a standard context-free way.
   -- FIXME: Ignore string literals, char literals, and comments
@@ -50,14 +49,7 @@ isolator fident line = do
   -- Ignore the rest
   _ <- P.takeLazyByteString
 
-  let bldr = mconcat [ fromByteString fident
-                     , fromByteString pfx
-                     , body
-                     ]
-
-  return (toLazyByteString bldr)
-  where
-    line' = max 0 (line - 4)
+  return (toLazyByteString body)
 
 matchedBraces :: Parser Builder
 matchedBraces = do
@@ -106,8 +98,7 @@ getFunctionText a func = do
       absSrcFile = BSC.unpack d </> BSC.unpack f
 
   bs <- entryContentSuffix a absSrcFile
-  let fident = identifierContent $ functionName func
-      functionText = P.parse (isolator fident (fromIntegral line)) bs
+  let functionText = P.parse (isolator (fromIntegral line)) bs
 
       mkTuple txt = Just (absSrcFile, fromIntegral line, txt)
 

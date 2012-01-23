@@ -6,7 +6,7 @@ module Foreign.Inference.Report.Html (
   ) where
 
 import Control.Monad ( forM_, when )
-import Data.ByteString.Char8 ( ByteString, unpack )
+import Data.ByteString.Lazy.Char8 ( ByteString, unpack )
 import Data.List ( partition )
 import qualified Data.Map as M
 import Data.Monoid

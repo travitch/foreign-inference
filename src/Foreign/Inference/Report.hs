@@ -15,7 +15,7 @@ module Foreign.Inference.Report (
   writeHTMLReport
   ) where
 
-import Data.ByteString.Char8 ( ByteString )
+import Data.ByteString.Lazy.Char8 ( ByteString )
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.Map as M

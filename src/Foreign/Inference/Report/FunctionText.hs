@@ -1,56 +1,91 @@
 {-# LANGUAGE OverloadedStrings #-}
+-- | This module contains a function to extract the definition of a
+-- function from its source file.  The source file is determined based
+-- on the Module metadata.
+--
+-- It uses efficient attoparsec parsers and blaze-builder to try to
+-- save time and memory.
 module Foreign.Inference.Report.FunctionText (
   getFunctionText
   ) where
 
+import Blaze.ByteString.Builder
 import Control.Applicative ( many )
-import Data.Attoparsec.ByteString.Char8 ( Parser )
-import qualified Data.Attoparsec.ByteString.Char8 as P
-import Data.ByteString.Char8 ( ByteString )
+import Data.Attoparsec.ByteString.Lazy ( Parser )
+import qualified Data.Attoparsec.ByteString.Lazy as P
+import Data.ByteString.Lazy.Char8 ( ByteString )
 import qualified Data.ByteString.Char8 as BSC
-import qualified Data.ByteString.Lazy.Char8 as LBSC
+import Data.Ascii ( ascii )
+import Data.Monoid
 import System.FilePath
 
 import Codec.Archive
 import Data.LLVM
 
-toStrict :: LBSC.ByteString -> ByteString
-toStrict = BSC.concat . LBSC.toChunks
+isEndOfLine :: (Eq a, Num a) => a -> Bool
+isEndOfLine w = w == 13 || w == 10
 
-isolator :: Parser ByteString
-isolator = do
+ignoreLine :: Parser ()
+ignoreLine = do
+  P.skipWhile (not . isEndOfLine)
+  _ <- P.satisfy isEndOfLine
+  return ()
+
+-- | Extract the definition of the named function, which starts at
+-- approximately the given line.
+isolator :: BSC.ByteString -- ^ Function name
+            -> Int -- ^ Approximate starting line number
+            -> Parser ByteString
+isolator fident line = do
+  -- Skip many lines up to near the start of the function
+  _ <- P.count line' ignoreLine
+
   -- We want the prefix of the function up until we see the opening
   -- curly brace.
-  pfx <- P.takeWhile (/= '{')
+  pfx <- P.takeWhile (/= (ascii '{'))
 
   -- Now just match curly braces in a standard context-free way.
   -- FIXME: Ignore string literals, char literals, and comments
   body <- matchedBraces
   -- Ignore the rest
   _ <- P.takeLazyByteString
-  return (pfx `BSC.append` body)
 
-matchedBraces :: Parser ByteString
+  let bldr = mconcat [ fromByteString fident
+                     , fromByteString pfx
+                     , body
+                     ]
+
+  return (toLazyByteString bldr)
+  where
+    line' = max 0 (line - 4)
+
+matchedBraces :: Parser Builder
 matchedBraces = do
-  _ <- P.char '{'
+  _ <- P.word8 (ascii '{')
   content <- many contentAndSubBody
-  _ <- P.char '}'
-  return $ BSC.concat ["{", BSC.concat content, "}"]
+  _ <- P.word8 (ascii '}')
+  return $ mconcat [ fromByteString "{"
+                   , mconcat content
+                   , fromByteString "}"
+                   ]
 
-contentAndSubBody :: Parser ByteString
+contentAndSubBody :: Parser Builder
 contentAndSubBody = do
-  pfx <- P.takeWhile (\c -> c /= '{' && c /= '}')
+  pfx <- P.takeWhile (\c -> c /= (ascii '{') && c /= (ascii '}'))
   P.choice [ nest pfx, blockEnd pfx ]
   where
-    blockEnd :: ByteString -> Parser ByteString
+    blockEnd :: BSC.ByteString -> Parser Builder
     blockEnd pfx = do
       case BSC.null pfx of
         True -> fail "fail"
-        False -> return pfx
+        False -> return (fromByteString pfx)
     nest pfx = do
       body <- matchedBraces
       rest <- contentAndSubBody
-      return $ BSC.concat [ pfx, body, rest ]
+      return $ mconcat [ fromByteString pfx
+                       , body
+                       , rest
+                       ]
 
 -- | Make a best effort to find the implementation of the given
 -- Function in its associated source archive.  The lookup is based on
@@ -71,37 +106,9 @@ getFunctionText a func = do
       absSrcFile = BSC.unpack d </> BSC.unpack f
 
   bs <- entryContentSuffix a absSrcFile
-  let bs' = toStrict bs
-      fident = identifierContent $ functionName func
+  let fident = identifierContent $ functionName func
+      functionText = P.parse (isolator fident (fromIntegral line)) bs
 
-      -- f starts on line number @line@.  We need to seek to that line
-      -- and then search *backwards* for the function name (so we can
-      -- get the arguments, too).
-      (beforeCodeStart, codeStart) = splitAt (fromIntegral line) $ BSC.lines bs'
-      (interestingCode, _) =
-        foldr (findFuncName fident) (codeStart, True) beforeCodeStart
-
-      -- f starts on line number line, so drop all of the lines up to
-      -- there.  Then recombine the rest into a single Text that we
-      -- can "parse".
-      fileChunk = BSC.unlines interestingCode
-      functionText = P.parseOnly isolator fileChunk
       mkTuple txt = Just (absSrcFile, fromIntegral line, txt)
-  either (const Nothing) mkTuple functionText
-  -- Now match curly braces and only keep what we accumulate until it
-  -- drops back to zero.
 
--- Search backwards for the function name from the opening curly brace
--- using foldr.  Stop searching (and collecting chunks) when we find
--- the line with the function name in it.
---
--- This function may miss the return type, but that isn't a huge deal.
-findFuncName :: ByteString
-                -> ByteString
-                -> ([ByteString], Bool)
-                -> ([ByteString], Bool)
-findFuncName _ _ a@(_, False) = a
-findFuncName fname line (acc, True) =
-  case fname `BSC.isInfixOf` line of
-    False -> (line : acc, True)
-    True -> (line : acc, False)
+  maybe Nothing mkTuple (P.maybeResult functionText)

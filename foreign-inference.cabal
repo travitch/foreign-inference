@@ -38,8 +38,8 @@ library
                  aeson >= 0.4.0.0, file-location, temporary, process,
                  llvm-analysis, deepseq, lattices,
                  -- For the reporting code
-                 archive-inspection, directory, attoparsec >= 0.10 && < 1.0,
-                 blaze-html >= 0.4, highlighting-kate >= 0.4
+                 archive-inspection, directory, attoparsec >= 0.10 && < 1.0, ascii,
+                 blaze-html >= 0.4, highlighting-kate >= 0.4, blaze-builder >= 0.3
   ghc-options: -Wall -funbox-strict-fields
   ghc-prof-options: -auto-all
 

@@ -3,7 +3,7 @@ module Foreign.Inference.Report.Types (
   InterfaceReport(..)
   ) where
 
-import Data.ByteString.Char8 ( ByteString )
+import Data.ByteString.Lazy.Char8 ( ByteString )
 import Data.Map ( Map )
 import Codec.Archive
 import Data.LLVM

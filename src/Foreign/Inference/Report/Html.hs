@@ -168,8 +168,8 @@ indexPageFunctionEntry r f = do
 indexPageArgument :: InterfaceReport -> Argument -> Html
 indexPageArgument r arg = do
   H.span ! A.class_ "code-type" $ do
-    toHtml paramType >> " " >> toHtml paramName
-  indexArgumentAnnotations annots
+    toHtml paramType
+  " " >> toHtml paramName >> " " >> indexArgumentAnnotations annots
   where
     paramType = show (argumentType arg)
     paramName = decodeUtf8 (identifierContent (argumentName arg))

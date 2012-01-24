@@ -55,6 +55,10 @@
 --
 -- > extern int h(int * p);
 -- >
+-- > void e(int *p) {
+-- >   if(p) *p = 0;
+-- > }
+-- >
 -- > void f(int * p) {
 -- >   int cond = 0;
 -- >   if(h(p))
@@ -74,11 +78,11 @@
 -- > }
 --
 -- Without interprocedural analysis and expensive theorem prover
--- calls, we cannot track these side conditions (in the example, based
--- on the @cond@ flag).  At the end of the day, we cannot reason about
--- pointer @p@ in *any* branch whose condition is control- or
--- data-dependent on @p@ (unless the condition is exactly p==NULL or
--- p!=NULL).  Call this property indirect dependence.
+-- calls, we cannot track these side conditions (in the example @f@
+-- and @g@, based on the @cond@ flag).  At the end of the day, we
+-- cannot reason about pointer @p@ in *any* branch whose condition is
+-- control- or data-dependent on @p@ (unless the condition is exactly
+-- p==NULL or p!=NULL).  Call this property indirect dependence.
 --
 -- To implement this, augment the condition inspection code.  If the
 -- condition is indirectly dependent on @p@, then generate a token
@@ -89,6 +93,10 @@
 -- Tokens cancel each other out on control flow joins iff there is at
 -- least one negative and at least one positive token and their ID and
 -- variable match.
+--
+-- Alternate formulation: do not reason about @p@ when a read/write to
+-- @p@ is control dependent on @p@ while not guarded by a @p!=NULL@ or
+-- @p==NULL@ check.
 module Foreign.Inference.Analysis.Nullable (
   -- * Interface
   NullableSummary,

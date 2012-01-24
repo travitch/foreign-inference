@@ -17,6 +17,7 @@ import System.IO.Temp
 import System.Process
 
 import Data.LLVM
+import Data.LLVM.Environment
 
 -- | These are the options that the analysis relies on to work.  It
 -- invokes opt with these options to preprocess input bitcode.
@@ -43,7 +44,8 @@ readBitcode :: (FilePath -> IO (Either String Module))
                -> FilePath -> IO (Either String Module)
 readBitcode parseFile fp =
   withSystemTempFile ("opt_" ++ takeFileName fp) $ \optFname _ -> do
-    let optCmd = proc "opt" ("-o" : optFname : fp : requiredOptimizations)
+    opt <- findOpt
+    let optCmd = proc opt ("-o" : optFname : fp : requiredOptimizations)
     (_, _, _, p) <- createProcess optCmd
     rc <- waitForProcess p
     when (rc /= ExitSuccess) ($err' ("Could not optimize bitcode: " ++ fp))

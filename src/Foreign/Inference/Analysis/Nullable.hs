@@ -10,11 +10,16 @@
 -- 1) How strict should this be? Must a non-nullable pointer be
 --    referenced unchecked on *every* path, or does one suffice?
 --
+--    Just one is fine
+--
 -- 2) How conservative should we be with regard to aliasing? Should a
 --    may-alias unchecked dereference make the parameter non-nullable?
 --    In theory letting may-alias relationships influence us could lead
 --    to false positives that make some functions uncallable.  Is this a
 --    problem in practice?
+--
+--    May alias is not sufficient - but SSA gives us a lot of
+--    flow-sensitive precision.
 --
 -- 3) Should we be tracking stores of arguments through globals?
 --    Technically they could change out from under us in some
@@ -42,6 +47,48 @@
 --
 -- Often, this is error handling code.  Not always, though.  Tying in
 -- the error handling code analysis will resolve these cases.
+--
+--
+-- # Complex Dependence Analysis #
+--
+-- Consider the following code:
+--
+-- > extern int h(int * p);
+-- >
+-- > void f(int * p) {
+-- >   int cond = 0;
+-- >   if(h(p))
+-- >     cond = 1;
+-- >
+-- >   if(!cond)
+-- >     *p = 0;
+-- > }
+-- >
+-- > void g(int * p) {
+-- >   int cond = 0;
+-- >   if(p)
+-- >     cond = 1;
+-- >
+-- >   if(cond)
+-- >     *p = 0;
+-- > }
+--
+-- Without interprocedural analysis and expensive theorem prover
+-- calls, we cannot track these side conditions (in the example, based
+-- on the @cond@ flag).  At the end of the day, we cannot reason about
+-- pointer @p@ in *any* branch whose condition is control- or
+-- data-dependent on @p@ (unless the condition is exactly p==NULL or
+-- p!=NULL).  Call this property indirect dependence.
+--
+-- To implement this, augment the condition inspection code.  If the
+-- condition is indirectly dependent on @p@, then generate a token
+-- with the same ID as the cmp instruction driving the branch.  The
+-- false branch gets a negative token and the true branch gets a
+-- positive token.  Each token also gets a reference to @p@.  If a
+-- token for @p@ is active on a branch, do not reason about @p@.
+-- Tokens cancel each other out on control flow joins iff there is at
+-- least one negative and at least one positive token and their ID and
+-- variable match.
 module Foreign.Inference.Analysis.Nullable (
   -- * Interface
   NullableSummary,

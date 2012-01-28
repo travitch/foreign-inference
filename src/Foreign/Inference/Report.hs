@@ -15,6 +15,9 @@ module Foreign.Inference.Report (
   writeHTMLReport
   ) where
 
+import GHC.Conc ( getNumCapabilities )
+
+import Control.Concurrent.ParallelIO.Local
 import Data.ByteString.Lazy.Char8 ( ByteString )
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Lazy as LBS
@@ -50,8 +53,15 @@ writeHTMLReport r dir = do
 
   -- Write out an index page
   LBS.writeFile indexFile (renderHtml indexPage)
-  -- Write out the individual function listings
-  mapM_ (writeFunctionBodyPage r dir) $ M.toList (reportFunctionBodies r)
+
+  -- Write out the individual function listings.  Since highlighting
+  -- each function is completely independent we run them in parallel
+  -- with as many processors as are available.
+  caps <- getNumCapabilities
+  let bodyPairs = M.toList (reportFunctionBodies r)
+      actions = map (writeFunctionBodyPage r dir) bodyPairs
+  withPool caps $ \p -> parallel_ p actions
+
   -- Copy over static resources (like css and js)
   mapM_ (installStaticFile dir) [ "style.css"
                                 , "hk-espresso.css"

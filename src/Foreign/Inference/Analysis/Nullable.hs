@@ -117,8 +117,8 @@ import qualified Data.Set as S
 import FileLocation
 
 import Data.LLVM
-import Data.LLVM.CallGraph
-import Data.LLVM.CFG
+import Data.LLVM.Analysis.CallGraph
+import Data.LLVM.Analysis.CFG
 import Data.LLVM.Analysis.CallGraphSCCTraversal
 import Data.LLVM.Analysis.Dataflow
 

@@ -13,7 +13,7 @@ import System.IO.Error ( isDoesNotExistError )
 import Codec.Archive
 
 import Data.LLVM
-import Data.LLVM.CallGraph
+import Data.LLVM.Analysis.CallGraph
 import Data.LLVM.Analysis.PointsTo.TrivialFunction
 import Data.LLVM.Parse
 

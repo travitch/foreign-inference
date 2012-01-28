@@ -21,7 +21,7 @@ import qualified Data.Map as M
 import FileLocation
 
 import Data.LLVM
-import Data.LLVM.CallGraph
+import Data.LLVM.Analysis.CallGraph
 import Data.LLVM.Analysis.CallGraphSCCTraversal
 
 import Foreign.Inference.Diagnostics

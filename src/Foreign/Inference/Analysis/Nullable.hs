@@ -114,6 +114,8 @@ import qualified Data.Map as M
 import Data.Maybe ( mapMaybe )
 import Data.Set ( Set )
 import qualified Data.Set as S
+import Data.HashSet ( HashSet )
+import qualified Data.HashSet as HS
 import FileLocation
 
 import Data.LLVM
@@ -122,6 +124,7 @@ import Data.LLVM.Analysis.CDG
 import Data.LLVM.Analysis.CFG
 import Data.LLVM.Analysis.CallGraphSCCTraversal
 import Data.LLVM.Analysis.Dataflow
+import Data.TransitiveClosure
 
 import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
@@ -252,10 +255,10 @@ nullTransfer ni i edges = do
 
   case i of
     CallInst { callFunction = calledFunc, callArguments = args } -> do
-      ni'' <- callTransfer ni' (stripBitcasts calledFunc) (map fst args)
+      ni'' <- callTransfer ni' i (stripBitcasts calledFunc) (map fst args)
       return $! recordPossiblyNull (Value i) ni''
     InvokeInst { invokeFunction = calledFunc, invokeArguments = args } -> do
-      ni'' <- callTransfer ni' (stripBitcasts calledFunc) (map fst args)
+      ni'' <- callTransfer ni' i (stripBitcasts calledFunc) (map fst args)
       return $! recordPossiblyNull (Value i) ni''
 
     -- Stack allocated pointers start off as NULL
@@ -277,21 +280,21 @@ nullTransfer ni i edges = do
     -- Attempt at handling loads and stores more simply and uniformly.
 
     LoadInst { loadAddress = ptr } -> do
-      ni'' <- recordIfMayBeNull ni' ptr
+      ni'' <- recordIfMayBeNull ni' i ptr
       case isPointer i of
         False -> return ni''
         -- The pointer that is returned is always considered to be
         -- possibly null
         True -> return $! recordPossiblyNull (Value i) ni''
-    StoreInst { storeAddress = ptr } -> recordIfMayBeNull ni' ptr
+    StoreInst { storeAddress = ptr } -> recordIfMayBeNull ni' i ptr
 
     AtomicRMWInst { atomicRMWPointer = ptr } -> do
-      ni'' <- recordIfMayBeNull ni' ptr
+      ni'' <- recordIfMayBeNull ni' i ptr
       return $! recordPossiblyNull (Value i) ni''
 
     AtomicCmpXchgInst { atomicCmpXchgPointer = ptr
                       , atomicCmpXchgNewValue = newVal } -> do
-      ni'' <- recordIfMayBeNull ni' ptr
+      ni'' <- recordIfMayBeNull ni' i ptr
       case isPointer newVal of
         False -> return ni''
         True -> return $! maybeClobber ni'' ptr newVal
@@ -366,14 +369,168 @@ maybeClobber ni ptr _ {-newVal-} = recordPossiblyNull ptr ni
 -- >
 -- > if(flag) *p = 6;
 --
--- At the *p=6 instruction,
-canReasonAboutValue :: Value -> AnalysisMonad Bool
-canReasonAboutValue v = do
+-- At the @*p=6@ instruction, we don't actually know if p is NULL or
+-- not, so we can't reason about it.  The condition we have to check
+-- is that none of the control dependencies of @i@ can be program
+-- dependent on @v@.  In the example, if(flag) is the control
+-- depenency of @*p=6@, and that is program dependent on p through
+-- flag.
+--
+-- One exception.  If @p==NULL@ or @p!=NULL@ is a control dependency
+-- of @i@, we *can* reason about @i@.
+canReasonAboutValue :: Instruction -> Value -> AnalysisMonad Bool
+canReasonAboutValue i v = do
   cdg <- asks controlDepGraph
-  return True
+  let cdeps = controlDependencies cdg i
+  case any (isDirectControlDep v) cdeps of
+    True -> return True
+    False -> return $! not (v `HS.member` allDependencies cdg cdeps)
 
-recordIfMayBeNull :: NullInfo -> Value -> AnalysisMonad NullInfo
-recordIfMayBeNull ni ptr =
+allDependencies :: CDG -> [Instruction] -> HashSet Value
+allDependencies cdg = markVisited (f cdg) . HS.fromList . map Value
+  where
+    f g v = case valueContent v of
+      InstructionC i ->
+        let cdeps = map Value $ controlDependencies g i
+            ddeps = instructionDataOperands i
+        in HS.fromList cdeps `HS.union` HS.fromList ddeps
+      _ -> HS.empty
+
+
+instructionDataOperands :: Instruction -> [Value]
+instructionDataOperands i =
+  case i of
+    RetInst { retInstValue = v } -> maybe [] ((:[])) v
+    UnconditionalBranchInst { } -> []
+    BranchInst { branchCondition = v } -> [ v ]
+    SwitchInst { switchValue = v } -> [v]
+    IndirectBranchInst { indirectBranchAddress = v } -> [v]
+    UnwindInst { } -> []
+    ResumeInst { resumeException = v } -> [v]
+    UnreachableInst { } -> []
+    ExtractElementInst { extractElementVector = v
+                       , extractElementIndex = ix
+                       } -> [ v, ix ]
+    InsertElementInst { insertElementVector = v
+                      , insertElementValue = val
+                      , insertElementIndex = ix
+                      } -> [ v, val, ix ]
+    ShuffleVectorInst { shuffleVectorV1 = v1
+                      , shuffleVectorV2 = v2
+                      , shuffleVectorMask = m
+                      } -> [ v1, v2, m ]
+    ExtractValueInst { extractValueAggregate = a } -> [a]
+    InsertValueInst { insertValueAggregate = a
+                    , insertValueValue = v
+                    } -> [ a, v ]
+    AllocaInst { allocaNumElements = n } -> [n]
+    LoadInst { loadAddress = a } -> [a]
+    StoreInst { storeValue = v
+              , storeAddress = a
+              } -> [ v, a ]
+    FenceInst { } -> []
+    AtomicCmpXchgInst { atomicCmpXchgPointer = p
+                      , atomicCmpXchgComparison = c
+                      , atomicCmpXchgNewValue = v
+                      } -> [ p, c, v ]
+    AtomicRMWInst { atomicRMWPointer = p
+                  , atomicRMWValue = v
+                  } -> [ p, v ]
+    AddInst { binaryLhs = l
+            , binaryRhs = r
+            } -> [ l, r ]
+    SubInst { binaryLhs = l
+            , binaryRhs = r
+            } -> [ l, r ]
+    MulInst { binaryLhs = l
+            , binaryRhs = r
+            } -> [ l, r ]
+    DivInst { binaryLhs = l
+            , binaryRhs = r
+            } -> [ l, r ]
+    RemInst { binaryLhs = l
+            , binaryRhs = r
+            } -> [ l, r ]
+    ShlInst { binaryLhs = l
+            , binaryRhs = r
+            } -> [ l, r ]
+    LshrInst { binaryLhs = l
+            , binaryRhs = r
+            } -> [ l, r ]
+    AshrInst { binaryLhs = l
+            , binaryRhs = r
+            } -> [ l, r ]
+    AndInst { binaryLhs = l
+            , binaryRhs = r
+            } -> [ l, r ]
+    OrInst { binaryLhs = l
+            , binaryRhs = r
+            } -> [ l, r ]
+    XorInst { binaryLhs = l
+            , binaryRhs = r
+            } -> [ l, r ]
+    TruncInst { castedValue = v } -> [v]
+    ZExtInst { castedValue = v } -> [v]
+    SExtInst { castedValue = v } -> [v]
+    FPTruncInst { castedValue = v } -> [v]
+    FPExtInst { castedValue = v } -> [v]
+    FPToSIInst { castedValue = v } -> [v]
+    FPToUIInst { castedValue = v } -> [v]
+    SIToFPInst { castedValue = v } -> [v]
+    UIToFPInst { castedValue = v } -> [v]
+    PtrToIntInst { castedValue = v } -> [v]
+    IntToPtrInst { castedValue = v } -> [v]
+    BitcastInst { castedValue = v } -> [v]
+    ICmpInst { cmpV1 = v1
+             , cmpV2 = v2
+             } -> [ v1, v2 ]
+    FCmpInst { cmpV1 = v1
+             , cmpV2 = v2
+             } -> [ v1, v2 ]
+    SelectInst { selectCondition = c
+               , selectTrueValue = tv
+               , selectFalseValue = fv
+               } -> [ c, tv, fv ]
+    CallInst { callFunction = f
+             , callArguments = args
+             } -> f : map fst args
+    GetElementPtrInst { getElementPtrValue = v
+                      , getElementPtrIndices = vs
+                      } -> v : vs
+    InvokeInst { invokeFunction = f
+               , invokeArguments = args
+               } -> f : map fst args
+    VaArgInst { vaArgValue = v } -> [v]
+    LandingPadInst { landingPadPersonality = p
+                   , landingPadClauses = cs
+                   } -> p : map fst cs
+    PhiNode { phiIncomingValues = vs } ->
+      let toBB v = case valueContent v of
+            BasicBlockC b -> b
+            _ -> $err' "Expected BasicBlock"
+          branches = map (Value . basicBlockTerminatorInstruction . toBB . snd) vs
+      in map fst vs ++ branches
+
+
+-- | Returns True if @v@ is compared directly against NULL in this
+-- conditional branch instruction.
+isDirectControlDep :: Value -> Instruction -> Bool
+isDirectControlDep v cdep =
+  case valueContent cdep of
+    InstructionC BranchInst { branchCondition = cnd } ->
+      case valueContent cnd of
+        InstructionC ICmpInst { cmpV1 = v1, cmpV2 = v2 } ->
+          (v1 == v && isConstNull v2) || (v2 == v && isConstNull v1)
+        _ -> False
+    _ -> False
+  where
+    isConstNull cv =
+      case valueContent cv of
+        ConstantC ConstantPointerNull {} -> True
+        _ -> False
+
+recordIfMayBeNull :: NullInfo -> Instruction -> Value -> AnalysisMonad NullInfo
+recordIfMayBeNull ni i ptr =
   -- If we don't get a base pointer, don't bother reasoning about this
   -- value.  Some values are always safe (allocas and globals are
   -- always valid pointers, even if the pointers they *contain* might
@@ -383,7 +540,7 @@ recordIfMayBeNull ni ptr =
     checkBase b = do
       -- We can't reason about a pointer in some complicated
       -- circumstances.  See canReasonAboutValue for details.
-      canReason <- canReasonAboutValue b
+      canReason <- canReasonAboutValue i b
       case b `S.member` mayBeNull ni && canReason of
         -- There was an explicit check to ensure that the pointer in
         -- this operation was not NULL, so we know for sure that it is
@@ -551,10 +708,11 @@ process' ni val isNull =
 -- summary values for called functions/params and records relevant
 -- information in the current dataflow fact.
 callTransfer :: NullInfo
+                -> Instruction
                 -> Value
                 -> [Value]
                 -> AnalysisMonad NullInfo
-callTransfer ni calledFunc args = do
+callTransfer ni i calledFunc args = do
   cg <- asks callGraph
   let callTargets = callValueTargets cg calledFunc
   ni' <- foldM callTransferDispatch ni callTargets -- `debug'`
@@ -564,15 +722,15 @@ callTransfer ni calledFunc args = do
   -- function pointer is illegal)
   case isIndirectCallee calledFunc of
     False -> return ni'
-    True -> recordIfMayBeNull ni' calledFunc
+    True -> recordIfMayBeNull ni' i calledFunc
   where
     callTransferDispatch info target = case valueContent' target of
       FunctionC f -> do
         summ <- asks moduleSummary
-        definedFunctionTransfer summ f info args
+        definedFunctionTransfer summ f i info args
       ExternalFunctionC e -> do
         summ <- asks dependencySummary
-        externalFunctionTransfer summ e info args
+        externalFunctionTransfer summ e i info args
       _ -> $(err "Unexpected value; indirect calls should be resolved")
 
 isIndirectCallee :: Value -> Bool
@@ -582,9 +740,9 @@ isIndirectCallee val =
     ExternalFunctionC _ -> False
     _ -> True
 
-definedFunctionTransfer :: SummaryType -> Function
+definedFunctionTransfer :: SummaryType -> Function -> Instruction
                            -> NullInfo -> [Value] -> AnalysisMonad NullInfo
-definedFunctionTransfer summ f ni args =
+definedFunctionTransfer summ f i ni args =
   foldM markArgNotNullable ni indexedNotNullArgs
   where
     errMsg = $err' ("No Function summary for " ++ show (functionName f))
@@ -594,11 +752,11 @@ definedFunctionTransfer summ f ni args =
     -- | Pairs of not-nullable formals/actuals
     indexedNotNullArgs = filter isNotNullable $ zip formals args
     markArgNotNullable info (_, a) =
-      recordIfMayBeNull info a
+      recordIfMayBeNull info i a
 
-externalFunctionTransfer :: DependencySummary -> ExternalFunction
+externalFunctionTransfer :: DependencySummary -> ExternalFunction -> Instruction
                             -> NullInfo -> [Value] -> AnalysisMonad NullInfo
-externalFunctionTransfer summ e ni args =
+externalFunctionTransfer summ e i ni args =
   foldM markIfNotNullable ni indexedArgs
   where
     errMsg = "No ExternalFunction summary for " ++ show (externalFunctionName e)
@@ -610,7 +768,7 @@ externalFunctionTransfer summ e ni args =
           return info
         Just attrs -> case PANotNull `elem` attrs of
           False -> return info
-          True -> recordIfMayBeNull info arg
+          True -> recordIfMayBeNull info i arg
 
 -- Helpers
 toArg :: Value -> Maybe Argument

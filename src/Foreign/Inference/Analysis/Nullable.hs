@@ -118,6 +118,7 @@ import FileLocation
 
 import Data.LLVM
 import Data.LLVM.Analysis.CallGraph
+import Data.LLVM.Analysis.CDG
 import Data.LLVM.Analysis.CFG
 import Data.LLVM.Analysis.CallGraphSCCTraversal
 import Data.LLVM.Analysis.Dataflow
@@ -164,7 +165,7 @@ identifyNullable ds m cg = (NS res, diags)
   where
     s0 = M.fromList $ zip (moduleDefinedFunctions m) (repeat S.empty)
     analysis = callGraphSCCTraversal cg nullableAnalysis s0
-    constData = ND M.empty ds cg
+    constData = ND M.empty ds cg undefined
     (res, diags) = evalRWS analysis constData ()
 
 -- | The dataflow fact for this analysis.  The @mayBeNull@ set tracks
@@ -179,6 +180,7 @@ data NullInfo = NI { mayBeNull :: Set Value  -- ^ The set of variables that may 
 data NullData = ND { moduleSummary :: SummaryType
                    , dependencySummary :: DependencySummary
                    , callGraph :: CallGraph
+                   , controlDepGraph :: CDG
                    }
 
 instance NFData NullInfo where
@@ -217,7 +219,9 @@ nullableAnalysis f summ = do
   --
   -- The initial state of the dataflow analysis is top -- all pointer
   -- parameters are NULLable.
-  let envMod e = e { moduleSummary = summ }
+  let envMod e = e { moduleSummary = summ
+                   , controlDepGraph = controlDependenceGraph (mkCFG f)
+                   }
       args = map Value (functionParameters f)
       fact0 = top { mayBeNull = S.fromList args
                   }
@@ -272,24 +276,23 @@ nullTransfer ni i edges = do
 
     -- Attempt at handling loads and stores more simply and uniformly.
 
-    LoadInst { loadAddress = ptr } ->
-      let ni'' = recordIfMayBeNull ni' ptr
-      in case isPointer i of
+    LoadInst { loadAddress = ptr } -> do
+      ni'' <- recordIfMayBeNull ni' ptr
+      case isPointer i of
         False -> return ni''
         -- The pointer that is returned is always considered to be
         -- possibly null
         True -> return $! recordPossiblyNull (Value i) ni''
-    StoreInst { storeAddress = ptr } ->
-      return $! recordIfMayBeNull ni' ptr
+    StoreInst { storeAddress = ptr } -> recordIfMayBeNull ni' ptr
 
-    AtomicRMWInst { atomicRMWPointer = ptr } ->
-      let ni'' = recordIfMayBeNull ni' ptr
-      in return $! recordPossiblyNull (Value i) ni''
+    AtomicRMWInst { atomicRMWPointer = ptr } -> do
+      ni'' <- recordIfMayBeNull ni' ptr
+      return $! recordPossiblyNull (Value i) ni''
 
     AtomicCmpXchgInst { atomicCmpXchgPointer = ptr
-                      , atomicCmpXchgNewValue = newVal } ->
-      let ni'' = recordIfMayBeNull ni' ptr
-      in case isPointer newVal of
+                      , atomicCmpXchgNewValue = newVal } -> do
+      ni'' <- recordIfMayBeNull ni' ptr
+      case isPointer newVal of
         False -> return ni''
         True -> return $! maybeClobber ni'' ptr newVal
 
@@ -355,19 +358,37 @@ argNotNullOnIncoming predOuts (v, bbv) =
 maybeClobber :: NullInfo -> Value -> Value -> NullInfo
 maybeClobber ni ptr _ {-newVal-} = recordPossiblyNull ptr ni
 
-recordIfMayBeNull :: NullInfo -> Value -> NullInfo
+-- | Since we don't really want to propagate NULL info interprocedurally
+-- through return values or track complex predicates locally, we can't
+-- reason about all values.  The basic pattern we are worried about is
+--
+-- > if(foo(p)) flag = 0;
+-- >
+-- > if(flag) *p = 6;
+--
+-- At the *p=6 instruction,
+canReasonAboutValue :: Value -> AnalysisMonad Bool
+canReasonAboutValue v = do
+  cdg <- asks controlDepGraph
+  return True
+
+recordIfMayBeNull :: NullInfo -> Value -> AnalysisMonad NullInfo
 recordIfMayBeNull ni ptr =
-  case memAccessBase ptr of
-    -- We don't reason about all pointer dereferences.  The direct
-    -- dereference of an alloca or global variable is *always* safe
-    -- (since those pointers are maintained by the compiler/runtime).
-    Nothing -> ni
-    Just b ->
-      case b `S.member` mayBeNull ni of
+  -- If we don't get a base pointer, don't bother reasoning about this
+  -- value.  Some values are always safe (allocas and globals are
+  -- always valid pointers, even if the pointers they *contain* might
+  -- not be).
+  maybe (return ni) checkBase (memAccessBase ptr)
+  where
+    checkBase b = do
+      -- We can't reason about a pointer in some complicated
+      -- circumstances.  See canReasonAboutValue for details.
+      canReason <- canReasonAboutValue b
+      case b `S.member` mayBeNull ni && canReason of
         -- There was an explicit check to ensure that the pointer in
         -- this operation was not NULL, so we know for sure that it is
         -- safe.
-        False -> ni
+        False -> return ni
         -- In this case, there was no explicit test for the pointer in
         -- use.  However, if this is a phi or select instruction then
         -- we might have some information about some of the incoming
@@ -377,7 +398,8 @@ recordIfMayBeNull ni ptr =
         -- Again in the case of Phi nodes,
         True ->
           let nullVals = filter (`S.member` mayBeNull ni) (flattenValue b)
-          in foldl' addUncheckedAccess ni nullVals
+          in return $! foldl' addUncheckedAccess ni nullVals
+
 
 -- | Given a value that is being dereferenced by an instruction
 -- (either a load, store, or atomic memory op), determine the *base*
@@ -542,7 +564,7 @@ callTransfer ni calledFunc args = do
   -- function pointer is illegal)
   case isIndirectCallee calledFunc of
     False -> return ni'
-    True -> return (recordIfMayBeNull ni' calledFunc)
+    True -> recordIfMayBeNull ni' calledFunc
   where
     callTransferDispatch info target = case valueContent' target of
       FunctionC f -> do
@@ -563,7 +585,7 @@ isIndirectCallee val =
 definedFunctionTransfer :: SummaryType -> Function
                            -> NullInfo -> [Value] -> AnalysisMonad NullInfo
 definedFunctionTransfer summ f ni args =
-  return $! foldl' markArgNotNullable ni indexedNotNullArgs
+  foldM markArgNotNullable ni indexedNotNullArgs
   where
     errMsg = $err' ("No Function summary for " ++ show (functionName f))
     formals = functionParameters f
@@ -588,7 +610,7 @@ externalFunctionTransfer summ e ni args =
           return info
         Just attrs -> case PANotNull `elem` attrs of
           False -> return info
-          True -> return $! recordIfMayBeNull info arg
+          True -> recordIfMayBeNull info arg
 
 -- Helpers
 toArg :: Value -> Maybe Argument

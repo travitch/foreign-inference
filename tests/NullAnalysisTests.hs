@@ -9,8 +9,7 @@ import qualified Data.HashSet as HS
 import Test.HUnit
 
 import Data.LLVM
-import Data.LLVM.CFG
-import Data.LLVM.Types
+import Data.LLVM.Analysis.CFG
 import Data.LLVM.Analysis.Dataflow
 import Data.LLVM.Testing
 

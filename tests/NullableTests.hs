@@ -7,7 +7,7 @@ import System.Environment ( getArgs, withArgs )
 import Test.HUnit ( assertEqual )
 
 import Data.LLVM
-import Data.LLVM.CallGraph
+import Data.LLVM.Analysis.CallGraph
 import Data.LLVM.Analysis.PointsTo
 import Data.LLVM.Analysis.PointsTo.TrivialFunction
 import Data.LLVM.Parse

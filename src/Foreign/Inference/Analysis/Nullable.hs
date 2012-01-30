@@ -223,17 +223,14 @@ nullableAnalysis f summ = do
                   }
   localInfo <- local envMod (forwardBlockDataflow fact0 f)
 
-  exitInfo <- local envMod (dataflowResult localInfo exitInst)
-  let justArgs = S.fromList $ mapMaybe toArg $ S.toList (accessedUnchecked exitInfo)
+  let getInstInfo i = local envMod (dataflowResult localInfo i)
+  exitInfo <- mapM getInstInfo (functionExitInstructions f)
+  let exitInfo' = meets exitInfo
+      justArgs = S.fromList $ mapMaybe toArg $ S.toList (accessedUnchecked exitInfo')
 
   -- Update the module symmary with the set of pointer parameters that
   -- we have proven are accessed unchecked.
   return $! M.insert f justArgs summ
-  where
-    -- FIXME: This isn't correct for functions that call longjmp; the
-    -- ret instruction isn't reachable for these functions and it
-    -- doesn't have any useful dataflow information.
-    exitInst = functionExitInstruction f
 
 -- | First, process the incoming CFG edges to learn about pointers
 -- that are known to be non-NULL.  Then use this updated information

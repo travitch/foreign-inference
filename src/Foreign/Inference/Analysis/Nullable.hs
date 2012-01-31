@@ -114,8 +114,8 @@ import qualified Data.Map as M
 import Data.Maybe ( mapMaybe )
 import Data.Set ( Set )
 import qualified Data.Set as S
-import Data.HashSet ( HashSet )
-import qualified Data.HashSet as HS
+import Data.HashMap.Strict ( HashMap )
+import qualified Data.HashMap.Strict as HM
 import FileLocation
 
 import Data.LLVM
@@ -124,7 +124,8 @@ import Data.LLVM.Analysis.CDG
 import Data.LLVM.Analysis.CFG
 import Data.LLVM.Analysis.CallGraphSCCTraversal
 import Data.LLVM.Analysis.Dataflow
-import Data.TransitiveClosure
+import Data.LLVM.Analysis.Dominance
+--import Data.TransitiveClosure
 
 import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
@@ -168,8 +169,9 @@ identifyNullable ds m cg = (NS res, diags)
   where
     s0 = M.fromList $ zip (moduleDefinedFunctions m) (repeat S.empty)
     analysis = callGraphSCCTraversal cg nullableAnalysis s0
-    constData = ND M.empty ds cg undefined
-    (res, diags) = evalRWS analysis constData ()
+    constData = ND M.empty ds cg undefined undefined
+    cache = NState HM.empty
+    (res, diags) = evalRWS analysis constData cache
 
 -- | The dataflow fact for this analysis.  The @mayBeNull@ set tracks
 -- the arguments and local variables that may be null at a program
@@ -184,6 +186,7 @@ data NullData = ND { moduleSummary :: SummaryType
                    , dependencySummary :: DependencySummary
                    , callGraph :: CallGraph
                    , controlDepGraph :: CDG
+                   , domTree :: DominatorTree
                    }
 
 instance NFData NullInfo where
@@ -195,7 +198,9 @@ instance MeetSemiLattice NullInfo where
 instance BoundedMeetSemiLattice NullInfo where
   top = NI S.empty S.empty
 
-type AnalysisMonad = RWS NullData Diagnostics ()
+data NullState = NState { execCache :: HashMap Instruction Bool }
+
+type AnalysisMonad = RWS NullData Diagnostics NullState
 
 instance DataflowAnalysis AnalysisMonad NullInfo where
   transfer = nullTransfer
@@ -222,8 +227,10 @@ nullableAnalysis f summ = do
   --
   -- The initial state of the dataflow analysis is top -- all pointer
   -- parameters are NULLable.
+  let cfg = mkCFG f
   let envMod e = e { moduleSummary = summ
-                   , controlDepGraph = controlDependenceGraph (mkCFG f)
+                   , controlDepGraph = controlDependenceGraph cfg
+                   , domTree = dominatorTree cfg
                    }
       args = map Value (functionParameters f)
       fact0 = top { mayBeNull = S.fromList args
@@ -249,16 +256,24 @@ nullTransfer :: NullInfo
                 -> [CFGEdge]
                 -> AnalysisMonad NullInfo
 nullTransfer ni i edges = do
-  -- Compute ni' (updated info about what pointers are NULL) based on
-  -- the set of incoming CFG edges.
-  let ni' = removeNonNullPointers ni edges
+  shouldAnalyze <- mustExecute i
+  case shouldAnalyze of
+    False -> return ni
+    True ->
+      let ni' = removeNonNullPointers ni edges
+      in nullTransfer' ni' i edges
 
+nullTransfer' :: NullInfo
+                 -> Instruction
+                 -> [CFGEdge]
+                 -> AnalysisMonad NullInfo
+nullTransfer' ni' i _ =
   case i of
     CallInst { callFunction = calledFunc, callArguments = args } -> do
-      ni'' <- callTransfer ni' i (stripBitcasts calledFunc) (map fst args)
+      ni'' <- callTransfer ni' (stripBitcasts calledFunc) (map fst args)
       return $! recordPossiblyNull (Value i) ni''
     InvokeInst { invokeFunction = calledFunc, invokeArguments = args } -> do
-      ni'' <- callTransfer ni' i (stripBitcasts calledFunc) (map fst args)
+      ni'' <- callTransfer ni' (stripBitcasts calledFunc) (map fst args)
       return $! recordPossiblyNull (Value i) ni''
 
     -- Stack allocated pointers start off as NULL
@@ -280,26 +295,63 @@ nullTransfer ni i edges = do
     -- Attempt at handling loads and stores more simply and uniformly.
 
     LoadInst { loadAddress = ptr } -> do
-      ni'' <- recordIfMayBeNull ni' i ptr
+      ni'' <- recordIfMayBeNull ni' ptr
       case isPointer i of
         False -> return ni''
         -- The pointer that is returned is always considered to be
         -- possibly null
         True -> return $! recordPossiblyNull (Value i) ni''
-    StoreInst { storeAddress = ptr } -> recordIfMayBeNull ni' i ptr
+    StoreInst { storeAddress = ptr } -> recordIfMayBeNull ni' ptr
 
     AtomicRMWInst { atomicRMWPointer = ptr } -> do
-      ni'' <- recordIfMayBeNull ni' i ptr
+      ni'' <- recordIfMayBeNull ni' ptr
       return $! recordPossiblyNull (Value i) ni''
 
     AtomicCmpXchgInst { atomicCmpXchgPointer = ptr
                       , atomicCmpXchgNewValue = newVal } -> do
-      ni'' <- recordIfMayBeNull ni' i ptr
+      ni'' <- recordIfMayBeNull ni' ptr
       case isPointer newVal of
         False -> return ni''
         True -> return $! maybeClobber ni'' ptr newVal
 
     _ -> return ni'
+
+-- We can tell that a piece of code MUST execute if:
+--
+-- 1) It has no control dependencies, or
+--
+-- 2) It has exactly one control dependency (a direct one, and no
+-- indirect cdeps) AND all incoming non-backedges are unconditional
+-- branches.
+mustExecute :: Instruction -> AnalysisMonad Bool
+mustExecute i = do
+  s <- get
+  case HM.lookup i (execCache s) of
+    Just b -> return b
+    Nothing -> do
+      b <- mustExec' i
+      s' <- get
+      put s' { execCache = HM.insert i b (execCache s') }
+      return b
+
+mustExec' :: Instruction -> AnalysisMonad Bool
+mustExec' i = do
+  cdg <- asks controlDepGraph
+  dt <- asks domTree
+  case controlDependencies cdg i of
+    [] -> return True
+    [_] -> do
+      let Just bb = instructionBasicBlock i
+          preds = basicBlockPredecessors (cdgCFG cdg) bb
+          terms = map basicBlockTerminatorInstruction preds
+          nonBackedges = filter (isNotBackedge dt i) terms
+
+      return $! all isUnconditional nonBackedges
+    _ -> return False
+  where
+    isUnconditional UnconditionalBranchInst {} = True
+    isUnconditional _ = False
+    isNotBackedge g inst br = not (dominates g inst br)
 
 -- | At each Phi function, we can say that the Phi value is not null if
 -- all of its incoming values are not null on their respective
@@ -361,176 +413,8 @@ argNotNullOnIncoming predOuts (v, bbv) =
 maybeClobber :: NullInfo -> Value -> Value -> NullInfo
 maybeClobber ni ptr _ {-newVal-} = recordPossiblyNull ptr ni
 
--- | Since we don't really want to propagate NULL info interprocedurally
--- through return values or track complex predicates locally, we can't
--- reason about all values.  The basic pattern we are worried about is
---
--- > if(foo(p)) flag = 0;
--- >
--- > if(flag) *p = 6;
---
--- At the @*p=6@ instruction, we don't actually know if p is NULL or
--- not, so we can't reason about it.  The condition we have to check
--- is that none of the control dependencies of @i@ can be program
--- dependent on @v@.  In the example, if(flag) is the control
--- depenency of @*p=6@, and that is program dependent on p through
--- flag.
---
--- One exception.  If @p==NULL@ or @p!=NULL@ is a control dependency
--- of @i@, we *can* reason about @i@.
-canReasonAboutValue :: Instruction -> Value -> AnalysisMonad Bool
-canReasonAboutValue i v = do
-  cdg <- asks controlDepGraph
-  let cdeps = controlDependencies cdg i
-  case any (isDirectControlDep v) cdeps of
-    True -> return True
-    False -> return $! not (v `HS.member` allDependencies cdg cdeps)
-
-allDependencies :: CDG -> [Instruction] -> HashSet Value
-allDependencies cdg = markVisited (f cdg) . HS.fromList . map Value
-  where
-    f g v = case valueContent v of
-      InstructionC i ->
-        let cdeps = map Value $ controlDependencies g i
-            ddeps = instructionDataOperands i
-        in HS.fromList cdeps `HS.union` HS.fromList ddeps
-      _ -> HS.empty
-
-
-instructionDataOperands :: Instruction -> [Value]
-instructionDataOperands i =
-  case i of
-    RetInst { retInstValue = v } -> maybe [] ((:[])) v
-    UnconditionalBranchInst { } -> []
-    BranchInst { branchCondition = v } -> [ v ]
-    SwitchInst { switchValue = v } -> [v]
-    IndirectBranchInst { indirectBranchAddress = v } -> [v]
-    UnwindInst { } -> []
-    ResumeInst { resumeException = v } -> [v]
-    UnreachableInst { } -> []
-    ExtractElementInst { extractElementVector = v
-                       , extractElementIndex = ix
-                       } -> [ v, ix ]
-    InsertElementInst { insertElementVector = v
-                      , insertElementValue = val
-                      , insertElementIndex = ix
-                      } -> [ v, val, ix ]
-    ShuffleVectorInst { shuffleVectorV1 = v1
-                      , shuffleVectorV2 = v2
-                      , shuffleVectorMask = m
-                      } -> [ v1, v2, m ]
-    ExtractValueInst { extractValueAggregate = a } -> [a]
-    InsertValueInst { insertValueAggregate = a
-                    , insertValueValue = v
-                    } -> [ a, v ]
-    AllocaInst { allocaNumElements = n } -> [n]
-    LoadInst { loadAddress = a } -> [a]
-    StoreInst { storeValue = v
-              , storeAddress = a
-              } -> [ v, a ]
-    FenceInst { } -> []
-    AtomicCmpXchgInst { atomicCmpXchgPointer = p
-                      , atomicCmpXchgComparison = c
-                      , atomicCmpXchgNewValue = v
-                      } -> [ p, c, v ]
-    AtomicRMWInst { atomicRMWPointer = p
-                  , atomicRMWValue = v
-                  } -> [ p, v ]
-    AddInst { binaryLhs = l
-            , binaryRhs = r
-            } -> [ l, r ]
-    SubInst { binaryLhs = l
-            , binaryRhs = r
-            } -> [ l, r ]
-    MulInst { binaryLhs = l
-            , binaryRhs = r
-            } -> [ l, r ]
-    DivInst { binaryLhs = l
-            , binaryRhs = r
-            } -> [ l, r ]
-    RemInst { binaryLhs = l
-            , binaryRhs = r
-            } -> [ l, r ]
-    ShlInst { binaryLhs = l
-            , binaryRhs = r
-            } -> [ l, r ]
-    LshrInst { binaryLhs = l
-            , binaryRhs = r
-            } -> [ l, r ]
-    AshrInst { binaryLhs = l
-            , binaryRhs = r
-            } -> [ l, r ]
-    AndInst { binaryLhs = l
-            , binaryRhs = r
-            } -> [ l, r ]
-    OrInst { binaryLhs = l
-            , binaryRhs = r
-            } -> [ l, r ]
-    XorInst { binaryLhs = l
-            , binaryRhs = r
-            } -> [ l, r ]
-    TruncInst { castedValue = v } -> [v]
-    ZExtInst { castedValue = v } -> [v]
-    SExtInst { castedValue = v } -> [v]
-    FPTruncInst { castedValue = v } -> [v]
-    FPExtInst { castedValue = v } -> [v]
-    FPToSIInst { castedValue = v } -> [v]
-    FPToUIInst { castedValue = v } -> [v]
-    SIToFPInst { castedValue = v } -> [v]
-    UIToFPInst { castedValue = v } -> [v]
-    PtrToIntInst { castedValue = v } -> [v]
-    IntToPtrInst { castedValue = v } -> [v]
-    BitcastInst { castedValue = v } -> [v]
-    ICmpInst { cmpV1 = v1
-             , cmpV2 = v2
-             } -> [ v1, v2 ]
-    FCmpInst { cmpV1 = v1
-             , cmpV2 = v2
-             } -> [ v1, v2 ]
-    SelectInst { selectCondition = c
-               , selectTrueValue = tv
-               , selectFalseValue = fv
-               } -> [ c, tv, fv ]
-    CallInst { callFunction = f
-             , callArguments = args
-             } -> f : map fst args
-    GetElementPtrInst { getElementPtrValue = v
-                      , getElementPtrIndices = vs
-                      } -> v : vs
-    InvokeInst { invokeFunction = f
-               , invokeArguments = args
-               } -> f : map fst args
-    VaArgInst { vaArgValue = v } -> [v]
-    LandingPadInst { landingPadPersonality = p
-                   , landingPadClauses = cs
-                   } -> p : map fst cs
-    PhiNode { phiIncomingValues = vs } ->
-      let toBB v = case valueContent v of
-            BasicBlockC b -> b
-            _ -> $err' "Expected BasicBlock"
-          branches = map (Value . basicBlockTerminatorInstruction . toBB . snd) vs
-      in map fst vs ++ branches
-
-
--- | Returns True if @v@ is compared directly against NULL in this
--- conditional branch instruction.
-isDirectControlDep :: Value -> Instruction -> Bool
-isDirectControlDep v cdep =
-  case valueContent cdep of
-    InstructionC BranchInst { branchCondition = cnd } ->
-      case valueContent cnd of
-        InstructionC ICmpInst { cmpV1 = v1, cmpV2 = v2 } ->
-          (v1 == v && isConstNull v2) || (v2 == v && isConstNull v1)
-        _ -> False
-    _ -> False
-  where
-    isConstNull cv =
-      case valueContent cv of
-        ConstantC ConstantPointerNull {} -> True
-        _ -> False
-
-recordIfMayBeNull :: NullInfo -> Instruction -> Value -> AnalysisMonad NullInfo
-recordIfMayBeNull ni i ptr =
+recordIfMayBeNull :: NullInfo -> Value -> AnalysisMonad NullInfo
+recordIfMayBeNull ni ptr =
   -- If we don't get a base pointer, don't bother reasoning about this
   -- value.  Some values are always safe (allocas and globals are
   -- always valid pointers, even if the pointers they *contain* might
@@ -538,10 +422,7 @@ recordIfMayBeNull ni i ptr =
   maybe (return ni) checkBase (memAccessBase ptr)
   where
     checkBase b = do
-      -- We can't reason about a pointer in some complicated
-      -- circumstances.  See canReasonAboutValue for details.
-      canReason <- canReasonAboutValue i b
-      case b `S.member` mayBeNull ni && canReason of
+      case b `S.member` mayBeNull ni of
         -- There was an explicit check to ensure that the pointer in
         -- this operation was not NULL, so we know for sure that it is
         -- safe.
@@ -708,11 +589,10 @@ process' ni val isNull =
 -- summary values for called functions/params and records relevant
 -- information in the current dataflow fact.
 callTransfer :: NullInfo
-                -> Instruction
                 -> Value
                 -> [Value]
                 -> AnalysisMonad NullInfo
-callTransfer ni i calledFunc args = do
+callTransfer ni calledFunc args = do
   cg <- asks callGraph
   let callTargets = callValueTargets cg calledFunc
   ni' <- foldM callTransferDispatch ni callTargets -- `debug'`
@@ -722,15 +602,15 @@ callTransfer ni i calledFunc args = do
   -- function pointer is illegal)
   case isIndirectCallee calledFunc of
     False -> return ni'
-    True -> recordIfMayBeNull ni' i calledFunc
+    True -> recordIfMayBeNull ni' calledFunc
   where
     callTransferDispatch info target = case valueContent' target of
       FunctionC f -> do
         summ <- asks moduleSummary
-        definedFunctionTransfer summ f i info args
+        definedFunctionTransfer summ f info args
       ExternalFunctionC e -> do
         summ <- asks dependencySummary
-        externalFunctionTransfer summ e i info args
+        externalFunctionTransfer summ e info args
       _ -> $(err "Unexpected value; indirect calls should be resolved")
 
 isIndirectCallee :: Value -> Bool
@@ -740,9 +620,9 @@ isIndirectCallee val =
     ExternalFunctionC _ -> False
     _ -> True
 
-definedFunctionTransfer :: SummaryType -> Function -> Instruction
+definedFunctionTransfer :: SummaryType -> Function
                            -> NullInfo -> [Value] -> AnalysisMonad NullInfo
-definedFunctionTransfer summ f i ni args =
+definedFunctionTransfer summ f ni args =
   foldM markArgNotNullable ni indexedNotNullArgs
   where
     errMsg = $err' ("No Function summary for " ++ show (functionName f))
@@ -752,11 +632,11 @@ definedFunctionTransfer summ f i ni args =
     -- | Pairs of not-nullable formals/actuals
     indexedNotNullArgs = filter isNotNullable $ zip formals args
     markArgNotNullable info (_, a) =
-      recordIfMayBeNull info i a
+      recordIfMayBeNull info a
 
-externalFunctionTransfer :: DependencySummary -> ExternalFunction -> Instruction
+externalFunctionTransfer :: DependencySummary -> ExternalFunction
                             -> NullInfo -> [Value] -> AnalysisMonad NullInfo
-externalFunctionTransfer summ e i ni args =
+externalFunctionTransfer summ e ni args =
   foldM markIfNotNullable ni indexedArgs
   where
     errMsg = "No ExternalFunction summary for " ++ show (externalFunctionName e)
@@ -768,7 +648,7 @@ externalFunctionTransfer summ e i ni args =
           return info
         Just attrs -> case PANotNull `elem` attrs of
           False -> return info
-          True -> recordIfMayBeNull info i arg
+          True -> recordIfMayBeNull info arg
 
 -- Helpers
 toArg :: Value -> Maybe Argument

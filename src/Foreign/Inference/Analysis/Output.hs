@@ -1,6 +1,8 @@
 {-# LANGUAGE TypeSynonymInstances, FlexibleInstances, MultiParamTypeClasses #-}
 {-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE TemplateHaskell #-}
+-- | FIXME: Depend on the array analysis (arrays are not out params).
+-- Also implement interprocedural info prop
 module Foreign.Inference.Analysis.Output (
   -- * Interface
   OutputSummary,
@@ -101,6 +103,10 @@ outAnalysis f summ = do
 -- | This transfer function only needs to be concerned with Load and
 -- Store instructions (for now).  Loads add in an ArgIn value. Stores
 -- add an ArgOut.
+--
+-- Note, we don't use valueContent' to strip bitcasts here since
+-- accesses to bitfields use lots of interesting bitcasts and give us
+-- false positives.
 outTransfer :: OutInfo -> Instruction -> [CFGEdge] -> AnalysisMonad OutInfo
 outTransfer info i _ =
   case i of

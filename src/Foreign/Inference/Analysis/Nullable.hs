@@ -376,8 +376,8 @@ nullPhiTransfer :: [Instruction] -> [(BasicBlock, NullInfo, CFGEdge)]
                    -> AnalysisMonad NullInfo
 nullPhiTransfer phis incomingEdges = do
   let (newNotNullVals, newNullVals) = partition (phiIsNotNull incomingEdges) phis
-      ni' = foldr recordPossiblyNull ni (map Value newNullVals)
-  return $! foldr recordNotNull ni' (map Value newNotNullVals)
+      ni' = foldr (recordPossiblyNull . Value) ni newNullVals
+  return $! foldr (recordNotNull . Value) ni' newNotNullVals
   where
     ni = meets $ map (\(_, i, _) -> i) incomingEdges
     phiIsNotNull es PhiNode { phiIncomingValues = pvs } =
@@ -421,7 +421,7 @@ recordIfMayBeNull ni ptr =
   -- not be).
   maybe (return ni) checkBase (memAccessBase ptr)
   where
-    checkBase b = do
+    checkBase b =
       case b `S.member` mayBeNull ni of
         -- There was an explicit check to ensure that the pointer in
         -- this operation was not NULL, so we know for sure that it is
@@ -480,7 +480,7 @@ memAccessBase ptr =
 -- argumentsForValue to determine which case we are in.
 addUncheckedAccess :: NullInfo -> Value -> NullInfo
 addUncheckedAccess ni ptr =
-  let ni' = ni { accessedUnchecked = S.union (accessedUnchecked ni) newUnchecked }
+  let ni' = ni { accessedUnchecked = accessedUnchecked ni `S.union` newUnchecked }
   in ni'
   where
     -- | FIXME: Here is the spot we need to pick out arguments

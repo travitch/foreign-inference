@@ -41,7 +41,7 @@ isolator line = do
 
   -- We want the prefix of the function up until we see the opening
   -- curly brace.
-  _ <- P.takeWhile (/= (ascii '{'))
+  _ <- P.takeWhile (/= ascii '{')
 
   -- Now just match curly braces in a standard context-free way.
   -- FIXME: Ignore string literals, char literals, and comments
@@ -63,11 +63,11 @@ matchedBraces = do
 
 contentAndSubBody :: Parser Builder
 contentAndSubBody = do
-  pfx <- P.takeWhile (\c -> c /= (ascii '{') && c /= (ascii '}'))
+  pfx <- P.takeWhile (\c -> c /= ascii '{' && c /= ascii '}')
   P.choice [ nest pfx, blockEnd pfx ]
   where
     blockEnd :: BSC.ByteString -> Parser Builder
-    blockEnd pfx = do
+    blockEnd pfx =
       case BSC.null pfx of
         True -> fail "fail"
         False -> return (fromByteString pfx)

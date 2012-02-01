@@ -91,7 +91,7 @@ arrayAnalysis f summary = do
   return $! M.foldlWithKey' (traceFromBases baseResultMap) summary baseResultMap
   where
     insts = concatMap basicBlockInstructions (functionBody f)
-    addDeref (base, use) acc = M.insertWith' (++) base [use] acc
+    addDeref (base, use) = M.insertWith' (++) base [use]
 
 -- | Examine a GetElementPtr instruction result.  If the base is an
 -- argument, trace its access structure (using the @baseResultMap@ via
@@ -124,8 +124,8 @@ traceFromBases baseResultMap summary base uses =
 -- already recorded as having depth 2 will not make any changes to the
 -- summary).
 addToSummary :: Int -> Argument -> SummaryType -> SummaryType
-addToSummary depth arg summ =
-  M.insertWith max arg depth summ
+addToSummary depth arg =
+  M.insertWith max arg depth
 
 
 traceBackwards :: Map Value [PointerUse] -> Value -> Int -> Int

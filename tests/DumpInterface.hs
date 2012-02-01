@@ -23,6 +23,7 @@ import Foreign.Inference.Report
 import Foreign.Inference.Preprocessing
 import Foreign.Inference.Analysis.Array
 import Foreign.Inference.Analysis.Nullable
+import Foreign.Inference.Analysis.Output
 
 cmdOpts :: Opts -> Mode Opts
 cmdOpts defs = mode "DumpInterface" defs desc bitcodeArg as
@@ -92,9 +93,10 @@ dump opts name m = do
   ds <- loadDependencies [repo] deps
 
   let (s, nullDiags) = identifyNullable ds m cg
+      (o, outDiags) = identifyOutput ds cg
       (a, arrayDiags) = identifyArrays ds cg
-      diags = mconcat [ nullDiags, arrayDiags ]
-      summaries = [ModuleSummary s, ModuleSummary a]
+      diags = mconcat [ nullDiags, arrayDiags, outDiags ]
+      summaries = [ModuleSummary s, ModuleSummary a, ModuleSummary o]
   case formatDiagnostics (diagnosticLevel opts) diags of
     Nothing -> return ()
     Just diagString -> putStrLn diagString

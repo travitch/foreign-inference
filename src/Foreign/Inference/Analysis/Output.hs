@@ -1,8 +1,7 @@
 {-# LANGUAGE TypeSynonymInstances, FlexibleInstances, MultiParamTypeClasses #-}
 {-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE TemplateHaskell #-}
--- | FIXME: Depend on the array analysis (arrays are not out params).
--- Also implement interprocedural info prop
+-- | FIXME: Implement interprocedural info prop
 module Foreign.Inference.Analysis.Output (
   -- * Interface
   OutputSummary,
@@ -11,6 +10,8 @@ module Foreign.Inference.Analysis.Output (
 
 import Algebra.Lattice
 import Control.Monad.RWS.Strict
+import Data.HashSet ( HashSet )
+import qualified Data.HashSet as HS
 import Data.Map ( Map )
 import qualified Data.Map as M
 import FileLocation
@@ -30,7 +31,7 @@ data ArgumentDirection = ArgIn
                        deriving (Eq, Ord, Show)
 
 type SummaryType = Map Argument ArgumentDirection
-newtype OutputSummary = OS { unOS :: SummaryType }
+data OutputSummary = OS SummaryType
 
 instance Eq OutputSummary where
   (OS s1) == (OS s2) = s1 == s2
@@ -46,14 +47,15 @@ summarizeOutArgument a (OS s) =
     Just ArgIn -> []
     Just ArgOut -> [PAOut]
     Just ArgBoth -> [PAInOut]
-  where
-    f = argumentFunction a
 
 data OutData = OD { moduleSummary :: SummaryType
                   , dependencySummary :: DependencySummary
                   , callGraph :: CallGraph
                   }
 
+-- | Note that array parameters are not out parameters, so we rely on
+-- the Array analysis to let us filter those parameters out of our
+-- results.
 identifyOutput :: DependencySummary -> CallGraph
                   -> (OutputSummary, Diagnostics)
 identifyOutput ds cg = (OS res, diags)
@@ -63,7 +65,9 @@ identifyOutput ds cg = (OS res, diags)
     constData = OD M.empty ds cg
     (res, diags) = evalRWS analysis constData ()
 
-data OutInfo = OI (Map Argument ArgumentDirection)
+data OutInfo = OI { outputInfo :: !(Map Argument ArgumentDirection)
+                  , aggregates :: !(HashSet Argument)
+                  }
              deriving (Eq, Show)
 
 instance MeetSemiLattice OutInfo where
@@ -78,10 +82,11 @@ instance MeetSemiLattice ArgumentDirection where
   meet _ ArgBoth = ArgBoth
 
 instance BoundedMeetSemiLattice OutInfo where
-  top = OI M.empty
+  top = OI M.empty HS.empty
 
 meetOutInfo :: OutInfo -> OutInfo -> OutInfo
-meetOutInfo (OI m1) (OI m2) = OI $! M.unionWith meet m1 m2
+meetOutInfo (OI m1 s1) (OI m2 s2) =
+  OI (M.unionWith meet m1 m2) (s1 `HS.union` s2)
 
 instance DataflowAnalysis AnalysisMonad OutInfo where
   transfer = outTransfer
@@ -94,11 +99,12 @@ outAnalysis f summ = do
   funcInfo <- local envMod (forwardBlockDataflow top f)
   let getInstInfo i = local envMod (dataflowResult funcInfo i)
   exitInfo <- mapM getInstInfo (functionExitInstructions f)
-  let OI exitInfo' = meets exitInfo
+  let OI exitInfo' aggArgs = meets exitInfo
+      exitInfo'' = M.filterWithKey (\k _ -> not (HS.member k aggArgs)) exitInfo'
   -- Merge the local information we just computed with the global
   -- summary.  Prefer the locally computed info if there are
   -- collisions (could arise while processing SCCs).
-  return $! M.union exitInfo' summ
+  return $! M.union exitInfo'' summ
 
 -- | This transfer function only needs to be concerned with Load and
 -- Store instructions (for now).  Loads add in an ArgIn value. Stores
@@ -118,18 +124,31 @@ outTransfer info i _ =
       return $! merge ptr ArgIn info
     AtomicCmpXchgInst { atomicCmpXchgPointer = (valueContent -> ArgumentC ptr) } ->
       return $! merge ptr ArgIn info
+
+    -- We don't want to treat any aggregates as output parameters yet.
+    -- Record all arguments used as aggregates and filter them out at
+    -- the end of the analysis.
+    --
+    -- Later, we want to expand the definition of output parameters to
+    -- cover structs where all fields are initialized.
+    GetElementPtrInst { getElementPtrValue = (valueContent' -> ArgumentC ptr) } ->
+      return $! info { aggregates = HS.insert ptr (aggregates info) }
+
     _ -> return info
 
 merge :: Argument -> ArgumentDirection -> OutInfo -> OutInfo
-merge arg ArgBoth (OI oi) =
-  OI $! M.insert arg ArgBoth oi
-merge arg newVal info@(OI oi) =
+merge arg ArgBoth (OI oi a) =
+  OI (M.insert arg ArgBoth oi) a
+merge arg newVal info@(OI oi a) =
   case M.lookup arg oi of
-    Nothing -> OI $! M.insert arg newVal oi
+    Nothing -> OI (M.insert arg newVal oi) a
     Just ArgBoth -> info
     Just ArgOut -> info
     Just ArgIn ->
       case newVal of
-        ArgOut -> OI $! M.insert arg ArgBoth oi
+        ArgOut -> OI (M.insert arg ArgBoth oi) a
         ArgIn -> info
         ArgBoth -> $err' "Infeasible path"
+
+removeArrayPtr :: Argument -> OutInfo -> OutInfo
+removeArrayPtr a (OI oi ag) = OI (M.delete a oi) ag

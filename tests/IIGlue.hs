@@ -26,7 +26,7 @@ import Foreign.Inference.Analysis.Nullable
 import Foreign.Inference.Analysis.Output
 
 cmdOpts :: Opts -> Mode Opts
-cmdOpts defs = mode "DumpInterface" defs desc bitcodeArg as
+cmdOpts defs = mode "IIGlue" defs desc bitcodeArg as
   where
     bitcodeArg = (flagArg setBitcode "BITCODE")
     desc = "A frontend for the FFI Inference engine"

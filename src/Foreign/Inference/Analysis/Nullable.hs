@@ -106,11 +106,14 @@ module Foreign.Inference.Analysis.Nullable (
   ) where
 
 import Algebra.Lattice
+import Control.Arrow
 import Control.Monad.RWS.Strict
 import Data.Map ( Map )
 import qualified Data.Map as M
 import Data.Set ( Set )
 import qualified Data.Set as S
+import Data.HashMap.Strict ( HashMap )
+import qualified Data.HashMap.Strict as HM
 import FileLocation
 
 import Data.LLVM
@@ -163,7 +166,8 @@ identifyNullable ds m cg = (NS res, diags)
     s0 = M.fromList $ zip (moduleDefinedFunctions m) (repeat S.empty)
     analysis = callGraphSCCTraversal cg nullableAnalysis s0
     constData = ND M.empty ds cg undefined undefined
-    (res, diags) = evalRWS analysis constData ()
+    cache = NState HM.empty
+    (res, diags) = evalRWS analysis constData cache
 
 data NullData = ND { moduleSummary :: SummaryType
                    , dependencySummary :: DependencySummary
@@ -182,6 +186,8 @@ data NullData = ND { moduleSummary :: SummaryType
 -- about pointers that are not null as we progress (have been
 -- dereferenced).
 
+data NullState = NState { phiCache :: HashMap Instruction (Maybe Value) }
+
 data NullInfo = NInfo { nullArguments :: Set Argument
                       }
               deriving (Eq, Ord, Show)
@@ -192,7 +198,7 @@ instance MeetSemiLattice NullInfo where
 instance BoundedMeetSemiLattice NullInfo where
   top = NInfo S.empty
 
-type AnalysisMonad = RWS NullData Diagnostics ()
+type AnalysisMonad = RWS NullData Diagnostics NullState
 
 instance DataflowAnalysis AnalysisMonad NullInfo where
   transfer = nullTransfer
@@ -264,10 +270,14 @@ valueDereferenced :: Value -> NullInfo -> AnalysisMonad NullInfo
 valueDereferenced ptr ni =
   case memAccessBase ptr of
     Nothing -> return ni
-    Just v ->
-      case valueContent' v of
-        ArgumentC a -> return ni { nullArguments = S.delete a (nullArguments ni) }
-        _ -> return ni
+    Just v -> do
+      v' <- mustExecuteValue v
+      case v' of
+        Nothing -> return ni
+        Just mustVal ->
+          case valueContent' mustVal of
+            ArgumentC a -> return ni { nullArguments = S.delete a (nullArguments ni) }
+            _ -> return ni
 
 -- | Given a value that is being dereferenced by an instruction
 -- (either a load, store, or atomic memory op), determine the *base*
@@ -362,6 +372,63 @@ externalFunctionTransfer summ e ni args =
         Just attrs -> case PANotNull `elem` attrs of
           False -> return info
           True -> valueDereferenced arg info
+
+-- We can tell that a piece of code MUST execute if:
+--
+-- 1) It has no control dependencies, or
+--
+-- 2) It has exactly one control dependency (a direct one, and no
+-- indirect cdeps) AND all incoming non-backedges are unconditional
+-- branches.
+
+-- | Given a Value, figure out which of its sub-values *MUST* be
+-- executed on *SOME* call to the function.  For most Values, this is
+-- the identity.
+--
+-- For Select instructions, the result is Nothing (unless we decide to
+-- reason more thoroughly about the select condition).
+--
+-- For Phi nodes, there may be a result for do-while style loops where
+-- the first iteration must always be taken.  In this case, return the
+-- value that *MUST* be accessed on that iteration.
+mustExecuteValue :: Value -> AnalysisMonad (Maybe Value)
+mustExecuteValue v =
+  case valueContent' v of
+    InstructionC SelectInst {} -> return Nothing
+    InstructionC i@PhiNode { phiIncomingValues = ivs } -> do
+      s <- get
+      case HM.lookup i (phiCache s) of
+        Just mv -> return mv
+        Nothing -> do
+          mv <- mustExec' i ivs
+          put s { phiCache = HM.insert i mv (phiCache s) }
+          return mv
+    _ -> return (Just v)
+
+mustExec' :: Instruction -> [(Value, Value)] -> AnalysisMonad (Maybe Value)
+mustExec' i ivs = do
+  cdg <- asks controlDepGraph
+  dt <- asks domTree
+  case controlDependencies cdg i of
+    [] -> return Nothing
+    [_] -> do
+      let predTerms = map (id *** (basicBlockTerminatorInstruction . toBB)) ivs
+          nonBackedges = filter (isNotBackedge dt i) predTerms
+      case filter (isUnconditional . snd) nonBackedges of
+        [] -> return Nothing
+        [(v,_)] -> return (Just v)
+        _ -> return Nothing
+      -- return $! all isUnconditional nonBackedges
+    _ -> return Nothing
+  where
+    toBB v =
+      case valueContent v of
+        BasicBlockC bb -> bb
+        _ -> $err' ("Expected basic block: " ++ show v)
+    isUnconditional UnconditionalBranchInst {} = True
+    isUnconditional _ = False
+    isNotBackedge g inst (_, br) = not (dominates g inst br)
+
 
   {-
   shouldAnalyze <- mustExecute i

@@ -106,16 +106,11 @@ module Foreign.Inference.Analysis.Nullable (
   ) where
 
 import Algebra.Lattice
-import Control.DeepSeq
 import Control.Monad.RWS.Strict
-import Data.List ( find, foldl', partition )
 import Data.Map ( Map )
 import qualified Data.Map as M
-import Data.Maybe ( mapMaybe )
 import Data.Set ( Set )
 import qualified Data.Set as S
-import Data.HashMap.Strict ( HashMap )
-import qualified Data.HashMap.Strict as HM
 import FileLocation
 
 import Data.LLVM
@@ -125,11 +120,9 @@ import Data.LLVM.Analysis.CFG
 import Data.LLVM.Analysis.CallGraphSCCTraversal
 import Data.LLVM.Analysis.Dataflow
 import Data.LLVM.Analysis.Dominance
---import Data.TransitiveClosure
 
 import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
-import Foreign.Inference.Internal.FlattenValue
 
 -- import Text.Printf
 -- import Debug.Trace
@@ -170,17 +163,7 @@ identifyNullable ds m cg = (NS res, diags)
     s0 = M.fromList $ zip (moduleDefinedFunctions m) (repeat S.empty)
     analysis = callGraphSCCTraversal cg nullableAnalysis s0
     constData = ND M.empty ds cg undefined undefined
-    cache = NState HM.empty
-    (res, diags) = evalRWS analysis constData cache
-
--- | The dataflow fact for this analysis.  The @mayBeNull@ set tracks
--- the arguments and local variables that may be null at a program
--- point.  For locals, the only thing in the set is the alloca
--- representing it.
-data NullInfo = NI { mayBeNull :: Set Value  -- ^ The set of variables that may be NULL
-                   , accessedUnchecked :: Set Value -- ^ Variables that were accessed before they were known to be not NULL
-                   }
-                deriving (Eq, Ord, Show)
+    (res, diags) = evalRWS analysis constData ()
 
 data NullData = ND { moduleSummary :: SummaryType
                    , dependencySummary :: DependencySummary
@@ -189,29 +172,34 @@ data NullData = ND { moduleSummary :: SummaryType
                    , domTree :: DominatorTree
                    }
 
-instance NFData NullInfo where
-  rnf ni@(NI s1 s2) = s1 `deepseq` s2 `deepseq` ni `seq` ()
+-- Instead of a dataflow analysis, we can do simple graph reachability
+-- (ignoring backedges).  If we can prove that a branch isn't possible
+-- under our NULL @p@ assumption, that branch target is not reachable
+-- and we don't need to explore further.  We can also stop as soon as
+-- we hit ret.  Explore depth-first.  Stop exploring a branch if bad
+-- code is hit (e.g., null deref).  Since we know what path we are on,
+-- we can resolve phi nodes to their actual values.  Accumulate facts
+-- about pointers that are not null as we progress (have been
+-- dereferenced).
+
+data NullInfo = NInfo { nullArguments :: Set Argument
+                      }
+              deriving (Eq, Ord, Show)
 
 instance MeetSemiLattice NullInfo where
   meet = meetNullInfo
 
 instance BoundedMeetSemiLattice NullInfo where
-  top = NI S.empty S.empty
+  top = NInfo S.empty
 
-data NullState = NState { execCache :: HashMap Instruction Bool }
-
-type AnalysisMonad = RWS NullData Diagnostics NullState
+type AnalysisMonad = RWS NullData Diagnostics ()
 
 instance DataflowAnalysis AnalysisMonad NullInfo where
   transfer = nullTransfer
-  phiTransfer = nullPhiTransfer
 
--- | The meet operator for @NullInfo@
 meetNullInfo :: NullInfo -> NullInfo -> NullInfo
 meetNullInfo ni1 ni2 =
-  NI { mayBeNull = mayBeNull ni1 `S.union` mayBeNull ni2
-     , accessedUnchecked = accessedUnchecked ni1 `S.union` accessedUnchecked ni2
-     }
+  NInfo { nullArguments = nullArguments ni1 `S.union` nullArguments ni2 }
 
 -- | The analysis that is applied to every function in the call graph.
 -- It runs a dataflow analysis over the function to identify the
@@ -232,19 +220,18 @@ nullableAnalysis f summ = do
                    , controlDepGraph = controlDependenceGraph cfg
                    , domTree = dominatorTree cfg
                    }
-      args = map Value (functionParameters f)
-      fact0 = top { mayBeNull = S.fromList args
-                  }
+      args = functionParameters f
+      fact0 = top { nullArguments = S.fromList args }
   localInfo <- local envMod (forwardBlockDataflow fact0 f)
 
   let getInstInfo i = local envMod (dataflowResult localInfo i)
   exitInfo <- mapM getInstInfo (functionExitInstructions f)
   let exitInfo' = meets exitInfo
-      justArgs = S.fromList $ mapMaybe toArg $ S.toList (accessedUnchecked exitInfo')
+      notNullableArgs = S.fromList args `S.difference` nullArguments exitInfo'
 
   -- Update the module symmary with the set of pointer parameters that
   -- we have proven are accessed unchecked.
-  return $! M.insert f justArgs summ
+  return $! M.insert f notNullableArgs summ
 
 -- | First, process the incoming CFG edges to learn about pointers
 -- that are known to be non-NULL.  Then use this updated information
@@ -255,7 +242,128 @@ nullTransfer :: NullInfo
                 -> Instruction
                 -> [CFGEdge]
                 -> AnalysisMonad NullInfo
-nullTransfer ni i edges = do
+nullTransfer ni i _ =
+  case i of
+    LoadInst { loadAddress = ptr } ->
+      valueDereferenced ptr ni
+    StoreInst { storeAddress = ptr } ->
+      valueDereferenced ptr ni
+    AtomicRMWInst { atomicRMWPointer = ptr } ->
+      valueDereferenced ptr ni
+    AtomicCmpXchgInst { atomicCmpXchgPointer = ptr } ->
+      valueDereferenced ptr ni
+
+    CallInst { callFunction = calledFunc, callArguments = args } ->
+      callTransfer (stripBitcasts calledFunc) (map fst args) ni
+    InvokeInst { invokeFunction = calledFunc, invokeArguments = args } ->
+      callTransfer (stripBitcasts calledFunc) (map fst args) ni
+
+    _ -> return ni
+
+valueDereferenced :: Value -> NullInfo -> AnalysisMonad NullInfo
+valueDereferenced ptr ni =
+  case memAccessBase ptr of
+    Nothing -> return ni
+    Just v ->
+      case valueContent' v of
+        ArgumentC a -> return ni { nullArguments = S.delete a (nullArguments ni) }
+        _ -> return ni
+
+-- | Given a value that is being dereferenced by an instruction
+-- (either a load, store, or atomic memory op), determine the *base*
+-- address that is being dereferenced.
+--
+-- Not all base values need to be analyzed.  For example, globals and
+-- allocas are *always* safe to dereference.
+--
+-- This function strips off intermediate bitcasts.
+memAccessBase :: Value -> Maybe Value
+memAccessBase ptr =
+  case valueContent' ptr of
+    GlobalVariableC _ -> Nothing
+    InstructionC AllocaInst {} -> Nothing
+    -- For optimized code, arguments (which we care about) can be
+    -- loaded/stored to directly (without an intervening alloca).
+    ArgumentC a -> Just (Value a)
+    -- In this case, we have two levels of dereference.  The first
+    -- level (la) is a global or alloca (or result of another
+    -- load/GEP).  This represents a source-level dereference of a
+    -- local pointer.
+    InstructionC LoadInst { loadAddress = la } ->
+      Just (stripBitcasts la)
+    -- GEP instructions can appear in sequence for nested field
+    -- accesses.  We want the base of the access chain, so walk back
+    -- as far as possible and return the lowest-level GEP base.
+    InstructionC GetElementPtrInst { getElementPtrValue = base } ->
+      memAccessBase base
+    _ -> Just (stripBitcasts ptr)
+
+-- | A split out transfer function for function calls.  Looks up
+-- summary values for called functions/params and records relevant
+-- information in the current dataflow fact.
+callTransfer ::  Value
+                -> [Value]
+                -> NullInfo
+                -> AnalysisMonad NullInfo
+callTransfer calledFunc args ni = do
+  cg <- asks callGraph
+  let callTargets = callValueTargets cg calledFunc
+  ni' <- foldM callTransferDispatch ni callTargets
+  -- We also learn information about pointers that are not null if
+  -- this is a call through a function pointer (calling a NULL
+  -- function pointer is illegal)
+  case isIndirectCallee calledFunc of
+    False -> return ni'
+    True -> valueDereferenced calledFunc ni'
+  where
+    callTransferDispatch info target =
+      case valueContent' target of
+        FunctionC f -> do
+          summ <- asks moduleSummary
+          definedFunctionTransfer summ f info args
+        ExternalFunctionC e -> do
+          summ <- asks dependencySummary
+          externalFunctionTransfer summ e info args
+        _ -> $(err "Unexpected value; indirect calls should be resolved")
+
+isIndirectCallee :: Value -> Bool
+isIndirectCallee val =
+  case valueContent' val of
+    FunctionC _ -> False
+    ExternalFunctionC _ -> False
+    _ -> True
+
+definedFunctionTransfer :: SummaryType -> Function
+                           -> NullInfo -> [Value] -> AnalysisMonad NullInfo
+definedFunctionTransfer summ f ni args =
+  foldM markArgNotNullable ni indexedNotNullArgs
+  where
+    errMsg = $err' ("No Function summary for " ++ show (functionName f))
+    formals = functionParameters f
+    notNullableArgs = M.findWithDefault errMsg f summ
+    isNotNullable (a, _) = S.member a notNullableArgs
+    -- | Pairs of not-nullable formals/actuals
+    indexedNotNullArgs = filter isNotNullable $ zip formals args
+    markArgNotNullable info (_, a) =
+      valueDereferenced a info
+
+externalFunctionTransfer :: DependencySummary -> ExternalFunction
+                            -> NullInfo -> [Value] -> AnalysisMonad NullInfo
+externalFunctionTransfer summ e ni args =
+  foldM markIfNotNullable ni indexedArgs
+  where
+    errMsg = "No ExternalFunction summary for " ++ show (externalFunctionName e)
+    indexedArgs = zip [0..] args
+    markIfNotNullable info (ix, arg) =
+      case lookupArgumentSummary summ e ix of
+        Nothing -> do
+          emitWarning Nothing "NullAnalysis" errMsg
+          return info
+        Just attrs -> case PANotNull `elem` attrs of
+          False -> return info
+          True -> valueDereferenced arg info
+
+  {-
   shouldAnalyze <- mustExecute i
   case shouldAnalyze of
     False -> return ni
@@ -439,34 +547,6 @@ recordIfMayBeNull ni ptr =
           in return $! foldl' addUncheckedAccess ni nullVals
 
 
--- | Given a value that is being dereferenced by an instruction
--- (either a load, store, or atomic memory op), determine the *base*
--- address that is being dereferenced.
---
--- Not all base values need to be analyzed.  For example, globals and
--- allocas are *always* safe to dereference.
---
--- This function strips off intermediate bitcasts.
-memAccessBase :: Value -> Maybe Value
-memAccessBase ptr =
-  case valueContent' ptr of
-    GlobalVariableC _ -> Nothing
-    InstructionC AllocaInst {} -> Nothing
-    -- For optimized code, arguments (which we care about) can be
-    -- loaded/stored to directly (without an intervening alloca).
-    ArgumentC a -> Just (Value a)
-    -- In this case, we have two levels of dereference.  The first
-    -- level (la) is a global or alloca (or result of another
-    -- load/GEP).  This represents a source-level dereference of a
-    -- local pointer.
-    InstructionC LoadInst { loadAddress = la } ->
-      Just (stripBitcasts la)
-    -- GEP instructions can appear in sequence for nested field
-    -- accesses.  We want the base of the access chain, so walk back
-    -- as far as possible and return the lowest-level GEP base.
-    InstructionC GetElementPtrInst { getElementPtrValue = base } ->
-      memAccessBase base
-    _ -> Just (stripBitcasts ptr)
 
 
 -- | Record the given @ptr@ as being accessed unchecked.
@@ -585,70 +665,6 @@ process' ni val isNull =
     True -> ni
     False -> recordNotNull val ni
 
--- | A split out transfer function for function calls.  Looks up
--- summary values for called functions/params and records relevant
--- information in the current dataflow fact.
-callTransfer :: NullInfo
-                -> Value
-                -> [Value]
-                -> AnalysisMonad NullInfo
-callTransfer ni calledFunc args = do
-  cg <- asks callGraph
-  let callTargets = callValueTargets cg calledFunc
-  ni' <- foldM callTransferDispatch ni callTargets -- `debug'`
-         -- printf "Call (%s) targets: %s\n" (show (valueName calledFunc)) (show (map valueName callTargets))
-  -- We also learn information about pointers that are not null if
-  -- this is a call through a function pointer (calling a NULL
-  -- function pointer is illegal)
-  case isIndirectCallee calledFunc of
-    False -> return ni'
-    True -> recordIfMayBeNull ni' calledFunc
-  where
-    callTransferDispatch info target = case valueContent' target of
-      FunctionC f -> do
-        summ <- asks moduleSummary
-        definedFunctionTransfer summ f info args
-      ExternalFunctionC e -> do
-        summ <- asks dependencySummary
-        externalFunctionTransfer summ e info args
-      _ -> $(err "Unexpected value; indirect calls should be resolved")
-
-isIndirectCallee :: Value -> Bool
-isIndirectCallee val =
-  case valueContent' val of
-    FunctionC _ -> False
-    ExternalFunctionC _ -> False
-    _ -> True
-
-definedFunctionTransfer :: SummaryType -> Function
-                           -> NullInfo -> [Value] -> AnalysisMonad NullInfo
-definedFunctionTransfer summ f ni args =
-  foldM markArgNotNullable ni indexedNotNullArgs
-  where
-    errMsg = $err' ("No Function summary for " ++ show (functionName f))
-    formals = functionParameters f
-    notNullableArgs = M.findWithDefault errMsg f summ
-    isNotNullable (a, _) = S.member a notNullableArgs
-    -- | Pairs of not-nullable formals/actuals
-    indexedNotNullArgs = filter isNotNullable $ zip formals args
-    markArgNotNullable info (_, a) =
-      recordIfMayBeNull info a
-
-externalFunctionTransfer :: DependencySummary -> ExternalFunction
-                            -> NullInfo -> [Value] -> AnalysisMonad NullInfo
-externalFunctionTransfer summ e ni args =
-  foldM markIfNotNullable ni indexedArgs
-  where
-    errMsg = "No ExternalFunction summary for " ++ show (externalFunctionName e)
-    indexedArgs = zip [0..] args
-    markIfNotNullable info (ix, arg) =
-      case lookupArgumentSummary summ e ix of
-        Nothing -> do
-          emitWarning Nothing "NullAnalysis" errMsg
-          return info
-        Just attrs -> case PANotNull `elem` attrs of
-          False -> return info
-          True -> recordIfMayBeNull info arg
 
 -- Helpers
 toArg :: Value -> Maybe Argument
@@ -672,6 +688,7 @@ recordPossiblyNull v ni = ni { mayBeNull = S.insert v (mayBeNull ni) }
 
 recordNotNull :: Value -> NullInfo -> NullInfo
 recordNotNull v ni = ni { mayBeNull = S.delete v (mayBeNull ni) }
+-}
 
 -- Testing
 

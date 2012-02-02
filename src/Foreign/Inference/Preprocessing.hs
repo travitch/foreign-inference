@@ -33,7 +33,7 @@ import Data.LLVM.Environment
 -- blowing up the IR)
 requiredOptimizations :: [String]
 requiredOptimizations = [ "-mem2reg" -- Promotes memory references to registers
-                        -- , "-gvn"     -- Unifies identical values
+                        , "-gvn"     -- Unifies identical values
                         , "-basicaa" -- Disambiguates trivial aliases
                         , "-disable-inlining"
                         ]

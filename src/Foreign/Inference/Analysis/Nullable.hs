@@ -176,16 +176,6 @@ data NullData = ND { moduleSummary :: SummaryType
                    , domTree :: DominatorTree
                    }
 
--- Instead of a dataflow analysis, we can do simple graph reachability
--- (ignoring backedges).  If we can prove that a branch isn't possible
--- under our NULL @p@ assumption, that branch target is not reachable
--- and we don't need to explore further.  We can also stop as soon as
--- we hit ret.  Explore depth-first.  Stop exploring a branch if bad
--- code is hit (e.g., null deref).  Since we know what path we are on,
--- we can resolve phi nodes to their actual values.  Accumulate facts
--- about pointers that are not null as we progress (have been
--- dereferenced).
-
 data NullState = NState { phiCache :: HashMap Instruction (Maybe Value) }
 
 data NullInfo = NInfo { nullArguments :: Set Argument
@@ -230,6 +220,7 @@ nullableAnalysis f summ = do
       fact0 = top { nullArguments = S.fromList args }
   localInfo <- local envMod (forwardBlockDataflow fact0 f)
 
+  -- FIXME: Filter out unreachable exit nodes (use the CFG)
   let getInstInfo i = local envMod (dataflowResult localInfo i)
   exitInfo <- mapM getInstInfo (functionExitInstructions f)
   let exitInfo' = meets exitInfo
@@ -409,7 +400,8 @@ mustExec' :: Instruction -> [(Value, Value)] -> AnalysisMonad (Maybe Value)
 mustExec' i ivs = do
   cdg <- asks controlDepGraph
   dt <- asks domTree
-  case controlDependencies cdg i of
+  let cdeps = directControlDependencies cdg i
+  case cdeps of
     [] -> return Nothing
     [_] -> do
       let predTerms = map (id *** (basicBlockTerminatorInstruction . toBB)) ivs

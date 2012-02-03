@@ -220,7 +220,6 @@ nullableAnalysis f summ = do
       fact0 = top { nullArguments = S.fromList args }
   localInfo <- local envMod (forwardBlockDataflow fact0 f)
 
-  -- FIXME: Filter out unreachable exit nodes (use the CFG)
   let getInstInfo i = local envMod (dataflowResult localInfo i)
   exitInfo <- mapM getInstInfo (functionExitInstructions f)
   let exitInfo' = meets exitInfo

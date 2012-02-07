@@ -169,6 +169,7 @@ data DependencySummary = DS { depSummary :: DepMap }
 -- by 'loadDependencies''.
 data StdLib = CStdLib
             | CxxStdLib
+            | LLVMLib
             deriving (Show)
 
 -- | An interface for analyses to implement in order to annotate
@@ -217,7 +218,7 @@ saveModule summaryDir name deps m summaries = do
 -- This variant will automatically include the C standard library (and
 -- eventually the C++ standard library).
 loadDependencies :: [FilePath] -> [String] -> IO DependencySummary
-loadDependencies = loadDependencies' [CStdLib]
+loadDependencies = loadDependencies' [CStdLib, LLVMLib]
 
 
 -- | The same as 'loadDependencies', except it gives the option of not
@@ -231,6 +232,7 @@ loadDependencies' includeStd summaryDirs deps = do
   where
     addStdlibDeps ds CStdLib = "c" : "m" : ds
     addStdlibDeps ds CxxStdLib = "stdc++" : ds
+    addStdlibDeps ds LLVMLib = "llvm" : ds
 
 -- | Load all of the dependencies requested (transitively).  This just
 -- iterates loading interfaces and recording all of the new

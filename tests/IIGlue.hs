@@ -24,6 +24,7 @@ import Foreign.Inference.Preprocessing
 import Foreign.Inference.Analysis.Array
 import Foreign.Inference.Analysis.Nullable
 import Foreign.Inference.Analysis.Output
+import Foreign.Inference.Analysis.Return
 
 cmdOpts :: Opts -> Mode Opts
 cmdOpts defs = mode "IIGlue" defs desc bitcodeArg as
@@ -95,8 +96,13 @@ dump opts name m = do
   let (s, nullDiags) = identifyNullable ds m cg
       (o, outDiags) = identifyOutput ds cg
       (a, arrayDiags) = identifyArrays ds cg
-      diags = mconcat [ nullDiags, arrayDiags, outDiags ]
-      summaries = [ModuleSummary s, ModuleSummary a, ModuleSummary o]
+      (r, retDiags) = identifyReturns ds cg
+      diags = mconcat [ nullDiags, arrayDiags, outDiags, retDiags ]
+      summaries = [ ModuleSummary s
+                  , ModuleSummary a
+                  , ModuleSummary o
+                  , ModuleSummary r
+                  ]
   case formatDiagnostics (diagnosticLevel opts) diags of
     Nothing -> return ()
     Just diagString -> putStrLn diagString

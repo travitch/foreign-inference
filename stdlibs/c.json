@@ -840,10 +840,33 @@
           ]
         },
         { "foreignFunctionName": "abort",
-          "foreignFunctionAnnotations": [],
+          "foreignFunctionAnnotations": [{"FANoRet":[]}],
           "foreignFunctionLinkage": { "LinkDefault": [] },
           "foreignFunctionReturnType": {"CVoid": []},
           "foreignFunctionParameters": []
+        },
+        { "foreignFunctionName": "__assert_fail",
+          "foreignFunctionAnnotations": [{"FANoRet":[]}],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CVoid": []},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PAString":[]}, {"PAArray":1}, {"PAConst":[]}],
+                "parameterName": "assertion",
+                "parameterType": {"CPointer": {"CInt":8}}
+              },
+              { "parameterAnnotations": [{"PAString":[]}, {"PAArray":1}, {"PAConst":[]}],
+                "parameterName": "file",
+                "parameterType": {"CPointer": {"CInt":8}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "line",
+                "parameterType": {"CInt":32}
+              },
+              { "parameterAnnotations": [{"PAString":[]}, {"PAArray":1}, {"PAConst":[]}],
+                "parameterName": "function",
+                "parameterType": {"CPointer": {"CInt":8}}
+              }
+          ]
         },
         { "foreignFunctionName": "atexit",
           "foreignFunctionAnnotations": [],
@@ -857,7 +880,7 @@
           ]
         },
         { "foreignFunctionName": "exit",
-          "foreignFunctionAnnotations": [],
+          "foreignFunctionAnnotations": [{"FANoRet":[]}],
           "foreignFunctionLinkage": { "LinkDefault": [] },
           "foreignFunctionReturnType": {"CVoid": []},
           "foreignFunctionParameters": [

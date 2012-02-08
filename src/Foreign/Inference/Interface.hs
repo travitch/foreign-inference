@@ -32,6 +32,7 @@ module Foreign.Inference.Interface (
   StdLib(..),
   -- * Functions
   lookupArgumentSummary,
+  lookupFunctionSummary,
   loadDependencies,
   loadDependencies',
   moduleToLibraryInterface,
@@ -93,6 +94,7 @@ instance ToJSON ParamAnnotation
 --
 -- * FAReentrant (use to halt at runtime if called from different threads).
 data FuncAnnotation = FAAllocator String -- ^ Record the associated finalizer
+                    | FANoRet -- ^ The function does not return to the caller
                     | FAVarArg
                     deriving (Show, Generic, Eq, Ord)
 instance FromJSON FuncAnnotation
@@ -354,6 +356,13 @@ lookupArgumentSummary ds ef ix =
     fname = identifierContent $ externalFunctionName ef
     summ = depSummary ds
     fsum = M.lookup fname summ
+
+lookupFunctionSummary :: DependencySummary -> ExternalFunction -> Maybe [FuncAnnotation]
+lookupFunctionSummary ds ef = do
+  let fname = identifierContent $ externalFunctionName ef
+      summ = depSummary ds
+  fsum <- M.lookup fname summ
+  return (foreignFunctionAnnotations fsum)
 
 isVarArg :: ExternalFunction -> Bool
 isVarArg ef = isVa

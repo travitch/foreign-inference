@@ -155,7 +155,9 @@ indexPageFunctionEntry r f = do
       commaSepList args (indexPageArgument r)
       ") -> "
       H.span ! A.class_ "code-type" $ toHtml (show fretType)
+      functionAnnotations fannots
   where
+    fannots = concatMap (summarizeFunction' f) (reportSummaries r)
     fname = decodeUtf8 (identifierContent (functionName f))
     -- Use a bit of trickery to flag when we need to insert commas
     -- after arguments (so we don't end up with a trailing comma in
@@ -183,6 +185,11 @@ indexArgumentAnnotations annots = do
     commaSepList annots (toHtml . show)
     "] */"
 
+functionAnnotations :: [FuncAnnotation] -> Html
+functionAnnotations [] = return ()
+functionAnnotations annots = do
+  H.span ! A.class_ "code-comment" $ do
+    " /* [" >> commaSepList annots (toHtml . show) >> "] */"
 
 -- Helpers
 

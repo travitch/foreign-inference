@@ -93,7 +93,7 @@ dump opts name m = do
       repo = repositoryLocation opts
   ds <- loadDependencies [repo] deps
 
-  let (s, nullDiags) = identifyNullable ds m cg
+  let (s, nullDiags) = identifyNullable ds m cg r
       (o, outDiags) = identifyOutput ds cg
       (a, arrayDiags) = identifyArrays ds cg
       (r, retDiags) = identifyReturns ds cg

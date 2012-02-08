@@ -12,4 +12,6 @@ char* pcre_find_bracket(char *code) {
       code += x;
     }
   }
+
+  return 0;
 }

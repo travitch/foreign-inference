@@ -16,6 +16,7 @@ import Data.LLVM.Testing
 import Foreign.Inference.Interface
 import Foreign.Inference.Preprocessing
 import Foreign.Inference.Analysis.Nullable
+import Foreign.Inference.Analysis.Return
 
 main :: IO ()
 main = do
@@ -34,7 +35,8 @@ main = do
   where
     parser = parseLLVMFile defaultParserOptions
 
-analyzeNullable ds m = nullSummaryToTestFormat $ fst $ identifyNullable ds m cg
+analyzeNullable ds m = nullSummaryToTestFormat $ fst $ identifyNullable ds m cg r
   where
     pta = runPointsToAnalysis m
     cg = mkCallGraph m pta []
+    (r,_) = identifyReturns ds cg

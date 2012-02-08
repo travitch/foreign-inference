@@ -125,6 +125,7 @@ import Data.LLVM.Analysis.Dominance
 
 import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
+import Foreign.Inference.Analysis.Return
 
 -- import Text.Printf
 -- import Debug.Trace
@@ -159,18 +160,20 @@ summarizeNullArgument a (NS s) = case a `S.member` nonNullableArgs of
 
 -- | The top-level entry point of the nullability analysis
 identifyNullable :: DependencySummary -> Module -> CallGraph
+                    -> ReturnSummary
                     -> (NullableSummary, Diagnostics)
-identifyNullable ds m cg = (NS res, diags)
+identifyNullable ds m cg retSumm = (NS res, diags)
   where
     s0 = M.fromList $ zip (moduleDefinedFunctions m) (repeat S.empty)
     analysis = callGraphSCCTraversal cg nullableAnalysis s0
-    constData = ND M.empty ds cg undefined undefined
+    constData = ND M.empty ds cg retSumm undefined undefined
     cache = NState HM.empty
     (res, diags) = evalRWS analysis constData cache
 
 data NullData = ND { moduleSummary :: SummaryType
                    , dependencySummary :: DependencySummary
                    , callGraph :: CallGraph
+                   , returnSummary :: ReturnSummary
                    , controlDepGraph :: CDG
                    , domTree :: DominatorTree
                    }
@@ -215,7 +218,8 @@ nullableAnalysis f summ = do
                    , controlDepGraph = controlDependenceGraph cfg
                    , domTree = dominatorTree cfg
                    }
-      args = functionParameters f
+      args = filter isPointer (functionParameters f)
+--      args = functionParameters f
       fact0 = top { nullArguments = S.fromList args }
   localInfo <- local envMod (forwardBlockDataflow fact0 f)
 
@@ -324,10 +328,17 @@ callTransfer calledFunc args ni = do
       case valueContent' target of
         FunctionC f -> do
           summ <- asks moduleSummary
-          definedFunctionTransfer summ f info args
+          retSumm <- asks returnSummary
+          case FANoRet `elem` summarizeFunction f retSumm of
+            False -> definedFunctionTransfer summ f info args
+            True -> return top
         ExternalFunctionC e -> do
           summ <- asks dependencySummary
-          externalFunctionTransfer summ e info args
+          case lookupFunctionSummary summ e of
+            Nothing -> externalFunctionTransfer summ e info args
+            Just s -> case FANoRet `elem` s of
+              True -> return top
+              False -> externalFunctionTransfer summ e info args
         _ -> $(err "Unexpected value; indirect calls should be resolved")
 
 isIndirectCallee :: Value -> Bool
@@ -424,6 +435,10 @@ mustExec' i ivs = do
     isUnconditional _ = False
     isNotBackedge g inst (_, br) = not (dominates g inst br)
 
+isPointer :: (IsValue v) => v -> Bool
+isPointer v = case valueType v of
+  TypePointer _ _ -> True
+  _ -> False
 
   {-
   shouldAnalyze <- mustExecute i

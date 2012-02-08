@@ -8,7 +8,6 @@ module Foreign.Inference.Analysis.Output (
   identifyOutput
   ) where
 
-import Algebra.Lattice
 import Control.Monad.RWS.Strict
 import Data.HashSet ( HashSet )
 import qualified Data.HashSet as HS

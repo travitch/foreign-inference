@@ -105,7 +105,6 @@ module Foreign.Inference.Analysis.Nullable (
   nullSummaryToTestFormat
   ) where
 
-import Algebra.Lattice
 import Control.Arrow
 import Control.Monad.RWS.Strict
 import Data.Map ( Map )
@@ -234,6 +233,11 @@ nullableAnalysis f summ = do
 -- to identify pointers that are dereferenced when they *might* be
 -- NULL.  Also map these possibly-NULL pointers to any corresponding
 -- parameters.
+--
+-- FIXME: If an instruction is *bad* by some definition of bad, empty
+-- out the list of reaching arguments.  For example, need to do this
+-- on calls to exit for now.  Will get additional info from the error
+-- analysis.
 nullTransfer :: NullInfo
                 -> Instruction
                 -> [CFGEdge]

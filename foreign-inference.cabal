@@ -41,7 +41,7 @@ library
                  llvm-analysis, deepseq,
                  -- For the reporting code
                  archive-inspection, directory, attoparsec >= 0.10 && < 1.0, ascii,
-                 blaze-html >= 0.4, highlighting-kate >= 0.4, blaze-builder >= 0.3,
+                 blaze-html >= 0.4, highlighting-kate >= 0.5, blaze-builder >= 0.3,
                  parallel-io
   ghc-options: -Wall -funbox-strict-fields
   ghc-prof-options: -auto-all

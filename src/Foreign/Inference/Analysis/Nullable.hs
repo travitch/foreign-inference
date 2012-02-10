@@ -219,7 +219,6 @@ nullableAnalysis f summ = do
                    , domTree = dominatorTree cfg
                    }
       args = filter isPointer (functionParameters f)
---      args = functionParameters f
       fact0 = top { nullArguments = S.fromList args }
   localInfo <- local envMod (forwardBlockDataflow fact0 f)
 
@@ -237,16 +236,16 @@ nullableAnalysis f summ = do
 -- to identify pointers that are dereferenced when they *might* be
 -- NULL.  Also map these possibly-NULL pointers to any corresponding
 -- parameters.
---
--- FIXME: If an instruction is *bad* by some definition of bad, empty
--- out the list of reaching arguments.  For example, need to do this
--- on calls to exit for now.  Will get additional info from the error
--- analysis.
 nullTransfer :: NullInfo
                 -> Instruction
                 -> [CFGEdge]
                 -> AnalysisMonad NullInfo
-nullTransfer ni i _ =
+nullTransfer ni i es =
+  let ni' = removeNonNullPointers ni es
+  in transfer' ni' i
+
+transfer' :: NullInfo -> Instruction -> AnalysisMonad NullInfo
+transfer' ni i =
   case i of
     LoadInst { loadAddress = ptr } ->
       valueDereferenced ptr ni
@@ -440,212 +439,6 @@ isPointer v = case valueType v of
   TypePointer _ _ -> True
   _ -> False
 
-  {-
-  shouldAnalyze <- mustExecute i
-  case shouldAnalyze of
-    False -> return ni
-    True ->
-      let ni' = removeNonNullPointers ni edges
-      in nullTransfer' ni' i edges
-
-nullTransfer' :: NullInfo
-                 -> Instruction
-                 -> [CFGEdge]
-                 -> AnalysisMonad NullInfo
-nullTransfer' ni' i _ =
-  case i of
-    CallInst { callFunction = calledFunc, callArguments = args } -> do
-      ni'' <- callTransfer ni' (stripBitcasts calledFunc) (map fst args)
-      return $! recordPossiblyNull (Value i) ni''
-    InvokeInst { invokeFunction = calledFunc, invokeArguments = args } -> do
-      ni'' <- callTransfer ni' (stripBitcasts calledFunc) (map fst args)
-      return $! recordPossiblyNull (Value i) ni''
-
-    -- Stack allocated pointers start off as NULL
-    AllocaInst {} -> case isPointerPointer i of
-      True -> return $! recordPossiblyNull (Value i) ni'
-      False -> return ni'
-
-    SelectInst {} -> return $! recordPossiblyNull (Value i) ni'
-
-    VaArgInst {} -> return $! recordPossiblyNull (Value i) ni'
-
-    -- GEP instructions produce a pointer value from another pointer.
-    -- If the original base pointer was NULL, then the result is NULL.
-    GetElementPtrInst { getElementPtrValue = v } ->
-      case stripBitcasts v `S.member` mayBeNull ni' of
-        False -> return ni'
-        True -> return $! recordPossiblyNull (Value i) ni'
-
-    -- Attempt at handling loads and stores more simply and uniformly.
-
-    LoadInst { loadAddress = ptr } -> do
-      ni'' <- recordIfMayBeNull ni' ptr
-      case isPointer i of
-        False -> return ni''
-        -- The pointer that is returned is always considered to be
-        -- possibly null
-        True -> return $! recordPossiblyNull (Value i) ni''
-    StoreInst { storeAddress = ptr } -> recordIfMayBeNull ni' ptr
-
-    AtomicRMWInst { atomicRMWPointer = ptr } -> do
-      ni'' <- recordIfMayBeNull ni' ptr
-      return $! recordPossiblyNull (Value i) ni''
-
-    AtomicCmpXchgInst { atomicCmpXchgPointer = ptr
-                      , atomicCmpXchgNewValue = newVal } -> do
-      ni'' <- recordIfMayBeNull ni' ptr
-      case isPointer newVal of
-        False -> return ni''
-        True -> return $! maybeClobber ni'' ptr newVal
-
-    _ -> return ni'
-
--- We can tell that a piece of code MUST execute if:
---
--- 1) It has no control dependencies, or
---
--- 2) It has exactly one control dependency (a direct one, and no
--- indirect cdeps) AND all incoming non-backedges are unconditional
--- branches.
-mustExecute :: Instruction -> AnalysisMonad Bool
-mustExecute i = do
-  s <- get
-  case HM.lookup i (execCache s) of
-    Just b -> return b
-    Nothing -> do
-      b <- mustExec' i
-      s' <- get
-      put s' { execCache = HM.insert i b (execCache s') }
-      return b
-
-mustExec' :: Instruction -> AnalysisMonad Bool
-mustExec' i = do
-  cdg <- asks controlDepGraph
-  dt <- asks domTree
-  case controlDependencies cdg i of
-    [] -> return True
-    [_] -> do
-      let Just bb = instructionBasicBlock i
-          preds = basicBlockPredecessors (cdgCFG cdg) bb
-          terms = map basicBlockTerminatorInstruction preds
-          nonBackedges = filter (isNotBackedge dt i) terms
-
-      return $! all isUnconditional nonBackedges
-    _ -> return False
-  where
-    isUnconditional UnconditionalBranchInst {} = True
-    isUnconditional _ = False
-    isNotBackedge g inst br = not (dominates g inst br)
-
--- | At each Phi function, we can say that the Phi value is not null if
--- all of its incoming values are not null on their respective
--- branches.
---
--- Otherwise, if any incoming value may be NULL, the phi node is NULL
--- too.
---
--- We process all Phi instructions in parallel.  Each one corresponds
--- to one variable.  Our job here is to decide which phi variables are
--- definitely not null and to remove them from the null info (and mark
--- the rest as possibly null).
---
--- A phi node is considered to be not-null if all of its incoming
--- values that are Arguments are not-null on their respective
--- branches.  The rationale for this is that only Arguments are really
--- under the control of the caller; if the function checks the
--- argument against null and replaces null arguments with some other
--- value of its own, that means that it has some (intended) non-fatal
--- alternative behavior for null arguments.
-nullPhiTransfer :: [Instruction] -> [(BasicBlock, NullInfo, CFGEdge)]
-                   -> AnalysisMonad NullInfo
-nullPhiTransfer phis incomingEdges = do
-  let (newNotNullVals, newNullVals) = partition (phiIsNotNull incomingEdges) phis
-      ni' = foldr (recordPossiblyNull . Value) ni newNullVals
-  return $! foldr (recordNotNull . Value) ni' newNotNullVals
-  where
-    ni = meets $ map (\(_, i, _) -> i) incomingEdges
-    phiIsNotNull es PhiNode { phiIncomingValues = pvs } =
-      all (argNotNullOnIncoming es) pvs
-    phiIsNotNull _ i = $err' ("Non-phi instruction: " ++ show i)
-
-lookup3 :: (Eq a) => a -> [(a, b, c)] -> Maybe (a, b, c)
-lookup3 k = find (\(k', _, _) -> k == k')
-
-argNotNullOnIncoming :: [(BasicBlock, NullInfo, CFGEdge)]
-                        -> (Value, Value)
-                        -> Bool
-argNotNullOnIncoming predOuts (v, bbv) =
-  case valueContent' v of
-    ArgumentC _ ->
-      case valueContent bbv of
-        BasicBlockC bb ->
-          case bb `lookup3` predOuts of
-            Nothing -> $err' ("No predecessor value for " ++ show bbv)
-            Just (_, ni, e) ->
-              let ni' = removeNonNullPointers ni [e]
-                  isNull = v `S.member` mayBeNull ni'
-              in not isNull
-        _ -> $err' ("Not a basic block: " ++ show bbv)
-    -- If it isn't an argument, don't count it against the phi node.
-    -- Only arguments are provided by the caller.  If the value is not
-    -- provided by the caller, assume that the library is doing
-    -- something reasonable and safe internally.
-    _ -> True
-
--- | Clobber the value of @ptr@ (mark it as possibly NULL due to
--- assignment).
-maybeClobber :: NullInfo -> Value -> Value -> NullInfo
-maybeClobber ni ptr _ {-newVal-} = recordPossiblyNull ptr ni
-
-recordIfMayBeNull :: NullInfo -> Value -> AnalysisMonad NullInfo
-recordIfMayBeNull ni ptr =
-  -- If we don't get a base pointer, don't bother reasoning about this
-  -- value.  Some values are always safe (allocas and globals are
-  -- always valid pointers, even if the pointers they *contain* might
-  -- not be).
-  maybe (return ni) checkBase (memAccessBase ptr)
-  where
-    checkBase b =
-      case b `S.member` mayBeNull ni of
-        -- There was an explicit check to ensure that the pointer in
-        -- this operation was not NULL, so we know for sure that it is
-        -- safe.
-        False -> return ni
-        -- In this case, there was no explicit test for the pointer in
-        -- use.  However, if this is a phi or select instruction then
-        -- we might have some information about some of the incoming
-        -- values that must not be NULL.  Do not report these known to
-        -- be not-null pointers.
-        --
-        -- Again in the case of Phi nodes,
-        True ->
-          let nullVals = filter (`S.member` mayBeNull ni) (flattenValue b)
-          in return $! foldl' addUncheckedAccess ni nullVals
-
-
-
-
--- | Record the given @ptr@ as being accessed unchecked.
--- Additionally, determine which function arguments @ptr@ may alias at
--- this program point (based on the points-to escape graph) and also
--- record that as being accessed unchecked.
---
--- FIXME: Look into adding a separate annotation here for arguments
--- that *may* be accessed unchecked versus arguments that *must* be
--- accessed unchecked.  Just check the size of the set returned by
--- argumentsForValue to determine which case we are in.
-addUncheckedAccess :: NullInfo -> Value -> NullInfo
-addUncheckedAccess ni ptr =
-  let ni' = ni { accessedUnchecked = accessedUnchecked ni `S.union` newUnchecked }
-  in ni'
-  where
-    -- | FIXME: Here is the spot we need to pick out arguments
-    args = case valueContent' ptr of
-      ArgumentC a -> [Value a]
-      _ -> []
-    newUnchecked = S.fromList (ptr : args)
-
 -- | Examine the incoming edges and, if any tell us that a variable is
 -- *not* NULL, remove that variable from the set of maybe null
 -- pointers.
@@ -671,101 +464,28 @@ removeNonNullPointers ni _ = ni
 processCFGEdge :: NullInfo -> (Bool -> Bool) -> Value -> NullInfo
 processCFGEdge ni cond v = case valueContent v of
   InstructionC ICmpInst { cmpPredicate = ICmpEq
-                        , cmpV1 = (valueContent' -> InstructionC LoadInst { loadAddress = v1 } )
+                        , cmpV1 = (valueContent' -> ArgumentC v1)
                         , cmpV2 = (valueContent -> ConstantC ConstantPointerNull {}) } ->
     process' ni v1 (cond True)
   InstructionC ICmpInst { cmpPredicate = ICmpEq
-                        , cmpV1 = (valueContent' -> ArgumentC v1)
-                        , cmpV2 = (valueContent -> ConstantC ConstantPointerNull {}) } ->
-    process' ni (Value v1) (cond True)
-  InstructionC ICmpInst { cmpPredicate = ICmpEq
-                        , cmpV1 = (valueContent' -> InstructionC v1@PhiNode {})
-                        , cmpV2 = (valueContent -> ConstantC ConstantPointerNull {}) } ->
-    process' ni (Value v1) (cond True)
-
-  InstructionC ICmpInst { cmpPredicate = ICmpEq
-                        , cmpV2 = (valueContent' -> InstructionC LoadInst { loadAddress = v2 } )
-                        , cmpV1 = (valueContent -> ConstantC ConstantPointerNull {}) } ->
-    process' ni v2 (cond True)
-  InstructionC ICmpInst { cmpPredicate = ICmpEq
                         , cmpV2 = (valueContent' -> ArgumentC v2)
                         , cmpV1 = (valueContent -> ConstantC ConstantPointerNull {}) } ->
-    process' ni (Value v2) (cond True)
-  InstructionC ICmpInst { cmpPredicate = ICmpEq
-                        , cmpV2 = (valueContent' -> InstructionC v2@PhiNode {})
-                        , cmpV1 = (valueContent -> ConstantC ConstantPointerNull {}) } ->
-    process' ni (Value v2) (cond True)
-
+    process' ni v2 (cond True)
   InstructionC ICmpInst { cmpPredicate = ICmpNe
-                        , cmpV1 = (valueContent' -> InstructionC LoadInst { loadAddress = v1 } )
+                        , cmpV1 = (valueContent' -> ArgumentC v1)
                         , cmpV2 = (valueContent -> ConstantC ConstantPointerNull {}) } ->
     process' ni v1 (cond False)
   InstructionC ICmpInst { cmpPredicate = ICmpNe
-                        , cmpV1 = (valueContent' -> ArgumentC v1)
-                        , cmpV2 = (valueContent -> ConstantC ConstantPointerNull {}) } ->
-    process' ni (Value v1) (cond False)
-  InstructionC ICmpInst { cmpPredicate = ICmpNe
-                        , cmpV1 = (valueContent' -> InstructionC v1@PhiNode{})
-                        , cmpV2 = (valueContent -> ConstantC ConstantPointerNull {}) } ->
-    process' ni (Value v1) (cond False)
-
-  InstructionC ICmpInst { cmpPredicate = ICmpNe
-                        , cmpV2 = (valueContent' -> InstructionC LoadInst { loadAddress = v2 } )
-                        , cmpV1 = (valueContent -> ConstantC ConstantPointerNull {}) } ->
-    process' ni v2 (cond False)
-  InstructionC ICmpInst { cmpPredicate = ICmpNe
                         , cmpV2 = (valueContent' -> ArgumentC v2)
                         , cmpV1 = (valueContent -> ConstantC ConstantPointerNull {}) } ->
-    process' ni (Value v2) (cond False)
-  InstructionC ICmpInst { cmpPredicate = ICmpNe
-                        , cmpV2 = (valueContent' -> InstructionC v2@PhiNode{})
-                        , cmpV1 = (valueContent -> ConstantC ConstantPointerNull {}) } ->
-    process' ni (Value v2) (cond False)
-  -- FIXME: Do we need these separate cases here?  We don't really
-  -- care what type of value v1 and v2 are...
-
-  -- FIXME: If we use gvn, we need to be able to handle conditions
-  -- that are Phi nodes here.  One approach would be to accumulate all
-  -- of the (Value, IsNull) pairs here and, if they are all the same,
-  -- conclude that the value is indeed null...
-  --
-  -- GVN is useful to look through some memory references to improve
-  -- precision, so this would be worth trying.  On the other hand, it
-  -- could potentially make this analysis a little imprecise if GVN is
-  -- too aggressive and combines unrelated branches.
-
+    process' ni v2 (cond False)
   _ -> ni
 
-process' :: NullInfo -> Value -> Bool -> NullInfo
-process' ni val isNull =
+process' :: NullInfo -> Argument -> Bool -> NullInfo
+process' ni arg isNull =
   case isNull of
     True -> ni
-    False -> recordNotNull val ni
-
-
--- Helpers
-toArg :: Value -> Maybe Argument
-toArg v = case valueContent v of
-  ArgumentC a -> Just a
-  _ -> Nothing
-
-isPointer :: IsValue a => a -> Bool
-isPointer v = case valueType v of
-  TypePointer _ _ -> True
-  _ -> False
-
-isPointerPointer :: IsValue a => a -> Bool
-isPointerPointer v = case valueType v of
-  TypePointer (TypePointer _ _) _ -> True
-  _ -> False
-
--- | Helper to record a possibly null pointer into a dataflow fact
-recordPossiblyNull :: Value -> NullInfo -> NullInfo
-recordPossiblyNull v ni = ni { mayBeNull = S.insert v (mayBeNull ni) }
-
-recordNotNull :: Value -> NullInfo -> NullInfo
-recordNotNull v ni = ni { mayBeNull = S.delete v (mayBeNull ni) }
--}
+    False -> ni { nullArguments = arg `S.delete` nullArguments ni }
 
 -- Testing
 

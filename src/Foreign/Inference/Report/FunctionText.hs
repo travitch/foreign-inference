@@ -79,6 +79,10 @@ contentAndSubBody = do
                        , rest
                        ]
 
+isSubprogramMetadata :: Metadata -> Bool
+isSubprogramMetadata Metadata { metaValueContent = MetaDWSubprogram {} } = True
+isSubprogramMetadata _ = False
+
 -- | Make a best effort to find the implementation of the given
 -- Function in its associated source archive.  The lookup is based on
 -- debugging metadata (and will fail early if there is none).
@@ -87,19 +91,22 @@ contentAndSubBody = do
 -- to try to isolate the body of the function in the file.
 getFunctionText :: ArchiveIndex -> Function -> Maybe (FilePath, Int, ByteString)
 getFunctionText a func = do
-  let [md] = functionMetadata func
-      md' = metaValueContent md
-      line = metaSubprogramLine md'
-  ctxt <- metaSubprogramContext md'
+  let mds = filter isSubprogramMetadata $ functionMetadata func
+  case mds of
+    [md] -> do
+      let md' = metaValueContent md
+          line = metaSubprogramLine md'
+      ctxt <- metaSubprogramContext md'
 
-  let ctxt' = metaValueContent ctxt
-      f = metaFileSourceFile ctxt'
-      d = metaFileSourceDir ctxt'
-      absSrcFile = BSC.unpack d </> BSC.unpack f
+      let ctxt' = metaValueContent ctxt
+          f = metaFileSourceFile ctxt'
+          d = metaFileSourceDir ctxt'
+          absSrcFile = BSC.unpack d </> BSC.unpack f
 
-  bs <- entryContentSuffix a absSrcFile
-  let functionText = P.parse (isolator (fromIntegral line)) bs
+      bs <- entryContentSuffix a absSrcFile
+      let functionText = P.parse (isolator (fromIntegral line)) bs
 
-      mkTuple txt = Just (absSrcFile, fromIntegral line, txt)
+          mkTuple txt = Just (absSrcFile, fromIntegral line, txt)
 
-  maybe Nothing mkTuple (P.maybeResult functionText)
+      maybe Nothing mkTuple (P.maybeResult functionText)
+    _ -> Nothing

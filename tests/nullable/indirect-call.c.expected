@@ -1,3 +1,2 @@
-fromList [ ("@f", fromList ["%a", "%b"])
-         , ("@neitherNullable", fromList ["%a", "%b"])
+fromList [ ("@neitherNullable", fromList ["%a", "%b"])
          ]

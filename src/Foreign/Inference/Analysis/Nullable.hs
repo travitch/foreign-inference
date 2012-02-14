@@ -313,32 +313,27 @@ callTransfer ::  Value
                 -> NullInfo
                 -> AnalysisMonad NullInfo
 callTransfer calledFunc args ni = do
-  cg <- asks callGraph
-  let callTargets = callValueTargets cg calledFunc
-  ni' <- foldM callTransferDispatch ni callTargets
+  ni' <- case valueContent' calledFunc of
+    FunctionC f ->do
+      summ <- asks moduleSummary
+      retSumm <- asks returnSummary
+      case FANoRet `elem` summarizeFunction f retSumm of
+        False -> definedFunctionTransfer summ f ni args
+        True -> return top
+    ExternalFunctionC e ->  do
+      summ <- asks dependencySummary
+      case lookupFunctionSummary summ e of
+        Nothing -> externalFunctionTransfer summ e ni args
+        Just s -> case FANoRet `elem` s of
+          True -> return top
+          False -> externalFunctionTransfer summ e ni args
+    _ -> return ni
   -- We also learn information about pointers that are not null if
   -- this is a call through a function pointer (calling a NULL
   -- function pointer is illegal)
   case isIndirectCallee calledFunc of
     False -> return ni'
     True -> valueDereferenced calledFunc ni'
-  where
-    callTransferDispatch info target =
-      case valueContent' target of
-        FunctionC f -> do
-          summ <- asks moduleSummary
-          retSumm <- asks returnSummary
-          case FANoRet `elem` summarizeFunction f retSumm of
-            False -> definedFunctionTransfer summ f info args
-            True -> return top
-        ExternalFunctionC e -> do
-          summ <- asks dependencySummary
-          case lookupFunctionSummary summ e of
-            Nothing -> externalFunctionTransfer summ e info args
-            Just s -> case FANoRet `elem` s of
-              True -> return top
-              False -> externalFunctionTransfer summ e info args
-        _ -> $(err "Unexpected value; indirect calls should be resolved")
 
 isIndirectCallee :: Value -> Bool
 isIndirectCallee val =

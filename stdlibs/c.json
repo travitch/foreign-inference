@@ -890,6 +890,17 @@
               }
           ]
         },
+        { "foreignFunctionName": "_exit",
+          "foreignFunctionAnnotations": [{"FANoRet":[]}],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CVoid": []},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PAFinalize":[]}],
+                "parameterName": "status",
+                "parameterType": {"CInt": 32}
+              }
+          ]
+        },
         { "foreignFunctionName": "getenv",
           "foreignFunctionAnnotations": [],
           "foreignFunctionLinkage": { "LinkDefault": [] },

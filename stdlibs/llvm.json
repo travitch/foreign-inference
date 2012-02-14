@@ -30,6 +30,33 @@
               }
           ]
         },
+        { "foreignFunctionName": "llvm.memcpy.p0i8.p0i8.i32",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CVoid": []},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "dest",
+                "parameterType": {"CPointer": {"CVoid": []}}
+              },
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "src",
+                "parameterType": {"CPointer": {"CVoid": []}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "len",
+                "parameterType": {"CInt": 64}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "align",
+                "parameterType": {"CInt": 32}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "isvolatile",
+                "parameterType": {"CInt": 1}
+              }
+          ]
+        },
         { "foreignFunctionName": "llvm.memmove.p0i8.p0i8.i64",
           "foreignFunctionAnnotations": [],
           "foreignFunctionLinkage": { "LinkDefault": [] },
@@ -57,7 +84,61 @@
               }
           ]
         },
+        { "foreignFunctionName": "llvm.memmove.p0i8.p0i8.i32",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CVoid": []},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "dest",
+                "parameterType": {"CPointer": {"CVoid": []}}
+              },
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "src",
+                "parameterType": {"CPointer": {"CVoid": []}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "len",
+                "parameterType": {"CInt": 64}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "align",
+                "parameterType": {"CInt": 32}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "isvolatile",
+                "parameterType": {"CInt": 1}
+              }
+          ]
+        },
         { "foreignFunctionName": "llvm.memset.p0i8.i64",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CVoid": []},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "dest",
+                "parameterType": {"CPointer": {"CVoid": []}}
+              },
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "val",
+                "parameterType": {"CInt": 8}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "len",
+                "parameterType": {"CInt": 64}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "align",
+                "parameterType": {"CInt": 32}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "isvolatile",
+                "parameterType": {"CInt": 1}
+              }
+          ]
+        },
+        { "foreignFunctionName": "llvm.memset.p0i8.i32",
           "foreignFunctionAnnotations": [],
           "foreignFunctionLinkage": { "LinkDefault": [] },
           "foreignFunctionReturnType": {"CVoid": []},

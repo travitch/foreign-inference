@@ -319,17 +319,22 @@ moduleToLibraryInterface m name deps summaries =
 -- signatures that have certain exotic types are not supported in
 -- interfaces.
 functionToExternal :: [ModuleSummary] -> Function -> Maybe ForeignFunction
-functionToExternal summaries f = do
-  lnk <- toLinkage (functionLinkage f)
-  fretty <- typeToCType fretType
-  params <- mapM (paramToExternal summaries) (functionParameters f)
-  return ForeignFunction { foreignFunctionName = identifierContent (functionName f)
-                         , foreignFunctionLinkage = lnk
-                         , foreignFunctionReturnType = fretty
-                         , foreignFunctionParameters = params
-                         , foreignFunctionAnnotations = annots
-                         }
+functionToExternal summaries f =
+  case vis of
+    VisibilityHidden -> Nothing
+    _ -> do
+      lnk <- toLinkage (functionLinkage f)
+      fretty <- typeToCType fretType
+      params <- mapM (paramToExternal summaries) (functionParameters f)
+      return ForeignFunction { foreignFunctionName = identifierContent (functionName f)
+                             , foreignFunctionLinkage =
+                                  if vis == VisibilityProtected then LinkWeak else lnk
+                             , foreignFunctionReturnType = fretty
+                             , foreignFunctionParameters = params
+                             , foreignFunctionAnnotations = annots
+                             }
   where
+    vis = functionVisibility f
     annots = concatMap (summarizeFunction' f) summaries
     fretType = case functionType f of
       TypeFunction rt _ _ -> rt

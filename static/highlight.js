@@ -9,9 +9,12 @@ function highlightLines(startLine, witnessLines) {
   if(witnessLines.length == 0) return;
 
   $('a').removeClass('highlight');
+  $('.witness-reason').remove();
 
   for(var i = 0; i < witnessLines.length; ++i) {
-    $('#'+witnessLines[i]).addClass('highlight');
+    $('#'+witnessLines[i][0]).addClass('highlight');
+    var reason = '<em class="witness-reason">[' + witnessLines[i][1] + ']</em>';
+    $('#'+witnessLines[i][0]).append(reason);
   }
 }
 

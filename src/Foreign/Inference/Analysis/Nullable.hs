@@ -134,8 +134,8 @@ import Debug.Trace
 debug' :: c -> String -> c
 debug' = flip trace
 
-
-type SummaryType = Map Function (Set (Argument, [Instruction]))
+type NullWitness = (Instruction, String)
+type SummaryType = Map Function (Set (Argument, [NullWitness]))
 
 -- | Note, this could be a Set (Argument, Instruction) where the
 -- Instruction is the fact we saw that led us to believe that Argument
@@ -149,7 +149,7 @@ instance SummarizeModule NullableSummary where
   summarizeFunction _ _ = []
   summarizeArgument = summarizeNullArgument
 
-summarizeNullArgument :: Argument -> NullableSummary -> [(ParamAnnotation, [Int])]
+summarizeNullArgument :: Argument -> NullableSummary -> [(ParamAnnotation, [Witness])]
 summarizeNullArgument a (NS s) =
   case S.toList $ S.filter ((==a) . fst) nonNullableArgs of
     [] -> []
@@ -171,11 +171,11 @@ instructionSrcLoc i =
         MetaSourceLocation {} -> True
         _ -> False
 
-instructionToLine :: Instruction -> Maybe Int
-instructionToLine i =
+instructionToLine :: NullWitness -> Maybe Witness
+instructionToLine (i,s) =
   case instructionSrcLoc i of
     Nothing -> Nothing
-    Just (MetaSourceLocation r _ _) -> Just (fromIntegral r)
+    Just (MetaSourceLocation r _ _) -> Just (Witness (fromIntegral r) s)
     m -> $err' ("Expected source location: " ++ show (instructionMetadata i))
 
 -- | The top-level entry point of the nullability analysis
@@ -201,7 +201,7 @@ data NullData = ND { moduleSummary :: SummaryType
 data NullState = NState { phiCache :: HashMap Instruction (Maybe Value) }
 
 data NullInfo = NInfo { nullArguments :: Set Argument
-                      , nullWitnesses :: Map Argument (Set Instruction)
+                      , nullWitnesses :: Map Argument (Set NullWitness)
                       }
               deriving (Eq, Ord, Show)
 
@@ -256,9 +256,9 @@ nullableAnalysis f summ = do
   -- we have proven are accessed unchecked.
   return $! M.insert f argsAndWitnesses summ
 
-attachWitness :: Map Argument (Set Instruction)
+attachWitness :: Map Argument (Set NullWitness)
                  -> Argument
-                 -> (Argument, [Instruction])
+                 -> (Argument, [NullWitness])
 attachWitness m a =
   case M.lookup a m of
     Nothing -> (a, [])
@@ -307,15 +307,19 @@ valueDereferenced i ptr ni =
         Just mustVal ->
           case valueContent' mustVal of
             ArgumentC a ->
-              return ni { nullArguments = S.delete a (nullArguments ni)
-                        , nullWitnesses =
-                             -- Only add a witness if the argument
-                             -- wasn't already known to be not-null
-                             case a `S.member` nullArguments ni of
-                               True -> M.insertWith' S.union a (S.singleton i) (nullWitnesses ni)
-                               False -> nullWitnesses ni
-                        }
+              case a `S.member` args of
+                -- Already removed, no new info
+                False -> return ni
+                True ->
+                  return ni { nullArguments = S.delete a args
+                            , nullWitnesses =
+                                 let w = (i, "deref")
+                                 in M.insertWith' S.union a (S.singleton w) ws
+                            }
             _ -> return ni
+  where
+    args = nullArguments ni
+    ws = nullWitnesses ni
 
 -- | Given a value that is being dereferenced by an instruction
 -- (either a load, store, or atomic memory op), determine the *base*
@@ -386,10 +390,10 @@ callTransfer i calledFunc args ni = do
     True -> valueDereferenced i calledFunc ni'
 
 addWitness :: Instruction
-              -> Map Argument (Set Instruction)
+              -> Map Argument (Set NullWitness)
               -> Argument
-              -> Map Argument (Set Instruction)
-addWitness i m a = M.insertWith' S.union a (S.singleton i) m
+              -> Map Argument (Set NullWitness)
+addWitness i m a = M.insertWith' S.union a (S.singleton (i, "arg")) m
 
 isIndirectCallee :: Value -> Bool
 isIndirectCallee val =

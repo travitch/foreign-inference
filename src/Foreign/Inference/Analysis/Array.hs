@@ -43,7 +43,7 @@ instance SummarizeModule ArraySummary where
   summarizeFunction _ _ = []
   summarizeArgument = summarizeArrayArgument
 
-summarizeArrayArgument :: Argument -> ArraySummary -> [(ParamAnnotation, [Int])]
+summarizeArrayArgument :: Argument -> ArraySummary -> [(ParamAnnotation, [Witness])]
 summarizeArrayArgument a (APS summ) = case M.lookup a summ of
   Nothing -> []
   Just depth -> [(PAArray depth, [])]

@@ -21,6 +21,7 @@ module Foreign.Inference.Interface (
   SummarizeModule(..),
   ModuleSummary(..),
   -- * Types
+  Witness(..),
   DependencySummary,
   LibraryInterface(..),
   ForeignFunction(..),
@@ -174,24 +175,23 @@ data StdLib = CStdLib
             | LLVMLib
             deriving (Show)
 
+-- | A witness is a line number and a (short) free-form string
+-- describing what was witnessed on that line.
+--
+-- The file name is not included because the file is identified by the
+-- enclosing function of the Argument.
+--
+-- WARNING: Don't put anything javascript-unsafe in the String.  This
+-- could be enforced but doesn't seem worth the effort right now.
+data Witness = Witness Int String
+
 -- | An interface for analyses to implement in order to annotate
 -- constructs in 'Module's.
 class SummarizeModule s where
-  summarizeArgument :: Argument -> s -> [(ParamAnnotation, [Int])]
+  summarizeArgument :: Argument -> s -> [(ParamAnnotation, [Witness])]
   summarizeFunction :: Function -> s -> [FuncAnnotation]
 
-  -- | Analyses that collect witness information can implement this
-  -- interface.  'witnessArgument' should return the list of line
-  -- numbers in the source that caused the relevant property to be
-  -- inferred.
-  --
-  -- The default immplementation returns an empty list (no witness
-  -- information)
-  -- witnessArgument :: Argument -> s -> [Int]
-  -- witnessArgument _ _ = []
-
-
-summarizeArgument' :: Argument -> ModuleSummary -> [(ParamAnnotation, [Int])]
+summarizeArgument' :: Argument -> ModuleSummary -> [(ParamAnnotation, [Witness])]
 summarizeArgument' a (ModuleSummary s) = summarizeArgument a s
 
 summarizeFunction' :: Function -> ModuleSummary -> [FuncAnnotation]

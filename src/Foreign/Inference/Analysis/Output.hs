@@ -39,7 +39,7 @@ instance SummarizeModule OutputSummary where
   summarizeFunction _ _ = []
   summarizeArgument = summarizeOutArgument
 
-summarizeOutArgument :: Argument -> OutputSummary -> [(ParamAnnotation, [Int])]
+summarizeOutArgument :: Argument -> OutputSummary -> [(ParamAnnotation, [Witness])]
 summarizeOutArgument a (OS s) =
   case M.lookup a s of
     Nothing -> []

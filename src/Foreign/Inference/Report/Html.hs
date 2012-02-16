@@ -112,7 +112,7 @@ drilldownArgumentEntry startLine r arg = H.li $ do
     clickScript = mconcat [ "highlight('", argName, "');" ]
     annots = concatMap (summarizeArgument' arg) (reportSummaries r)
 
-drilldownArgumentAnnotations :: Int -> [(ParamAnnotation, [Int])] -> Html
+drilldownArgumentAnnotations :: Int -> [(ParamAnnotation, [Witness])] -> Html
 drilldownArgumentAnnotations _ [] = return ()
 drilldownArgumentAnnotations startLine annots = do
   H.span ! A.class_ "code-comment" $ do
@@ -129,9 +129,10 @@ drilldownArgumentAnnotations startLine annots = do
         clickScript = mconcat ["highlightLines("
                               , pack (show startLine)
                               , ", ["
-                              , pack (intercalate "," (map show witnessLines))
+                              , pack (intercalate "," (map showWL witnessLines))
                               , "]);"
                               ]
+        showWL (Witness l s) = mconcat [ "[", show l, ", '", s, "']" ]
 
 -- | Generate an index page listing all of the functions in a module.
 -- Each listing shows the parameters and their inferred annotations.

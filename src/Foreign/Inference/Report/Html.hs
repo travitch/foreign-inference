@@ -24,9 +24,6 @@ import Data.LLVM
 import Foreign.Inference.Interface
 import Foreign.Inference.Report.Types
 
-import Debug.Trace
-debug = flip trace
-
 -- | This page is a drilled-down view for a particular function.  The
 -- function body is syntax highlighted using the kate syntax
 -- definitions.

@@ -13,6 +13,8 @@ import Data.HashSet ( HashSet )
 import qualified Data.HashSet as HS
 import Data.Map ( Map )
 import qualified Data.Map as M
+import Data.Set ( Set )
+import qualified Data.Set as S
 import FileLocation
 
 import Data.LLVM
@@ -27,9 +29,14 @@ import Foreign.Inference.Interface
 data ArgumentDirection = ArgIn
                        | ArgOut
                        | ArgBoth
-                       deriving (Eq, Ord, Show)
+                       deriving (Eq, Ord)
 
-type SummaryType = Map Argument ArgumentDirection
+instance Show ArgumentDirection where
+  show ArgIn = "in"
+  show ArgOut = "out"
+  show ArgBoth = "both"
+
+type SummaryType = Map Argument (ArgumentDirection, [Witness])
 data OutputSummary = OS SummaryType
 
 instance Eq OutputSummary where
@@ -43,9 +50,9 @@ summarizeOutArgument :: Argument -> OutputSummary -> [(ParamAnnotation, [Witness
 summarizeOutArgument a (OS s) =
   case M.lookup a s of
     Nothing -> []
-    Just ArgIn -> []
-    Just ArgOut -> [(PAOut, [])]
-    Just ArgBoth -> [(PAInOut, [])]
+    Just (ArgIn, _) -> []
+    Just (ArgOut, ws) -> [(PAOut, ws)]
+    Just (ArgBoth, ws) -> [(PAInOut, ws)]
 
 data OutData = OD { moduleSummary :: SummaryType
                   , dependencySummary :: DependencySummary
@@ -64,7 +71,7 @@ identifyOutput ds cg = (OS res, diags)
     constData = OD M.empty ds cg
     (res, diags) = evalRWS analysis constData ()
 
-data OutInfo = OI { outputInfo :: !(Map Argument ArgumentDirection)
+data OutInfo = OI { outputInfo :: !(Map Argument (ArgumentDirection, Set Witness))
                   , aggregates :: !(HashSet Argument)
                   }
              deriving (Eq, Show)
@@ -85,7 +92,9 @@ instance BoundedMeetSemiLattice OutInfo where
 
 meetOutInfo :: OutInfo -> OutInfo -> OutInfo
 meetOutInfo (OI m1 s1) (OI m2 s2) =
-  OI (M.unionWith meet m1 m2) (s1 `HS.union` s2)
+  OI (M.unionWith meetWithWitness m1 m2) (s1 `HS.union` s2)
+  where
+    meetWithWitness (v1, w1) (v2, w2) = (meet v1 v2, S.union w1 w2)
 
 instance DataflowAnalysis AnalysisMonad OutInfo where
   transfer = outTransfer
@@ -100,10 +109,11 @@ outAnalysis f summ = do
   exitInfo <- mapM getInstInfo (functionExitInstructions f)
   let OI exitInfo' aggArgs = meets exitInfo
       exitInfo'' = M.filterWithKey (\k _ -> not (HS.member k aggArgs)) exitInfo'
+      exitInfo''' = M.map (\(a, ws) -> (a, S.toList ws)) exitInfo''
   -- Merge the local information we just computed with the global
   -- summary.  Prefer the locally computed info if there are
   -- collisions (could arise while processing SCCs).
-  return $! M.union exitInfo'' summ
+  return $! M.union exitInfo''' summ
 
 -- | This transfer function only needs to be concerned with Load and
 -- Store instructions (for now).  Loads add in an ArgIn value. Stores
@@ -116,13 +126,13 @@ outTransfer :: OutInfo -> Instruction -> [CFGEdge] -> AnalysisMonad OutInfo
 outTransfer info i _ =
   case i of
     LoadInst { loadAddress = (valueContent -> ArgumentC ptr) } ->
-      return $! merge ptr ArgIn info
+      return $! merge i ptr ArgIn info
     StoreInst { storeAddress = (valueContent -> ArgumentC ptr) } ->
-      return $! merge ptr ArgOut info
+      return $! merge i ptr ArgOut info
     AtomicRMWInst { atomicRMWPointer = (valueContent -> ArgumentC ptr) } ->
-      return $! merge ptr ArgIn info
+      return $! merge i ptr ArgIn info
     AtomicCmpXchgInst { atomicCmpXchgPointer = (valueContent -> ArgumentC ptr) } ->
-      return $! merge ptr ArgIn info
+      return $! merge i ptr ArgIn info
 
     -- We don't want to treat any aggregates as output parameters yet.
     -- Record all arguments used as aggregates and filter them out at
@@ -135,17 +145,22 @@ outTransfer info i _ =
 
     _ -> return info
 
-merge :: Argument -> ArgumentDirection -> OutInfo -> OutInfo
-merge arg ArgBoth (OI oi a) =
-  OI (M.insert arg ArgBoth oi) a
-merge arg newVal info@(OI oi a) =
+merge :: Instruction -> Argument -> ArgumentDirection -> OutInfo -> OutInfo
+merge i arg ArgBoth (OI oi a) =
+  let ws = S.singleton (Witness i (show ArgBoth))
+  in OI (M.insert arg (ArgBoth, ws) oi) a
+merge i arg newVal info@(OI oi a) =
   case M.lookup arg oi of
-    Nothing -> OI (M.insert arg newVal oi) a
-    Just ArgBoth -> info
-    Just ArgOut -> info
-    Just ArgIn ->
+    Nothing ->
+      let ws = S.singleton (Witness i (show newVal))
+      in OI (M.insert arg (newVal, ws) oi) a
+    Just (ArgBoth, _) -> info
+    Just (ArgOut, _) -> info
+    Just (ArgIn, ws) ->
       case newVal of
-        ArgOut -> OI (M.insert arg ArgBoth oi) a
+        ArgOut ->
+          let nw = Witness i (show ArgBoth)
+          in OI (M.insert arg (ArgBoth, S.insert nw ws) oi) a
         ArgIn -> info
         ArgBoth -> $err' "Infeasible path"
 

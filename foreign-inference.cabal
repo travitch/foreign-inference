@@ -37,7 +37,7 @@ library
                  Paths_foreign_inference
   build-depends: base > 3 && < 5, containers, filepath, text, bytestring, ghc-prim,
                  unordered-containers >= 0.1.4.0, hashable, mtl > 2 && < 3,
-                 aeson >= 0.4.0.0, file-location, temporary, process,
+                 aeson >= 0.4.0.0, file-location >= 0.4.3, temporary, process,
                  llvm-analysis, deepseq,
                  -- For the reporting code
                  archive-inspection, directory, attoparsec >= 0.10 && < 1.0, ascii,

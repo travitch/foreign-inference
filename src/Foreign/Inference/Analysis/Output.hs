@@ -39,13 +39,13 @@ instance SummarizeModule OutputSummary where
   summarizeFunction _ _ = []
   summarizeArgument = summarizeOutArgument
 
-summarizeOutArgument :: Argument -> OutputSummary -> [ParamAnnotation]
+summarizeOutArgument :: Argument -> OutputSummary -> [(ParamAnnotation, [Int])]
 summarizeOutArgument a (OS s) =
   case M.lookup a s of
     Nothing -> []
     Just ArgIn -> []
-    Just ArgOut -> [PAOut]
-    Just ArgBoth -> [PAInOut]
+    Just ArgOut -> [(PAOut, [])]
+    Just ArgBoth -> [(PAInOut, [])]
 
 data OutData = OD { moduleSummary :: SummaryType
                   , dependencySummary :: DependencySummary

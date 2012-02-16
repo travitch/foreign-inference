@@ -43,10 +43,10 @@ instance SummarizeModule ArraySummary where
   summarizeFunction _ _ = []
   summarizeArgument = summarizeArrayArgument
 
-summarizeArrayArgument :: Argument -> ArraySummary -> [ParamAnnotation]
+summarizeArrayArgument :: Argument -> ArraySummary -> [(ParamAnnotation, [Int])]
 summarizeArrayArgument a (APS summ) = case M.lookup a summ of
   Nothing -> []
-  Just depth -> [PAArray depth]
+  Just depth -> [(PAArray depth, [])]
 
 data ArrayData = AD { dependencySummary :: DependencySummary
                     , callGraph :: CallGraph

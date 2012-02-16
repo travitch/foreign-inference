@@ -109,6 +109,7 @@ import Control.Arrow
 import Control.Monad.RWS.Strict
 import Data.Map ( Map )
 import qualified Data.Map as M
+import Data.Maybe ( mapMaybe )
 import Data.Set ( Set )
 import qualified Data.Set as S
 import Data.HashMap.Strict ( HashMap )
@@ -127,14 +128,14 @@ import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
 import Foreign.Inference.Analysis.Return
 
--- import Text.Printf
--- import Debug.Trace
+import Text.Printf
+import Debug.Trace
 
--- debug' :: c -> String -> c
--- debug' = flip trace
+debug' :: c -> String -> c
+debug' = flip trace
 
 
-type SummaryType = Map Function (Set Argument)
+type SummaryType = Map Function (Set (Argument, [Instruction]))
 
 -- | Note, this could be a Set (Argument, Instruction) where the
 -- Instruction is the fact we saw that led us to believe that Argument
@@ -148,15 +149,34 @@ instance SummarizeModule NullableSummary where
   summarizeFunction _ _ = []
   summarizeArgument = summarizeNullArgument
 
-summarizeNullArgument :: Argument -> NullableSummary -> [ParamAnnotation]
-summarizeNullArgument a (NS s) = case a `S.member` nonNullableArgs of
-  False -> []
-  True -> [PANotNull]
+summarizeNullArgument :: Argument -> NullableSummary -> [(ParamAnnotation, [Int])]
+summarizeNullArgument a (NS s) =
+  case S.toList $ S.filter ((==a) . fst) nonNullableArgs of
+    [] -> []
+    [(_, insts)] -> [(PANotNull, mapMaybe instructionToLine insts)]
+    _ -> $err' ("Multiple entries in Null summary for " ++ show a)
   where
     f = argumentFunction a
     errMsg = $err' ("Function not in summary: " ++ show (functionName f))
     nonNullableArgs = M.findWithDefault errMsg f s
 
+instructionSrcLoc :: Instruction -> Maybe MetadataContent
+instructionSrcLoc i =
+  case filter isSrcLoc (instructionMetadata i) of
+    [md] -> Just (metaValueContent md)
+    _ -> Nothing
+  where
+    isSrcLoc m =
+      case metaValueContent m of
+        MetaSourceLocation {} -> True
+        _ -> False
+
+instructionToLine :: Instruction -> Maybe Int
+instructionToLine i =
+  case instructionSrcLoc i of
+    Nothing -> Nothing
+    Just (MetaSourceLocation r _ _) -> Just (fromIntegral r)
+    m -> $err' ("Expected source location: " ++ show (instructionMetadata i))
 
 -- | The top-level entry point of the nullability analysis
 identifyNullable :: DependencySummary -> Module -> CallGraph
@@ -181,6 +201,7 @@ data NullData = ND { moduleSummary :: SummaryType
 data NullState = NState { phiCache :: HashMap Instruction (Maybe Value) }
 
 data NullInfo = NInfo { nullArguments :: Set Argument
+                      , nullWitnesses :: Map Argument (Set Instruction)
                       }
               deriving (Eq, Ord, Show)
 
@@ -188,7 +209,7 @@ instance MeetSemiLattice NullInfo where
   meet = meetNullInfo
 
 instance BoundedMeetSemiLattice NullInfo where
-  top = NInfo S.empty
+  top = NInfo S.empty M.empty
 
 type AnalysisMonad = RWS NullData Diagnostics NullState
 
@@ -197,7 +218,9 @@ instance DataflowAnalysis AnalysisMonad NullInfo where
 
 meetNullInfo :: NullInfo -> NullInfo -> NullInfo
 meetNullInfo ni1 ni2 =
-  NInfo { nullArguments = nullArguments ni1 `S.union` nullArguments ni2 }
+  NInfo { nullArguments = nullArguments ni1 `S.union` nullArguments ni2
+        , nullWitnesses = M.unionWith S.union (nullWitnesses ni1) (nullWitnesses ni2)
+        }
 
 -- | The analysis that is applied to every function in the call graph.
 -- It runs a dataflow analysis over the function to identify the
@@ -226,10 +249,20 @@ nullableAnalysis f summ = do
   exitInfo <- mapM getInstInfo (functionExitInstructions f)
   let exitInfo' = meets exitInfo
       notNullableArgs = S.fromList args `S.difference` nullArguments exitInfo'
+      argsAndWitnesses =
+        S.map (attachWitness (nullWitnesses exitInfo')) notNullableArgs
 
   -- Update the module symmary with the set of pointer parameters that
   -- we have proven are accessed unchecked.
-  return $! M.insert f notNullableArgs summ
+  return $! M.insert f argsAndWitnesses summ
+
+attachWitness :: Map Argument (Set Instruction)
+                 -> Argument
+                 -> (Argument, [Instruction])
+attachWitness m a =
+  case M.lookup a m of
+    Nothing -> (a, [])
+    Just is -> (a, S.toList is)
 
 -- | First, process the incoming CFG edges to learn about pointers
 -- that are known to be non-NULL.  Then use this updated information
@@ -248,23 +281,23 @@ transfer' :: NullInfo -> Instruction -> AnalysisMonad NullInfo
 transfer' ni i =
   case i of
     LoadInst { loadAddress = ptr } ->
-      valueDereferenced ptr ni
+      valueDereferenced i ptr ni
     StoreInst { storeAddress = ptr } ->
-      valueDereferenced ptr ni
+      valueDereferenced i ptr ni
     AtomicRMWInst { atomicRMWPointer = ptr } ->
-      valueDereferenced ptr ni
+      valueDereferenced i ptr ni
     AtomicCmpXchgInst { atomicCmpXchgPointer = ptr } ->
-      valueDereferenced ptr ni
+      valueDereferenced i ptr ni
 
     CallInst { callFunction = calledFunc, callArguments = args } ->
-      callTransfer (stripBitcasts calledFunc) (map fst args) ni
+      callTransfer i (stripBitcasts calledFunc) (map fst args) ni
     InvokeInst { invokeFunction = calledFunc, invokeArguments = args } ->
-      callTransfer (stripBitcasts calledFunc) (map fst args) ni
+      callTransfer i (stripBitcasts calledFunc) (map fst args) ni
 
     _ -> return ni
 
-valueDereferenced :: Value -> NullInfo -> AnalysisMonad NullInfo
-valueDereferenced ptr ni =
+valueDereferenced :: Instruction -> Value -> NullInfo -> AnalysisMonad NullInfo
+valueDereferenced i ptr ni =
   case memAccessBase ptr of
     Nothing -> return ni
     Just v -> do
@@ -273,7 +306,15 @@ valueDereferenced ptr ni =
         Nothing -> return ni
         Just mustVal ->
           case valueContent' mustVal of
-            ArgumentC a -> return ni { nullArguments = S.delete a (nullArguments ni) }
+            ArgumentC a ->
+              return ni { nullArguments = S.delete a (nullArguments ni)
+                        , nullWitnesses =
+                             -- Only add a witness if the argument
+                             -- wasn't already known to be not-null
+                             case a `S.member` nullArguments ni of
+                               True -> M.insertWith' S.union a (S.singleton i) (nullWitnesses ni)
+                               False -> nullWitnesses ni
+                        }
             _ -> return ni
 
 -- | Given a value that is being dereferenced by an instruction
@@ -308,32 +349,47 @@ memAccessBase ptr =
 -- | A split out transfer function for function calls.  Looks up
 -- summary values for called functions/params and records relevant
 -- information in the current dataflow fact.
-callTransfer ::  Value
-                -> [Value]
-                -> NullInfo
-                -> AnalysisMonad NullInfo
-callTransfer calledFunc args ni = do
+callTransfer ::  Instruction
+                 -> Value
+                 -> [Value]
+                 -> NullInfo
+                 -> AnalysisMonad NullInfo
+callTransfer i calledFunc args ni = do
   ni' <- case valueContent' calledFunc of
     FunctionC f ->do
       summ <- asks moduleSummary
       retSumm <- asks returnSummary
       case FANoRet `elem` summarizeFunction f retSumm of
-        False -> definedFunctionTransfer summ f ni args
-        True -> return top
+        False -> definedFunctionTransfer i summ f ni args
+        True ->
+          return ni { nullArguments = S.empty
+                    , nullWitnesses =
+                      S.foldl' (addWitness i) (nullWitnesses ni) (nullArguments ni)
+                    }
     ExternalFunctionC e ->  do
       summ <- asks dependencySummary
       case lookupFunctionSummary summ e of
-        Nothing -> externalFunctionTransfer summ e ni args
+        Nothing -> externalFunctionTransfer i summ e ni args
         Just s -> case FANoRet `elem` s of
-          True -> return top
-          False -> externalFunctionTransfer summ e ni args
+          True ->
+            return ni { nullArguments = S.empty
+                      , nullWitnesses =
+                        S.foldl' (addWitness i) (nullWitnesses ni) (nullArguments ni)
+                      }
+          False -> externalFunctionTransfer i summ e ni args
     _ -> return ni
   -- We also learn information about pointers that are not null if
   -- this is a call through a function pointer (calling a NULL
   -- function pointer is illegal)
   case isIndirectCallee calledFunc of
     False -> return ni'
-    True -> valueDereferenced calledFunc ni'
+    True -> valueDereferenced i calledFunc ni'
+
+addWitness :: Instruction
+              -> Map Argument (Set Instruction)
+              -> Argument
+              -> Map Argument (Set Instruction)
+addWitness i m a = M.insertWith' S.union a (S.singleton i) m
 
 isIndirectCallee :: Value -> Bool
 isIndirectCallee val =
@@ -342,23 +398,23 @@ isIndirectCallee val =
     ExternalFunctionC _ -> False
     _ -> True
 
-definedFunctionTransfer :: SummaryType -> Function
+definedFunctionTransfer :: Instruction -> SummaryType -> Function
                            -> NullInfo -> [Value] -> AnalysisMonad NullInfo
-definedFunctionTransfer summ f ni args =
+definedFunctionTransfer i summ f ni args =
   foldM markArgNotNullable ni indexedNotNullArgs
   where
     errMsg = $err' ("No Function summary for " ++ show (functionName f))
     formals = functionParameters f
     notNullableArgs = M.findWithDefault errMsg f summ
-    isNotNullable (a, _) = S.member a notNullableArgs
+    isNotNullable (a, _) = not . S.null $ S.filter ((==a) . fst) notNullableArgs -- S.member a notNullableArgs
     -- | Pairs of not-nullable formals/actuals
     indexedNotNullArgs = filter isNotNullable $ zip formals args
     markArgNotNullable info (_, a) =
-      valueDereferenced a info
+      valueDereferenced i a info
 
-externalFunctionTransfer :: DependencySummary -> ExternalFunction
+externalFunctionTransfer :: Instruction -> DependencySummary -> ExternalFunction
                             -> NullInfo -> [Value] -> AnalysisMonad NullInfo
-externalFunctionTransfer summ e ni args =
+externalFunctionTransfer i summ e ni args =
   foldM markIfNotNullable ni indexedArgs
   where
     errMsg = "No ExternalFunction summary for " ++ show (externalFunctionName e)
@@ -370,7 +426,7 @@ externalFunctionTransfer summ e ni args =
           return info
         Just attrs -> case PANotNull `elem` attrs of
           False -> return info
-          True -> valueDereferenced arg info
+          True -> valueDereferenced i arg info
 
 -- We can tell that a piece of code MUST execute if:
 --
@@ -491,5 +547,5 @@ nullSummaryToTestFormat (NS m) = convert m
   where
     convert = M.mapKeys keyMapper . M.map valMapper . M.filter notEmptySet
     notEmptySet = not . S.null
-    valMapper = S.map (show . argumentName)
+    valMapper = S.map (show . argumentName . fst)
     keyMapper = show . functionName

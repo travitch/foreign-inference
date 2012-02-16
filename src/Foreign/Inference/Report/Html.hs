@@ -7,10 +7,10 @@ module Foreign.Inference.Report.Html (
 
 import Control.Monad ( forM_, when )
 import Data.ByteString.Lazy.Char8 ( ByteString, unpack )
-import Data.List ( partition )
+import Data.List ( intercalate, partition )
 import qualified Data.Map as M
 import Data.Monoid
-import Data.Text ( Text )
+import Data.Text ( Text, pack )
 import Data.Text.Encoding ( decodeUtf8 )
 import qualified Data.Text as T
 import Text.Blaze.Html5 ( toValue, toHtml, (!), Html, AttributeValue )
@@ -23,6 +23,9 @@ import Data.LLVM
 
 import Foreign.Inference.Interface
 import Foreign.Inference.Report.Types
+
+import Debug.Trace
+debug = flip trace
 
 -- | This page is a drilled-down view for a particular function.  The
 -- function body is syntax highlighted using the kate syntax
@@ -44,7 +47,7 @@ htmlFunctionPage r f srcFile startLine functionText = H.docTypeHtml $ do
   H.body $ do
     "Breakdown of " >> toHtml funcName >> " defined in " >> toHtml srcFile
     H.div $ do
-      H.ul $ forM_ (functionParameters f) (drilldownArgumentEntry r)
+      H.ul $ forM_ (functionParameters f) (drilldownArgumentEntry startLine r)
 
     toHtml funcName >> "(" >> commaSepList args (indexPageArgument r) >> ") -> "
     H.span ! A.class_ "code-type" $ toHtml (show fretType)
@@ -94,15 +97,36 @@ initialScript calledFuncNames = mconcat [ "$(window).bind(\"load\", function () 
     funcNameList = T.intercalate ", " quotedNames
 
 
-drilldownArgumentEntry :: InterfaceReport -> Argument -> Html
-drilldownArgumentEntry r arg = H.li $ do
+drilldownArgumentEntry :: Int -> InterfaceReport -> Argument -> Html
+drilldownArgumentEntry startLine r arg = H.li $ do
   H.span ! A.class_ "code-type" $ toHtml (show (argumentType arg))
   H.a ! A.href "#" ! A.onclick (H.preEscapedTextValue clickScript) $ toHtml argName
-  indexArgumentAnnotations annots
+  drilldownArgumentAnnotations startLine annots
   where
     argName = decodeUtf8 (identifierContent (argumentName arg))
     clickScript = mconcat [ "highlight('", argName, "');" ]
     annots = concatMap (summarizeArgument' arg) (reportSummaries r)
+
+drilldownArgumentAnnotations :: Int -> [(ParamAnnotation, [Int])] -> Html
+drilldownArgumentAnnotations _ [] = return ()
+drilldownArgumentAnnotations startLine annots = do
+  H.span ! A.class_ "code-comment" $ do
+    " /* ["
+    commaSepList annots mkAnnotLink
+    "] */"
+  where
+    mkAnnotLink (a, witnessLines) =
+      case null witnessLines of
+        True -> toHtml (show a)
+        False ->
+          H.a ! A.href "#" ! A.onclick (H.preEscapedTextValue clickScript) $ toHtml (show a)
+      where
+        clickScript = mconcat ["highlightLines("
+                              , pack (show startLine)
+                              , ", ["
+                              , pack (intercalate "," (map show witnessLines))
+                              , "]);"
+                              ]
 
 -- | Generate an index page listing all of the functions in a module.
 -- Each listing shows the parameters and their inferred annotations.
@@ -175,7 +199,7 @@ indexPageArgument r arg = do
   where
     paramType = show (argumentType arg)
     paramName = decodeUtf8 (identifierContent (argumentName arg))
-    annots = concatMap (summarizeArgument' arg) (reportSummaries r)
+    annots = concatMap (map fst . summarizeArgument' arg) (reportSummaries r)
 
 indexArgumentAnnotations :: [ParamAnnotation] -> Html
 indexArgumentAnnotations [] = return ()

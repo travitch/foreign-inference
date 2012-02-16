@@ -177,10 +177,21 @@ data StdLib = CStdLib
 -- | An interface for analyses to implement in order to annotate
 -- constructs in 'Module's.
 class SummarizeModule s where
-  summarizeArgument :: Argument -> s -> [ParamAnnotation]
+  summarizeArgument :: Argument -> s -> [(ParamAnnotation, [Int])]
   summarizeFunction :: Function -> s -> [FuncAnnotation]
 
-summarizeArgument' :: Argument -> ModuleSummary -> [ParamAnnotation]
+  -- | Analyses that collect witness information can implement this
+  -- interface.  'witnessArgument' should return the list of line
+  -- numbers in the source that caused the relevant property to be
+  -- inferred.
+  --
+  -- The default immplementation returns an empty list (no witness
+  -- information)
+  -- witnessArgument :: Argument -> s -> [Int]
+  -- witnessArgument _ _ = []
+
+
+summarizeArgument' :: Argument -> ModuleSummary -> [(ParamAnnotation, [Int])]
 summarizeArgument' a (ModuleSummary s) = summarizeArgument a s
 
 summarizeFunction' :: Function -> ModuleSummary -> [FuncAnnotation]
@@ -345,7 +356,10 @@ paramToExternal summaries arg = do
   ptype <- typeToCType (argumentType arg)
   return Parameter { parameterType = ptype
                    , parameterName = SBS.unpack (identifierContent (argumentName arg))
-                   , parameterAnnotations = concatMap (summarizeArgument' arg) summaries
+                   , parameterAnnotations =
+                     -- The map fst here drops witness information -
+                     -- we don't need to expose that in summaries.
+                     concatMap (map fst . summarizeArgument' arg) summaries
                    }
 
 -- | Look up the summary information for the indicated parameter.

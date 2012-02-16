@@ -5,6 +5,16 @@ function highlight(argName) {
   $('code').highlight(argName, false, 'highlight');
 }
 
+function highlightLines(startLine, witnessLines) {
+  if(witnessLines.length == 0) return;
+
+  $('a').removeClass('highlight');
+
+  for(var i = 0; i < witnessLines.length; ++i) {
+    $('#'+witnessLines[i]).addClass('highlight');
+  }
+}
+
 function linkCalledFunctions(fnames) {
   $.map(fnames, function (fname, ix) { $('code').makeFunctionLink(fname); });
 }

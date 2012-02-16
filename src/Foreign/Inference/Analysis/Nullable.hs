@@ -109,7 +109,6 @@ import Control.Arrow
 import Control.Monad.RWS.Strict
 import Data.Map ( Map )
 import qualified Data.Map as M
-import Data.Maybe ( mapMaybe )
 import Data.Set ( Set )
 import qualified Data.Set as S
 import Data.HashMap.Strict ( HashMap )
@@ -134,8 +133,7 @@ import Debug.Trace
 debug' :: c -> String -> c
 debug' = flip trace
 
-type NullWitness = (Instruction, String)
-type SummaryType = Map Function (Set (Argument, [NullWitness]))
+type SummaryType = Map Function (Set (Argument, [Witness]))
 
 -- | Note, this could be a Set (Argument, Instruction) where the
 -- Instruction is the fact we saw that led us to believe that Argument
@@ -153,30 +151,12 @@ summarizeNullArgument :: Argument -> NullableSummary -> [(ParamAnnotation, [Witn
 summarizeNullArgument a (NS s) =
   case S.toList $ S.filter ((==a) . fst) nonNullableArgs of
     [] -> []
-    [(_, insts)] -> [(PANotNull, mapMaybe instructionToLine insts)]
+    [(_, insts)] -> [(PANotNull, insts)]
     _ -> $err' ("Multiple entries in Null summary for " ++ show a)
   where
     f = argumentFunction a
     errMsg = $err' ("Function not in summary: " ++ show (functionName f))
     nonNullableArgs = M.findWithDefault errMsg f s
-
-instructionSrcLoc :: Instruction -> Maybe MetadataContent
-instructionSrcLoc i =
-  case filter isSrcLoc (instructionMetadata i) of
-    [md] -> Just (metaValueContent md)
-    _ -> Nothing
-  where
-    isSrcLoc m =
-      case metaValueContent m of
-        MetaSourceLocation {} -> True
-        _ -> False
-
-instructionToLine :: NullWitness -> Maybe Witness
-instructionToLine (i,s) =
-  case instructionSrcLoc i of
-    Nothing -> Nothing
-    Just (MetaSourceLocation r _ _) -> Just (Witness (fromIntegral r) s)
-    m -> $err' ("Expected source location: " ++ show (instructionMetadata i))
 
 -- | The top-level entry point of the nullability analysis
 identifyNullable :: DependencySummary -> Module -> CallGraph
@@ -201,7 +181,7 @@ data NullData = ND { moduleSummary :: SummaryType
 data NullState = NState { phiCache :: HashMap Instruction (Maybe Value) }
 
 data NullInfo = NInfo { nullArguments :: Set Argument
-                      , nullWitnesses :: Map Argument (Set NullWitness)
+                      , nullWitnesses :: Map Argument (Set Witness)
                       }
               deriving (Eq, Ord, Show)
 
@@ -256,9 +236,9 @@ nullableAnalysis f summ = do
   -- we have proven are accessed unchecked.
   return $! M.insert f argsAndWitnesses summ
 
-attachWitness :: Map Argument (Set NullWitness)
+attachWitness :: Map Argument (Set Witness)
                  -> Argument
-                 -> (Argument, [NullWitness])
+                 -> (Argument, [Witness])
 attachWitness m a =
   case M.lookup a m of
     Nothing -> (a, [])
@@ -313,7 +293,7 @@ valueDereferenced i ptr ni =
                 True ->
                   return ni { nullArguments = S.delete a args
                             , nullWitnesses =
-                                 let w = (i, "deref")
+                                 let w = Witness i "deref"
                                  in M.insertWith' S.union a (S.singleton w) ws
                             }
             _ -> return ni
@@ -390,10 +370,10 @@ callTransfer i calledFunc args ni = do
     True -> valueDereferenced i calledFunc ni'
 
 addWitness :: Instruction
-              -> Map Argument (Set NullWitness)
+              -> Map Argument (Set Witness)
               -> Argument
-              -> Map Argument (Set NullWitness)
-addWitness i m a = M.insertWith' S.union a (S.singleton (i, "arg")) m
+              -> Map Argument (Set Witness)
+addWitness i m a = M.insertWith' S.union a (S.singleton (Witness i "arg")) m
 
 isIndirectCallee :: Value -> Bool
 isIndirectCallee val =

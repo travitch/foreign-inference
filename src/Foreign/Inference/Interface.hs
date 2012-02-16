@@ -175,7 +175,7 @@ data StdLib = CStdLib
             | LLVMLib
             deriving (Show)
 
--- | A witness is a line number and a (short) free-form string
+-- | A witness is an instruction and a (short) free-form string
 -- describing what was witnessed on that line.
 --
 -- The file name is not included because the file is identified by the
@@ -183,7 +183,8 @@ data StdLib = CStdLib
 --
 -- WARNING: Don't put anything javascript-unsafe in the String.  This
 -- could be enforced but doesn't seem worth the effort right now.
-data Witness = Witness Int String
+data Witness = Witness Instruction String
+             deriving (Eq, Ord, Show)
 
 -- | An interface for analyses to implement in order to annotate
 -- constructs in 'Module's.

@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings, TemplateHaskell #-}
 {-# OPTIONS_GHC -fno-warn-unused-do-bind #-}
 module Foreign.Inference.Report.Html (
   htmlIndexPage,
@@ -8,11 +8,13 @@ module Foreign.Inference.Report.Html (
 import Control.Monad ( forM_, when )
 import Data.ByteString.Lazy.Char8 ( ByteString, unpack )
 import Data.List ( intercalate, partition )
+import Data.Maybe ( mapMaybe )
 import qualified Data.Map as M
 import Data.Monoid
 import Data.Text ( Text, pack )
 import Data.Text.Encoding ( decodeUtf8 )
 import qualified Data.Text as T
+import FileLocation
 import Text.Blaze.Html5 ( toValue, toHtml, (!), Html, AttributeValue )
 import qualified Text.Blaze.Html5 as H
 import qualified Text.Blaze.Html5.Attributes as A
@@ -129,10 +131,30 @@ drilldownArgumentAnnotations startLine annots = do
         clickScript = mconcat ["highlightLines("
                               , pack (show startLine)
                               , ", ["
-                              , pack (intercalate "," (map showWL witnessLines))
+                              , pack (intercalate "," (mapMaybe showWL witnessLines))
                               , "]);"
                               ]
-        showWL (Witness l s) = mconcat [ "[", show l, ", '", s, "']" ]
+        showWL (Witness i s) = do
+          l <- instructionToLine i
+          return $! mconcat [ "[", show l, ", '", s, "']" ]
+
+instructionSrcLoc :: Instruction -> Maybe MetadataContent
+instructionSrcLoc i =
+  case filter isSrcLoc (instructionMetadata i) of
+    [md] -> Just (metaValueContent md)
+    _ -> Nothing
+  where
+    isSrcLoc m =
+      case metaValueContent m of
+        MetaSourceLocation {} -> True
+        _ -> False
+
+instructionToLine :: Instruction -> Maybe Int
+instructionToLine i =
+  case instructionSrcLoc i of
+    Nothing -> Nothing
+    Just (MetaSourceLocation r _ _) -> Just (fromIntegral r)
+    m -> $err' ("Expected source location: " ++ show (instructionMetadata i))
 
 -- | Generate an index page listing all of the functions in a module.
 -- Each listing shows the parameters and their inferred annotations.

@@ -1,6 +1,8 @@
 function highlight(argName) {
   // First, remove all highlighting since we are about to highlight something else
   $('.highlight').removeClass('highlight');
+  $('.witness-reason').remove();
+
   // Now just highlight what we find in the code section
   $('code').highlight(argName, false, 'highlight');
 }

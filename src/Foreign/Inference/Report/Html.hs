@@ -52,7 +52,7 @@ htmlFunctionPage r f srcFile startLine functionText = H.docTypeHtml $ do
     toHtml funcName >> "(" >> commaSepList args (indexPageArgument r) >> ") -> "
     H.span ! A.class_ "code-type" $ toHtml (show fretType)
     let lang : _ = K.languagesByFilename srcFile
-        highlightedSrc = K.highlightAs lang (unpack functionText)
+        highlightedSrc = K.highlightAs lang (preprocessFunction functionText)
         fmtOpts = defaultFormatOpts { numberLines = True
                                     , startNumber = startLine
                                     , lineAnchors = True
@@ -69,6 +69,14 @@ htmlFunctionPage r f srcFile startLine functionText = H.docTypeHtml $ do
     fretType = case functionType f of
       TypeFunction rt _ _ -> rt
       rtype -> rtype
+
+-- | Replace tabs with two spaces.  This makes the line number
+-- highlighting easier to read.
+preprocessFunction :: ByteString -> String
+preprocessFunction = foldr replaceTab "" . unpack
+  where
+    replaceTab '\t' acc = ' ' : ' ' : acc
+    replaceTab c acc = c : acc
 
 extractCalledFunctionNames :: Instruction -> [Text] -> [Text]
 extractCalledFunctionNames i acc =

@@ -23,6 +23,7 @@ library
   hs-source-dirs: src
   exposed-modules: Foreign.Inference.Diagnostics,
                    Foreign.Inference.Interface,
+                   Foreign.Inference.Interface.Diff,
                    Foreign.Inference.Analysis.Array,
                    Foreign.Inference.Analysis.Nullable,
                    Foreign.Inference.Analysis.Output,
@@ -65,7 +66,7 @@ test-suite NullableTests
 
 executable IIGlue
   default-language: Haskell2010
-  hs-source-dirs: tests
+  hs-source-dirs: tools
   build-depends: base > 3 && < 5, cmdargs >= 0.9, filepath,
                  llvm-analysis, foreign-inference, llvm-data-interop,
                  archive-inspection, deepseq
@@ -74,25 +75,14 @@ executable IIGlue
 
 executable InterfaceChecker
   default-language: Haskell2010
-  hs-source-dirs: tests
+  hs-source-dirs: tools
   build-depends: base > 3 && < 5, foreign-inference, attoparsec, aeson, bytestring
   main-is: InterfaceChecker.hs
   ghc-options: -Wall -rtsopts
 
--- test-suite NullAnalysisTests
---   default-language: Haskell2010
---   type: exitcode-stdio-1.0
---   main-is: NullAnalysisTests.hs
---   hs-source-dirs: tests
---   build-depends: base > 3 && < 5, containers, llvm-analysis, foreign-inference,
---                  unordered-containers >= 0.1.4.0,
---                  HUnit, test-framework, test-framework-hunit
-
--- executable NullInfo
---   default-language: Haskell2010
---   hs-source-dirs: tests
---   build-depends: base > 3 && < 5, containers, llvm-analysis, foreign-inference,
---                  unordered-containers
---   main-is: NullInfo.hs
---   ghc-options: -Wall -rtsopts -funbox-strict-fields
---   ghc-prof-options: -auto-all
+executable InterfaceDiff
+  default-language: Haskell2010
+  hs-source-dirs: tools
+  build-depends: base > 3 && < 5, foreign-inference, cmdargs >= 0.9, bytestring
+  main-is: InterfaceDiff.hs
+  ghc-options: -Wall -rtsopts

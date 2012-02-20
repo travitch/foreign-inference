@@ -40,7 +40,8 @@ module Foreign.Inference.Interface (
   saveInterface,
   saveModule,
   summarizeArgument',
-  summarizeFunction'
+  summarizeFunction',
+  readLibraryInterface
   ) where
 
 import Prelude hiding ( catch )
@@ -61,6 +62,7 @@ import qualified Data.Set as S
 import Data.List ( foldl' )
 import FileLocation
 import System.FilePath
+import System.IO.Error hiding ( catch )
 
 import Data.LLVM
 
@@ -71,6 +73,7 @@ summaryExtension :: String
 summaryExtension = "json"
 
 data InterfaceException = DependencyMissing FilePath
+                        | DependencyDecodeError FilePath
                         deriving (Show, Typeable)
 instance Exception InterfaceException
 
@@ -105,7 +108,7 @@ instance ToJSON FuncAnnotation
 -- definitions have a chance at being linked together.
 data Linkage = LinkDefault
              | LinkWeak
-             deriving (Show, Generic)
+             deriving (Eq, Ord, Show, Generic)
 instance FromJSON Linkage
 instance ToJSON Linkage
 
@@ -122,7 +125,7 @@ data CType = CVoid
            | CPointer CType
            | CStruct String [CType]
            | CAnonStruct [CType]
-           deriving (Show, Generic)
+           deriving (Eq, Ord, Show, Generic)
 instance FromJSON CType
 instance ToJSON CType
 
@@ -131,7 +134,7 @@ data Parameter = Parameter { parameterType :: CType
                            , parameterName :: String
                            , parameterAnnotations :: [ParamAnnotation]
                            }
-               deriving (Show, Generic)
+               deriving (Eq, Ord, Show, Generic)
 instance FromJSON Parameter
 instance ToJSON Parameter
 
@@ -144,7 +147,7 @@ data ForeignFunction = ForeignFunction { foreignFunctionName :: ByteString
                                        , foreignFunctionParameters :: [Parameter]
                                        , foreignFunctionAnnotations :: [FuncAnnotation]
                                        }
-                     deriving (Show, Generic)
+                     deriving (Eq, Ord, Show, Generic)
 instance FromJSON ForeignFunction
 instance ToJSON ForeignFunction
 
@@ -286,8 +289,19 @@ mergeFunction m f = case M.lookup fn m of
   where
     fn = foreignFunctionName f
 
--- | FIXME: Convert this to catch IO exceptions and convert to a more
--- descriptive error type.
+-- | This is a low-level helper to load a LibraryInterface from a
+-- location on disk.
+readLibraryInterface :: FilePath -> IO LibraryInterface
+readLibraryInterface p = do
+  c <- LBS.readFile p
+  case decode' c of
+    Nothing ->
+      let ex = mkIOError doesNotExistErrorType "readLibraryInterface" Nothing (Just p)
+      in ioError ex
+    Just li -> return li
+
+-- | This is a high-level interface that searches for a named library
+-- in several locations (@summaryDirs@).
 --
 -- Try to load the named file from all possible summary repository
 -- dirs.
@@ -296,7 +310,7 @@ parseInterface summaryDirs p = do
   c <- loadFromSources summaryDirs p
   let mval = decode' c
   case mval of
-    Nothing -> $err' ("Failed to decode " ++ p)
+    Nothing -> throw (DependencyDecodeError p)
     Just li -> return li
 
 loadFromSources :: [FilePath] -> FilePath -> IO LBS.ByteString

@@ -15,22 +15,40 @@ import qualified Data.ByteString.Lazy as LBS
 import Data.Monoid
 import Data.Map ( Map )
 import qualified Data.Map as M
+import Data.Maybe ( isNothing )
 import Data.Set ( Set )
 import qualified Data.Set as S
 
 import Foreign.Inference.Interface
 
+data NameChange = SameName String
+                | DiffName String String
+                deriving (Eq, Ord)
+
+data TypeChange = SameType CType
+                | DiffType CType CType
+                deriving (Eq, Ord)
+
+instance Show NameChange where
+  show (SameName s) = s
+  show (DiffName s1 s2) = concat [ s1, " -> ", s2 ]
+
+instance Show TypeChange where
+  show (SameType _) = ""
+  show (DiffType t1 t2) = concat [" ", show t1, " -> ", show t2 ]
+
 data ParameterDiff =
   ParameterDiff { parameterDiffAddedAnnotations :: [ParamAnnotation]
                 , parameterDiffRemovedAnnotations :: [ParamAnnotation]
-                , parameterDiffOtherChange :: Bool
+                , parameterDiffNameChange :: NameChange
+                , parameterDiffTypeChange :: TypeChange
                 }
   deriving (Eq, Ord)
 
 data FunctionDiff =
   FunctionDiff { functionDiffAddedAnnotations :: [FuncAnnotation]
                , functionDiffRemovedAnnotations :: [FuncAnnotation]
-               , functionDiffChangedParameter :: [Maybe ParameterDiff]
+               , functionDiffChangedParameters :: [Maybe ParameterDiff]
                }
   deriving (Eq, Ord)
 
@@ -56,7 +74,10 @@ diffAddRem _ [] = mempty
 diffAddRem s fs = mconcat $ (fromString s) : map funcToBuilder fs
 
 funcToBuilder :: ForeignFunction -> Builder
-funcToBuilder ff = fromString " * " `mappend` fromByteString name
+funcToBuilder ff = mconcat [ fromString " * "
+                           , fromByteString name
+                           , fromString "\n"
+                           ]
   where
     name = foreignFunctionName ff
 
@@ -66,10 +87,28 @@ diffChanges diffs =
 
 changeToBuilder :: (String, FunctionDiff) -> Builder
 changeToBuilder (f, d) = mconcat $
-  fromString (" * " ++ f ++ "\n") : map fdiffToBuilder d
+  fromString (" * " ++ f) : added : removed : fromString "\n" : map paramChangeBuilder changed
+  where
+    changed = functionDiffChangedParameters d
+    newAttrs = functionDiffAddedAnnotations d
+    oldAttrs = functionDiffRemovedAnnotations d
+    added = fromString $ concatMap (\attr -> "+" ++ show attr) newAttrs
+    removed = fromString $ concatMap (\attr -> "-" ++ show attr) oldAttrs
 
-fdiffToBuilder :: FunctionDiff -> Builder
-fdiffToBuilder d = undefined
+paramChangeBuilder :: Maybe ParameterDiff -> Builder
+paramChangeBuilder Nothing = mempty
+paramChangeBuilder (Just d) = mconcat $ [
+  fromString (concat [ "   ** "
+                     , show (parameterDiffNameChange d)
+                     , show (parameterDiffTypeChange d)
+                     , " "
+                     ]),
+  fromString $ concatMap (\attr -> "+" ++ show attr) newAnnots,
+  fromString $ concatMap (\attr -> "-" ++ show attr) oldAnnots
+  ]
+  where
+    newAnnots = parameterDiffAddedAnnotations d
+    oldAnnots = parameterDiffRemovedAnnotations d
 
 libraryDiff :: LibraryInterface -> LibraryInterface -> LibraryDiff
 libraryDiff l1 l2 =
@@ -105,32 +144,39 @@ paramsDiffer (p1, p2) =
                                      S.toList $ a2 `S.difference` a1
                                 , parameterDiffRemovedAnnotations =
                                   S.toList $ a1 `S.difference` a2
-                                , parameterDiffOtherChange = oc
+                                , parameterDiffNameChange = nc
+                                , parameterDiffTypeChange = tc
                                 }
   where
     a1 = S.fromList (parameterAnnotations p1)
     a2 = S.fromList (parameterAnnotations p2)
-    oc = parameterType p1 /= parameterType p2 ||
-           parameterName p1 /= parameterName p2
+    naCh = parameterName p1 /= parameterName p2
+    tyCh = parameterType p1 /= parameterType p2
+    oc = naCh || tyCh
+    nc = case naCh of
+      True -> DiffName (parameterName p1) (parameterName p2)
+      False -> SameName (parameterName p1)
+    tc = case tyCh of
+      True -> DiffType (parameterType p1) (parameterType p2)
+      False -> SameType (parameterType p1)
 
 diffFunc :: ForeignFunction -> ForeignFunction -> Maybe FunctionDiff
 diffFunc f1 f2 =
-  case d == emptyFunctionDiff of
+  case null newAnnots && null oldAnnots && all isNothing paramDiffs of
     True -> Nothing
-    False -> Just d
+    False -> Just FunctionDiff { functionDiffAddedAnnotations = newAnnots
+                               , functionDiffRemovedAnnotations = oldAnnots
+                               , functionDiffChangedParameters = paramDiffs
+                               }
   where
     a1 = S.fromList (foreignFunctionAnnotations f1)
     a2 = S.fromList (foreignFunctionAnnotations f2)
     p1 = foreignFunctionParameters f1
     p2 = foreignFunctionParameters f2
 
-    d = FunctionDiff { functionDiffAddedAnnotations =
-                          S.toList $ a2 `S.difference` a1
-                     , functionDiffRemovedAnnotations =
-                       S.toList $ a1 `S.difference` a2
-                     , functionDiffChangedParameter =
-                       map paramsDiffer (zip p1 p2)
-                     }
+    newAnnots = S.toList $ a2 `S.difference` a1
+    oldAnnots = S.toList $ a1 `S.difference` a2
+    paramDiffs = map paramsDiffer (zip p1 p2)
 
 -- | Given two library interfaces, divide the functions defined in them into three
 -- categories:

@@ -59,57 +59,6 @@ data LibraryDiff =
               }
   deriving (Eq, Ord)
 
-diffToByteString :: LibraryDiff -> LBS.ByteString
-diffToByteString = toLazyByteString . diffBuilder
-
-diffBuilder :: LibraryDiff -> Builder
-diffBuilder d = mconcat [ addedFuncs, removedFuncs, changes ]
-  where
-    addedFuncs = diffAddRem "Added functions:\n" (libraryDiffAddedFunctions d)
-    removedFuncs = diffAddRem "Removed functions:\n" (libraryDiffRemovedFunctions d)
-    changes = diffChanges (libraryDiffChangedFunctions d)
-
-diffAddRem :: String -> [ForeignFunction] -> Builder
-diffAddRem _ [] = mempty
-diffAddRem s fs = mconcat $ (fromString s) : map funcToBuilder fs
-
-funcToBuilder :: ForeignFunction -> Builder
-funcToBuilder ff = mconcat [ fromString " * "
-                           , fromByteString name
-                           , fromString "\n"
-                           ]
-  where
-    name = foreignFunctionName ff
-
-diffChanges :: [(String, FunctionDiff)] -> Builder
-diffChanges diffs =
-  mconcat $ fromString "Changed functions:\n" : map changeToBuilder diffs
-
-changeToBuilder :: (String, FunctionDiff) -> Builder
-changeToBuilder (f, d) = mconcat $
-  fromString (" * " ++ f) : added : removed : fromString "\n" : map paramChangeBuilder changed
-  where
-    changed = functionDiffChangedParameters d
-    newAttrs = functionDiffAddedAnnotations d
-    oldAttrs = functionDiffRemovedAnnotations d
-    added = fromString $ concatMap (\attr -> "+" ++ show attr) newAttrs
-    removed = fromString $ concatMap (\attr -> "-" ++ show attr) oldAttrs
-
-paramChangeBuilder :: Maybe ParameterDiff -> Builder
-paramChangeBuilder Nothing = mempty
-paramChangeBuilder (Just d) = mconcat $ [
-  fromString (concat [ "   ** "
-                     , show (parameterDiffNameChange d)
-                     , show (parameterDiffTypeChange d)
-                     , " "
-                     ]),
-  fromString $ concatMap (\attr -> "+" ++ show attr) newAnnots,
-  fromString $ concatMap (\attr -> "-" ++ show attr) oldAnnots
-  ]
-  where
-    newAnnots = parameterDiffAddedAnnotations d
-    oldAnnots = parameterDiffRemovedAnnotations d
-
 libraryDiff :: LibraryInterface -> LibraryInterface -> LibraryDiff
 libraryDiff l1 l2 =
   LibraryDiff { libraryDiffRemovedFunctions = only1
@@ -122,9 +71,6 @@ libraryDiff l1 l2 =
 
 emptyLibraryDiff :: LibraryDiff
 emptyLibraryDiff = LibraryDiff [] [] []
-
-emptyFunctionDiff :: FunctionDiff
-emptyFunctionDiff = FunctionDiff [] [] []
 
 computeFuncDiffs :: (ForeignFunction, ForeignFunction)
                     -> [(String, FunctionDiff)]
@@ -216,3 +162,61 @@ checkInBoth s fname inBoth =
 notInBoth :: Set ByteString -> ForeignFunction -> Bool
 notInBoth inBoth func =
   not (S.member (foreignFunctionName func) inBoth)
+
+
+
+
+
+-- Bytestring conversion
+
+-- | Build a (lazy) ByteString representation of the given diff.
+diffToByteString :: LibraryDiff -> LBS.ByteString
+diffToByteString = toLazyByteString . diffBuilder
+
+diffBuilder :: LibraryDiff -> Builder
+diffBuilder d = mconcat [ addedFuncs, removedFuncs, changes ]
+  where
+    addedFuncs = diffAddRem "Added functions:\n" (libraryDiffAddedFunctions d)
+    removedFuncs = diffAddRem "Removed functions:\n" (libraryDiffRemovedFunctions d)
+    changes = diffChanges (libraryDiffChangedFunctions d)
+
+diffAddRem :: String -> [ForeignFunction] -> Builder
+diffAddRem _ [] = mempty
+diffAddRem s fs = mconcat $ (fromString s) : map funcToBuilder fs
+
+funcToBuilder :: ForeignFunction -> Builder
+funcToBuilder ff = mconcat [ fromString " * "
+                           , fromByteString name
+                           , fromString "\n"
+                           ]
+  where
+    name = foreignFunctionName ff
+
+diffChanges :: [(String, FunctionDiff)] -> Builder
+diffChanges diffs =
+  mconcat $ fromString "Changed functions:\n" : map changeToBuilder diffs
+
+changeToBuilder :: (String, FunctionDiff) -> Builder
+changeToBuilder (f, d) = mconcat $
+  fromString (" * " ++ f) : added : removed : fromString "\n" : map paramChangeBuilder changed
+  where
+    changed = functionDiffChangedParameters d
+    newAttrs = functionDiffAddedAnnotations d
+    oldAttrs = functionDiffRemovedAnnotations d
+    added = fromString $ concatMap (\attr -> "+" ++ show attr) newAttrs
+    removed = fromString $ concatMap (\attr -> "-" ++ show attr) oldAttrs
+
+paramChangeBuilder :: Maybe ParameterDiff -> Builder
+paramChangeBuilder Nothing = mempty
+paramChangeBuilder (Just d) = mconcat $ [
+  fromString (concat [ "   ** "
+                     , show (parameterDiffNameChange d)
+                     , show (parameterDiffTypeChange d)
+                     , " "
+                     ]),
+  fromString $ concatMap (\attr -> "+" ++ show attr) newAnnots,
+  fromString $ concatMap (\attr -> "-" ++ show attr) oldAnnots
+  ]
+  where
+    newAnnots = parameterDiffAddedAnnotations d
+    oldAnnots = parameterDiffRemovedAnnotations d

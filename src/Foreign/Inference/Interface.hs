@@ -87,6 +87,8 @@ data ParamAnnotation = PAArray !Int
                      | PAString
                      | PAConst
                      | PAFinalize
+                     | PAEscape
+                     | PAWillEscape
                      deriving (Show, Generic, Eq, Ord)
 instance FromJSON ParamAnnotation
 instance ToJSON ParamAnnotation

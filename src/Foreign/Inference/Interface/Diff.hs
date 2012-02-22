@@ -215,7 +215,8 @@ paramChangeBuilder (Just d) = mconcat $ [
                      , " "
                      ]),
   fromString $ concatMap (\attr -> "+" ++ show attr) newAnnots,
-  fromString $ concatMap (\attr -> "-" ++ show attr) oldAnnots
+  fromString $ concatMap (\attr -> "-" ++ show attr) oldAnnots,
+  fromString "\n"
   ]
   where
     newAnnots = parameterDiffAddedAnnotations d

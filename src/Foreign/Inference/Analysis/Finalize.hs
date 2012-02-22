@@ -103,8 +103,10 @@ finalizerAnalysis f summ = do
       set0 = HS.fromList $ filter isPointer (functionParameters f)
       fact0 = FinalizerInfo set0 HM.empty
   funcInfo <- local envMod (forwardBlockDataflow fact0 f)
-  let retInst = functionExitInstruction f
-  FinalizerInfo notFinalized witnesses <- local envMod (dataflowResult funcInfo retInst)
+  let exitInsts = functionExitInstructions f
+      getInstInfo i = local envMod (dataflowResult funcInfo i)
+  exitInfo <- mapM getInstInfo exitInsts
+  let FinalizerInfo notFinalized witnesses = meets exitInfo
   -- The finalized parameters are those that are *NOT* in our fact set
   -- at the return instruction
   let finalizedOrNull = set0 `HS.difference` notFinalized
@@ -223,8 +225,6 @@ process' i fi arg isNull =
     True -> fi
     False -> removeArgWithWitness arg i "null" fi
 
-
--- Testing
 -- Helpers
 
 isPointer :: (IsValue a) => a -> Bool
@@ -233,6 +233,8 @@ isPointer v =
     TypePointer _ _ -> True
     _ -> False
 
+
+-- Testing
 
 finalizerSummaryToTestFormat :: FinalizerSummary -> Map String (Set String)
 finalizerSummaryToTestFormat (FS m) = convert m

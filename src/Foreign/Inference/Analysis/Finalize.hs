@@ -100,7 +100,7 @@ finalizerAnalysis f summ = do
   -- from the rest of the module so far.  We want to be able to access
   -- this in the Reader environment
   let envMod e = e { moduleSummary = summ }
-      set0 = HS.fromList (functionParameters f)
+      set0 = HS.fromList $ filter isPointer (functionParameters f)
       fact0 = FinalizerInfo set0 HM.empty
   funcInfo <- local envMod (forwardBlockDataflow fact0 f)
   let retInst = functionExitInstruction f
@@ -225,6 +225,14 @@ process' i fi arg isNull =
 
 
 -- Testing
+-- Helpers
+
+isPointer :: (IsValue a) => a -> Bool
+isPointer v =
+  case valueType v of
+    TypePointer _ _ -> True
+    _ -> False
+
 
 finalizerSummaryToTestFormat :: FinalizerSummary -> Map String (Set String)
 finalizerSummaryToTestFormat (FS m) = convert m

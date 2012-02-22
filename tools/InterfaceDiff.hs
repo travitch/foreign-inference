@@ -8,7 +8,6 @@ import System.Exit
 
 import Foreign.Inference.Interface
 import Foreign.Inference.Interface.Diff
-import Foreign.Inference.Report
 
 data Opts =
   Opts { outputFormat :: OutputFormat
@@ -77,4 +76,4 @@ printDiff None _ = exitWith (ExitFailure 1)
 printDiff Text diff =
   let bs = diffToByteString diff
   in BS.putStrLn bs >> exitWith (ExitFailure 1)
-printDiff Html diff = undefined
+printDiff Html _ = error "HTML output is currently unimplemented"

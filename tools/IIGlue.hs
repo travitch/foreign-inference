@@ -22,6 +22,7 @@ import Foreign.Inference.Interface
 import Foreign.Inference.Report
 import Foreign.Inference.Preprocessing
 import Foreign.Inference.Analysis.Array
+import Foreign.Inference.Analysis.Finalize
 import Foreign.Inference.Analysis.Nullable
 import Foreign.Inference.Analysis.Output
 import Foreign.Inference.Analysis.Return
@@ -97,11 +98,13 @@ dump opts name m = do
       (o, outDiags) = identifyOutput ds cg
       (a, arrayDiags) = identifyArrays ds cg
       (r, retDiags) = identifyReturns ds cg
-      diags = mconcat [ nullDiags, arrayDiags, outDiags, retDiags ]
+      (f, finDiags) = identifyFinalizers ds cg
+      diags = mconcat [ nullDiags, arrayDiags, outDiags, retDiags, finDiags ]
       summaries = [ ModuleSummary s
                   , ModuleSummary a
                   , ModuleSummary o
                   , ModuleSummary r
+                  , ModuleSummary f
                   ]
   case formatDiagnostics (diagnosticLevel opts) diags of
     Nothing -> return ()

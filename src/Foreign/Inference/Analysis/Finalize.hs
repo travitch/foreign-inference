@@ -37,9 +37,9 @@ import Data.LLVM.Analysis.Dataflow
 import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
 
--- import Text.Printf
--- import Debug.Trace
--- debug = flip trace
+import Text.Printf
+import Debug.Trace
+debug = flip trace
 
 -- | If an argument is finalized, it will be in the map with its
 -- associated witnesses.  If no witnesses could be identified, the
@@ -93,6 +93,7 @@ type AnalysisMonad = RWS FinalizerData Diagnostics ()
 
 instance DataflowAnalysis AnalysisMonad FinalizerInfo where
   transfer = finalizerTransfer
+  edgeTransfer = finalizerEdgeTransfer
 
 finalizerAnalysis :: Function -> SummaryType -> AnalysisMonad SummaryType
 finalizerAnalysis f summ = do
@@ -106,7 +107,7 @@ finalizerAnalysis f summ = do
   let exitInsts = functionExitInstructions f
       getInstInfo i = local envMod (dataflowResult funcInfo i)
   exitInfo <- mapM getInstInfo exitInsts
-  let FinalizerInfo notFinalized witnesses = meets exitInfo
+  let FinalizerInfo notFinalized witnesses = meets exitInfo `debug` show exitInfo
   -- The finalized parameters are those that are *NOT* in our fact set
   -- at the return instruction
   let finalizedOrNull = set0 `HS.difference` notFinalized
@@ -119,13 +120,16 @@ finalizerAnalysis f summ = do
   -- up-to-date info.
   return $! newInfo `HM.union` summ
 
--- FIXME: Will need to add a phi transfer function to just process
--- edges
+finalizerEdgeTransfer :: FinalizerInfo -> CFGEdge -> AnalysisMonad FinalizerInfo
+finalizerEdgeTransfer fi (TrueEdge v) = return $! processCFGEdge fi not v
+finalizerEdgeTransfer fi (FalseEdge v) = return $! processCFGEdge fi id v
+finalizerEdgeTransfer fi _ = return fi
 
 finalizerTransfer :: FinalizerInfo -> Instruction -> [CFGEdge] -> AnalysisMonad FinalizerInfo
 finalizerTransfer info i es = do
-  let info' = processEdges info es
-  transfer' info' i
+  -- let info' = processEdges info es
+  info'' <- transfer' info i
+  return info'' `debug` printf "%s (%s) -> %s\n" (show i) (show info) (show info'')
 
 transfer' :: FinalizerInfo -> Instruction -> AnalysisMonad FinalizerInfo
 transfer' info i =
@@ -223,7 +227,7 @@ process' :: Instruction -> FinalizerInfo -> Argument -> Bool -> FinalizerInfo
 process' i fi arg isNull =
   case isNull of
     True -> fi
-    False -> removeArgWithWitness arg i "null" fi
+    False -> removeArgWithWitness arg i "null" fi `debug` printf "Removing %s due to null edge\n" (show arg)
 
 -- Helpers
 

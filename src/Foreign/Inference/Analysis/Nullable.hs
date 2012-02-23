@@ -127,11 +127,11 @@ import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
 import Foreign.Inference.Analysis.Return
 
-import Text.Printf
-import Debug.Trace
+-- import Text.Printf
+-- import Debug.Trace
 
-debug' :: c -> String -> c
-debug' = flip trace
+-- debug' :: c -> String -> c
+-- debug' = flip trace
 
 type SummaryType = Map Function (Set (Argument, [Witness]))
 
@@ -195,6 +195,7 @@ type AnalysisMonad = RWS NullData Diagnostics NullState
 
 instance DataflowAnalysis AnalysisMonad NullInfo where
   transfer = nullTransfer
+  edgeTransfer = nullEdgeTransfer
 
 meetNullInfo :: NullInfo -> NullInfo -> NullInfo
 meetNullInfo ni1 ni2 =
@@ -243,21 +244,25 @@ attachWitness m a =
     Nothing -> (a, [])
     Just is -> (a, S.toList is)
 
+nullEdgeTransfer :: NullInfo -> CFGEdge -> AnalysisMonad NullInfo
+nullEdgeTransfer ni (TrueEdge v) = return $! processCFGEdge ni id v
+nullEdgeTransfer ni (FalseEdge v) = return $! processCFGEdge ni not v
+nullEdgeTransfer ni _ = return ni
+
+-- nullTransfer :: NullInfo
+--                 -> Instruction
+--                 -> AnalysisMonad NullInfo
+-- nullTransfer ni i =
+--   let ni' = removeNonNullPointers ni es
+--   in transfer' ni' i
+
 -- | First, process the incoming CFG edges to learn about pointers
 -- that are known to be non-NULL.  Then use this updated information
 -- to identify pointers that are dereferenced when they *might* be
 -- NULL.  Also map these possibly-NULL pointers to any corresponding
 -- parameters.
-nullTransfer :: NullInfo
-                -> Instruction
-                -> [CFGEdge]
-                -> AnalysisMonad NullInfo
-nullTransfer ni i es =
-  let ni' = removeNonNullPointers ni es
-  in transfer' ni' i
-
-transfer' :: NullInfo -> Instruction -> AnalysisMonad NullInfo
-transfer' ni i =
+nullTransfer :: NullInfo -> Instruction -> AnalysisMonad NullInfo
+nullTransfer ni i =
   case i of
     LoadInst { loadAddress = ptr } ->
       valueDereferenced i ptr ni

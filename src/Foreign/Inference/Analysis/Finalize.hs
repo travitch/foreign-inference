@@ -126,14 +126,8 @@ finalizerEdgeTransfer fi (TrueEdge v) = return $! processCFGEdge fi not v
 finalizerEdgeTransfer fi (FalseEdge v) = return $! processCFGEdge fi id v
 finalizerEdgeTransfer fi _ = return fi
 
-finalizerTransfer :: FinalizerInfo -> Instruction -> [CFGEdge] -> AnalysisMonad FinalizerInfo
-finalizerTransfer info i es = do
-  -- let info' = processEdges info es
-  info'' <- transfer' info i
-  return info'' `debug` printf "%s (%s) -> %s\n" (show i) (show info) (show info'')
-
-transfer' :: FinalizerInfo -> Instruction -> AnalysisMonad FinalizerInfo
-transfer' info i =
+finalizerTransfer :: FinalizerInfo -> Instruction -> AnalysisMonad FinalizerInfo
+finalizerTransfer info i =
   case i of
     CallInst { callFunction = calledFunc, callArguments = args } ->
       callTransfer i (stripBitcasts calledFunc) (map fst args) info
@@ -198,11 +192,6 @@ removeArgWithWitness a i reason (FinalizerInfo s m) =
 -- | If we know, based on some incoming CFG edges, that an argument is
 -- NULL, remove it from the current set and add the comparison or
 -- branch instruction to the witness set for that argument.
-processEdges :: FinalizerInfo -> [CFGEdge] -> FinalizerInfo
-processEdges fi [TrueEdge v] = processCFGEdge fi id v
-processEdges fi [FalseEdge v] = processCFGEdge fi not v
-processEdges fi _ = fi
-
 processCFGEdge :: FinalizerInfo -> (Bool -> Bool) -> Value -> FinalizerInfo
 processCFGEdge fi cond v =
   case valueContent v of

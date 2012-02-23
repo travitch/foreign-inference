@@ -18,7 +18,6 @@ import qualified Data.Set as S
 import FileLocation
 
 import Data.LLVM
-import Data.LLVM.Analysis.CFG
 import Data.LLVM.Analysis.CallGraph
 import Data.LLVM.Analysis.CallGraphSCCTraversal
 import Data.LLVM.Analysis.Dataflow
@@ -121,8 +120,8 @@ outAnalysis f summ = do
 -- Note, we don't use valueContent' to strip bitcasts here since
 -- accesses to bitfields use lots of interesting bitcasts and give us
 -- false positives.
-outTransfer :: OutInfo -> Instruction -> [CFGEdge] -> AnalysisMonad OutInfo
-outTransfer info i _ =
+outTransfer :: OutInfo -> Instruction -> AnalysisMonad OutInfo
+outTransfer info i =
   case i of
     LoadInst { loadAddress = (valueContent -> ArgumentC ptr) } ->
       return $! merge i ptr ArgIn info

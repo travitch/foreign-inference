@@ -223,11 +223,10 @@ nullableAnalysis f summ = do
                    }
       args = filter isPointer (functionParameters f)
       fact0 = top { nullArguments = S.fromList args }
-  localInfo <- local envMod (forwardBlockDataflow fact0 f)
+  localInfo <- local envMod (forwardDataflow fact0 f)
 
-  let getInstInfo i = local envMod (dataflowResult localInfo i)
-  exitInfo <- mapM getInstInfo (functionExitInstructions f)
-  let exitInfo' = meets exitInfo
+  let exitInfo = map (dataflowResult localInfo) (functionExitInstructions f)
+      exitInfo' = meets exitInfo
       notNullableArgs = S.fromList args `S.difference` nullArguments exitInfo'
       argsAndWitnesses =
         S.map (attachWitness (nullWitnesses exitInfo')) notNullableArgs

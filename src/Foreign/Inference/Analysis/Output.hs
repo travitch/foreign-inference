@@ -104,10 +104,9 @@ type AnalysisMonad = RWS OutData Diagnostics ()
 outAnalysis :: Function -> SummaryType -> AnalysisMonad SummaryType
 outAnalysis f summ = do
   let envMod e = e { moduleSummary = summ }
-  funcInfo <- local envMod (forwardBlockDataflow top f)
-  let getInstInfo i = local envMod (dataflowResult funcInfo i)
-  exitInfo <- mapM getInstInfo (functionExitInstructions f)
-  let OI exitInfo' aggArgs = meets exitInfo
+  funcInfo <- local envMod (forwardDataflow top f)
+  let exitInfo = map (dataflowResult funcInfo) (functionExitInstructions f)
+      OI exitInfo' aggArgs = meets exitInfo
       exitInfo'' = M.filterWithKey (\k _ -> not (HS.member k aggArgs)) exitInfo'
       exitInfo''' = M.map (\(a, ws) -> (a, S.toList ws)) exitInfo''
   -- Merge the local information we just computed with the global

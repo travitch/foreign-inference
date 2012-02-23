@@ -103,14 +103,15 @@ finalizerAnalysis f summ = do
   let envMod e = e { moduleSummary = summ }
       set0 = HS.fromList $ filter isPointer (functionParameters f)
       fact0 = FinalizerInfo set0 HM.empty
-  funcInfo <- local envMod (forwardBlockDataflow fact0 f)
+
+  funcInfo <- local envMod (forwardDataflow fact0 f)
+
   let exitInsts = functionExitInstructions f
-      getInstInfo i = local envMod (dataflowResult funcInfo i)
-  exitInfo <- mapM getInstInfo exitInsts
-  let FinalizerInfo notFinalized witnesses = meets exitInfo `debug` show exitInfo
+      exitInfo = map (dataflowResult funcInfo) exitInsts
+      FinalizerInfo notFinalized witnesses = meets exitInfo `debug` show exitInfo
   -- The finalized parameters are those that are *NOT* in our fact set
   -- at the return instruction
-  let finalizedOrNull = set0 `HS.difference` notFinalized
+      finalizedOrNull = set0 `HS.difference` notFinalized
       attachWitness a m = HM.insert a (S.toList (HM.lookupDefault S.empty a witnesses)) m
       newInfo = HS.foldr attachWitness HM.empty finalizedOrNull
   -- Note, we perform the union with newInfo first so that any

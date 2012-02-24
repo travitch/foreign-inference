@@ -37,9 +37,9 @@ import Data.LLVM.Analysis.Dataflow
 import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
 
-import Text.Printf
-import Debug.Trace
-debug = flip trace
+-- import Text.Printf
+-- import Debug.Trace
+-- debug = flip trace
 
 -- | If an argument is finalized, it will be in the map with its
 -- associated witnesses.  If no witnesses could be identified, the
@@ -108,7 +108,7 @@ finalizerAnalysis f summ = do
 
   let exitInsts = functionExitInstructions f
       exitInfo = map (dataflowResult funcInfo) exitInsts
-      FinalizerInfo notFinalized witnesses = meets exitInfo `debug` show exitInfo
+      FinalizerInfo notFinalized witnesses = meets exitInfo
   -- The finalized parameters are those that are *NOT* in our fact set
   -- at the return instruction
       finalizedOrNull = set0 `HS.difference` notFinalized
@@ -217,7 +217,7 @@ process' :: Instruction -> FinalizerInfo -> Argument -> Bool -> FinalizerInfo
 process' i fi arg isNull =
   case isNull of
     True -> fi
-    False -> removeArgWithWitness arg i "null" fi `debug` printf "Removing %s due to null edge\n" (show arg)
+    False -> removeArgWithWitness arg i "null" fi
 
 -- Helpers
 

@@ -3,6 +3,7 @@ module Foreign.Inference.Analysis.Return (
   identifyReturns
   ) where
 
+import Control.Monad.Identity
 import Data.Monoid
 import Data.Set ( Set )
 import qualified Data.Set as S
@@ -29,5 +30,9 @@ instance SummarizeModule ReturnSummary where
 identifyReturns :: DependencySummary -> CallGraph -> (ReturnSummary, Diagnostics)
 identifyReturns ds cg = (RS (S.fromList noRetFuncs), mempty)
   where
-    noRetFuncs = noReturnAnalysis cg extSumm
-    extSumm ef = maybe False (FANoRet `elem`) (lookupFunctionSummary ds ef)
+    noRetFuncs = runIdentity (noReturnAnalysis cg extSumm)
+    extSumm ef = do
+      let summ = lookupFunctionSummary ds ef
+      case lookupFunctionSummary ds ef of
+        Nothing -> return False
+        Just s -> return $ FANoRet `elem` s

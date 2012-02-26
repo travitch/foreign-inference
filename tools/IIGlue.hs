@@ -21,6 +21,7 @@ import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
 import Foreign.Inference.Report
 import Foreign.Inference.Preprocessing
+import Foreign.Inference.Analysis.Allocator
 import Foreign.Inference.Analysis.Array
 import Foreign.Inference.Analysis.Escape
 import Foreign.Inference.Analysis.Finalize
@@ -101,12 +102,14 @@ dump opts name m = do
       (r, retDiags) = identifyReturns ds cg
       (f, finDiags) = identifyFinalizers ds cg
       (e, escDiags) = identifyEscapes ds cg
+      (alloc, allocDiags) = identifyAllocators ds e cg
       diags = mconcat [ nullDiags
                       , arrayDiags
                       , outDiags
                       , retDiags
                       , finDiags
                       , escDiags
+                      , allocDiags
                       ]
       summaries = [ ModuleSummary s
                   , ModuleSummary a
@@ -114,6 +117,7 @@ dump opts name m = do
                   , ModuleSummary r
                   , ModuleSummary f
                   , ModuleSummary e
+                  , ModuleSummary alloc
                   ]
   case formatDiagnostics (diagnosticLevel opts) diags of
     Nothing -> return ()

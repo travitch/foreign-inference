@@ -19,8 +19,8 @@ import Foreign.Inference.Analysis.Escape
 -- import Foreign.Inference.Analysis.Finalize
 import Foreign.Inference.Internal.FlattenValue
 
-import Debug.Trace
-debug = flip trace
+-- import Debug.Trace
+-- debug = flip trace
 
 type SummaryType = Map Function (Maybe String)
 data AllocatorSummary = AS SummaryType
@@ -31,6 +31,14 @@ data AllocatorData =
                 }
 
 type AnalysisMonad = RWS AllocatorData Diagnostics ()
+
+instance SummarizeModule AllocatorSummary where
+  summarizeArgument _ _ = []
+  summarizeFunction f (AS summ) =
+    case M.lookup f summ of
+      Nothing -> []
+      Just (Just fin) -> [FAAllocator fin]
+      Just Nothing -> [FAAllocator ""]
 
 identifyAllocators :: DependencySummary
                       -> EscapeSummary
@@ -74,7 +82,7 @@ checkReturn f rv summ =
     True -> return summ
     False -> do
       valid <- mapM (isAllocatedWithoutEscape summ) nonNullRvs
-      case and valid `debug` show valid of
+      case and valid of
         False -> return summ
         True -> return $ M.insert f Nothing summ
   where
@@ -103,14 +111,14 @@ checkFunctionIsAllocator v summ i =
     ExternalFunctionC f -> do
       depSumm <- asks dependencySummary
       case lookupFunctionSummary depSumm f of
-        Nothing -> return False `debug` "No summary"
+        Nothing -> return False
         Just annots ->
           case any isAllocatorAnnot annots of
-            False -> return False `debug` "No allocator annotation"
+            False -> return False
             True -> do
               escSumm <- asks escapeSummary
               let escapes = instructionEscapes escSumm i
-              return $! not escapes `debug` ("Escape check? " ++ show escapes)
+              return $! not escapes
     -- Indirect call
     _ -> return False
 

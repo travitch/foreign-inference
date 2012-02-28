@@ -1,4 +1,30 @@
 {-# LANGUAGE ViewPatterns #-}
+{-|
+
+This analysis identifies functions that are allocators (in the style
+of malloc).
+
+An function @f@ is an allocator if it always returns the result of an
+allocator or NULL, but must be able to return non-NULL.  Additionally,
+none of the returned allocations may *escape* the function.  See the
+escape analysis for a precise definition of escaping.
+
+The initial set of allocators is derived from the C standard library
+(malloc, calloc).  Support for C++ new allocations will be added.
+
+As a special exception, an allocator may allocate a chunk of memory
+using another allocator and then return a pointer to some location
+inside of the chunk to the user.  Example:
+
+> void *glp_malloc(int size) {
+>   void* ret = malloc(size + 10);
+>   return (void*)((char*)ret + 10);
+> }
+
+This facilitates allocators that allocate object headers to store
+metadata that they do not wish to expose to the user.
+
+-}
 module Foreign.Inference.Analysis.Allocator (
   AllocatorSummary,
   identifyAllocators,

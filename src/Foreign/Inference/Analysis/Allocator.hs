@@ -41,6 +41,20 @@ instance SummarizeModule AllocatorSummary where
       Just (Just fin) -> [FAAllocator fin]
       Just Nothing -> [FAAllocator ""]
 
+-- FIXME: Two extensions are required:
+--
+--  * Support looking at the called functions in the return value and
+--    see if they are global funcptrs that have a default value.
+--    Check to see if that default value is an allocator.  It could be
+--    replaced with something that is not, but it is a clear
+--    indication of intent if it is an allocator, and we will consider
+--    that sufficient.  Many libraries use replacable allocators.
+--
+--  * Support allocators where a chunk of memory is allocated and then
+--    some pointer into the slab is returned, instead of just the
+--    pointer itself.  Relevant for at least glpk and jansson (plus
+--    others).
+
 identifyAllocators :: DependencySummary
                       -> EscapeSummary
                       -> CallGraph
@@ -97,38 +111,44 @@ checkReturn f rv summ =
 -- | Return True if the given Value is the result of a call to an
 -- allocator AND does not escape.
 isAllocatedWithoutEscape :: SummaryType -> Value -> AnalysisMonad Bool
-isAllocatedWithoutEscape summ rv =
-  case valueContent' rv of
+isAllocatedWithoutEscape summ rv = do
+  allocatorInsts <- case valueContent' rv of
     InstructionC i@CallInst { callFunction = f } ->
       checkFunctionIsAllocator f summ i
     InstructionC i@InvokeInst { invokeFunction = f } ->
       checkFunctionIsAllocator f summ i
-    _ -> return False
+    _ -> return []
+  -- If there are no values to check for escaping, this is not an
+  -- allocator.  If there are values, none may escape.
+  case null allocatorInsts of
+    True -> return False
+    False -> noneEscape allocatorInsts
 
-checkFunctionIsAllocator :: Value -> SummaryType -> Instruction -> AnalysisMonad Bool
+checkFunctionIsAllocator :: Value -> SummaryType -> Instruction -> AnalysisMonad [Instruction]
 checkFunctionIsAllocator v summ i =
   case valueContent' v of
-    FunctionC f -> do
-      escSumm <- asks escapeSummary
+    FunctionC f ->
       case M.lookup f summ of
-        Nothing -> return False
-        Just _ -> return $! not (instructionEscapes escSumm i)
+        Nothing -> return []
+        Just _ -> return [i]
     ExternalFunctionC f -> do
       depSumm <- asks dependencySummary
       case lookupFunctionSummary depSumm f of
-        Nothing -> return False
+        Nothing -> return []
         Just annots ->
           case any isAllocatorAnnot annots of
-            False -> return False
-            True -> do
-              escSumm <- asks escapeSummary
-              let escapes = instructionEscapes escSumm i
-              return $! not escapes
+            False -> return []
+            True -> return [i]
     InstructionC LoadInst { loadAddress = (valueContent' ->
       GlobalVariableC GlobalVariable { globalVariableInitializer = Just val0 })} ->
       checkFunctionIsAllocator val0 summ i
     -- Indirect call
-    _ -> return False
+    _ -> return []
+
+noneEscape :: [Instruction] -> AnalysisMonad Bool
+noneEscape is = do
+  escSumm <- asks escapeSummary
+  return $! not (any (instructionEscapes escSumm) is)
 
 -- Helpers
 

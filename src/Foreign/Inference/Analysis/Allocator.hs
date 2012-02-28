@@ -123,6 +123,9 @@ checkFunctionIsAllocator v summ i =
               escSumm <- asks escapeSummary
               let escapes = instructionEscapes escSumm i
               return $! not escapes
+    InstructionC LoadInst { loadAddress = (valueContent' ->
+      GlobalVariableC GlobalVariable { globalVariableInitializer = Just val0 })} ->
+      checkFunctionIsAllocator val0 summ i
     -- Indirect call
     _ -> return False
 

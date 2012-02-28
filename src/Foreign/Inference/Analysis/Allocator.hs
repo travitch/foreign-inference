@@ -87,7 +87,11 @@ checkReturn f rv summ =
         True -> return $ M.insert f Nothing summ
   where
     rvs = flattenValue rv
-    nonNullRvs = filter isNotNull rvs
+    -- Here, drop all NULLs that are being returned since that is
+    -- okay.  Also filter out Phi nodes (since we flattened the phi
+    -- node to all of the values it could represent, but that list
+    -- contains the phi node itself).
+    nonNullRvs = filter isNotNull $ filter isNotPhi rvs
 
 -- | Return True if the given Value is the result of a call to an
 -- allocator AND does not escape.
@@ -132,6 +136,12 @@ isNotNull :: Value -> Bool
 isNotNull v =
   case valueContent v of
     ConstantC ConstantPointerNull {} -> False
+    _ -> True
+
+isNotPhi :: Value -> Bool
+isNotPhi v =
+  case valueContent' v of
+    InstructionC PhiNode {} -> False
     _ -> True
 
 -- Testing

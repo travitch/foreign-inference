@@ -41,20 +41,6 @@ instance SummarizeModule AllocatorSummary where
       Just (Just fin) -> [FAAllocator fin]
       Just Nothing -> [FAAllocator ""]
 
--- FIXME: Two extensions are required:
---
---  * Support looking at the called functions in the return value and
---    see if they are global funcptrs that have a default value.
---    Check to see if that default value is an allocator.  It could be
---    replaced with something that is not, but it is a clear
---    indication of intent if it is an allocator, and we will consider
---    that sufficient.  Many libraries use replacable allocators.
---
---  * Support allocators where a chunk of memory is allocated and then
---    some pointer into the slab is returned, instead of just the
---    pointer itself.  Relevant for at least glpk and jansson (plus
---    others).
-
 identifyAllocators :: DependencySummary
                       -> EscapeSummary
                       -> CallGraph
@@ -114,9 +100,21 @@ isAllocatedWithoutEscape :: SummaryType -> Value -> AnalysisMonad Bool
 isAllocatedWithoutEscape summ rv = do
   allocatorInsts <- case valueContent' rv of
     InstructionC i@CallInst { callFunction = f } ->
-      checkFunctionIsAllocator f summ i
+      checkFunctionIsAllocator f summ [i]
     InstructionC i@InvokeInst { invokeFunction = f } ->
-      checkFunctionIsAllocator f summ i
+      checkFunctionIsAllocator f summ [i]
+
+    -- Returning a sub-object using safe addressing.  This also works
+    -- for some forms of pointer arithmetic that LLVM lowers into a
+    -- GEP instruction.  Something more general could be added for
+    -- uglier cases, but this seems like a good compromise.
+    InstructionC i@GetElementPtrInst { getElementPtrValue =
+      (valueContent' -> InstructionC base@CallInst { callFunction = f })} ->
+      checkFunctionIsAllocator f summ [i, base]
+    InstructionC i@GetElementPtrInst { getElementPtrValue =
+      (valueContent' -> InstructionC base@InvokeInst { invokeFunction = f })} ->
+      checkFunctionIsAllocator f summ [i, base]
+
     _ -> return []
   -- If there are no values to check for escaping, this is not an
   -- allocator.  If there are values, none may escape.
@@ -124,13 +122,13 @@ isAllocatedWithoutEscape summ rv = do
     True -> return False
     False -> noneEscape allocatorInsts
 
-checkFunctionIsAllocator :: Value -> SummaryType -> Instruction -> AnalysisMonad [Instruction]
-checkFunctionIsAllocator v summ i =
+checkFunctionIsAllocator :: Value -> SummaryType -> [Instruction] -> AnalysisMonad [Instruction]
+checkFunctionIsAllocator v summ is =
   case valueContent' v of
     FunctionC f ->
       case M.lookup f summ of
         Nothing -> return []
-        Just _ -> return [i]
+        Just _ -> return is
     ExternalFunctionC f -> do
       depSumm <- asks dependencySummary
       case lookupFunctionSummary depSumm f of
@@ -138,10 +136,10 @@ checkFunctionIsAllocator v summ i =
         Just annots ->
           case any isAllocatorAnnot annots of
             False -> return []
-            True -> return [i]
+            True -> return is
     InstructionC LoadInst { loadAddress = (valueContent' ->
       GlobalVariableC GlobalVariable { globalVariableInitializer = Just val0 })} ->
-      checkFunctionIsAllocator val0 summ i
+      checkFunctionIsAllocator val0 summ is
     -- Indirect call
     _ -> return []
 

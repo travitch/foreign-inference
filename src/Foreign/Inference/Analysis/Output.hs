@@ -8,7 +8,7 @@ module Foreign.Inference.Analysis.Output (
   identifyOutput
   ) where
 
-import Control.Monad.RWS.Strict
+import Control.DeepSeq
 import Data.HashSet ( HashSet )
 import qualified Data.HashSet as HS
 import Data.Map ( Map )
@@ -22,6 +22,7 @@ import Data.LLVM.Analysis.CallGraph
 import Data.LLVM.Analysis.CallGraphSCCTraversal
 import Data.LLVM.Analysis.Dataflow
 
+import Foreign.Inference.AnalysisMonad
 import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
 
@@ -35,18 +36,36 @@ instance Show ArgumentDirection where
   show ArgOut = "out"
   show ArgBoth = "both"
 
+instance NFData ArgumentDirection
+
 type SummaryType = Map Argument (ArgumentDirection, [Witness])
-data OutputSummary = OS SummaryType
+data OutputSummary =
+  OutputSummary { outputSummary :: SummaryType
+                , outputDiagnostics :: Diagnostics
+                }
 
 instance Eq OutputSummary where
-  (OS s1) == (OS s2) = s1 == s2
+  (OutputSummary s1 _) == (OutputSummary s2 _) = s1 == s2
+
+instance Monoid OutputSummary where
+  mempty = OutputSummary mempty mempty
+  mappend (OutputSummary s1 d1) (OutputSummary s2 d2) =
+    OutputSummary (M.union s1 s2) (mappend d1 d2)
+
+instance NFData OutputSummary where
+  rnf o@(OutputSummary s d) = s `deepseq` d `deepseq` o `seq` ()
+
+instance HasDiagnostics OutputSummary where
+  addDiagnostics s d =
+    s { outputDiagnostics = outputDiagnostics s `mappend` d }
+  getDiagnostics = outputDiagnostics
 
 instance SummarizeModule OutputSummary where
   summarizeFunction _ _ = []
   summarizeArgument = summarizeOutArgument
 
 summarizeOutArgument :: Argument -> OutputSummary -> [(ParamAnnotation, [Witness])]
-summarizeOutArgument a (OS s) =
+summarizeOutArgument a (OutputSummary s _) =
   case M.lookup a s of
     Nothing -> []
     Just (ArgIn, _) -> []
@@ -61,14 +80,12 @@ data OutData = OD { moduleSummary :: SummaryType
 -- | Note that array parameters are not out parameters, so we rely on
 -- the Array analysis to let us filter those parameters out of our
 -- results.
-identifyOutput :: DependencySummary -> CallGraph
-                  -> (OutputSummary, Diagnostics)
-identifyOutput ds cg = (OS res, diags)
+identifyOutput :: DependencySummary -> CallGraph -> OutputSummary
+identifyOutput ds cg =
+  parallelCallGraphSCCTraversal cg runner outAnalysis mempty
   where
-    s0 = M.empty
-    analysis = callGraphSCCTraversal cg outAnalysis s0
+    runner a = runAnalysis a constData ()
     constData = OD M.empty ds cg
-    (res, diags) = evalRWS analysis constData ()
 
 data OutInfo = OI { outputInfo :: !(Map Argument (ArgumentDirection, Set Witness))
                   , aggregates :: !(HashSet Argument)
@@ -95,13 +112,13 @@ meetOutInfo (OI m1 s1) (OI m2 s2) =
   where
     meetWithWitness (v1, w1) (v2, w2) = (meet v1 v2, S.union w1 w2)
 
-instance DataflowAnalysis AnalysisMonad OutInfo where
+instance DataflowAnalysis Analysis OutInfo where
   transfer = outTransfer
 
-type AnalysisMonad = RWS OutData Diagnostics ()
+type Analysis = AnalysisMonad OutData ()
 
-outAnalysis :: Function -> SummaryType -> AnalysisMonad SummaryType
-outAnalysis f summ = do
+outAnalysis :: Function -> OutputSummary -> Analysis OutputSummary
+outAnalysis f s@(OutputSummary summ _) = do
   let envMod e = e { moduleSummary = summ }
   funcInfo <- local envMod (forwardDataflow top f)
   let exitInfo = map (dataflowResult funcInfo) (functionExitInstructions f)
@@ -111,7 +128,7 @@ outAnalysis f summ = do
   -- Merge the local information we just computed with the global
   -- summary.  Prefer the locally computed info if there are
   -- collisions (could arise while processing SCCs).
-  return $! M.union exitInfo''' summ
+  return $! s { outputSummary = M.union exitInfo''' summ }
 
 -- | This transfer function only needs to be concerned with Load and
 -- Store instructions (for now).  Loads add in an ArgIn value. Stores
@@ -120,7 +137,7 @@ outAnalysis f summ = do
 -- Note, we don't use valueContent' to strip bitcasts here since
 -- accesses to bitfields use lots of interesting bitcasts and give us
 -- false positives.
-outTransfer :: OutInfo -> Instruction -> AnalysisMonad OutInfo
+outTransfer :: OutInfo -> Instruction -> Analysis OutInfo
 outTransfer info i =
   case i of
     LoadInst { loadAddress = (valueContent -> ArgumentC ptr) } ->

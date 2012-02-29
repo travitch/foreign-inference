@@ -97,7 +97,7 @@ dump opts name m = do
   ds <- loadDependencies [repo] deps
 
   let s = identifyNullable ds m cg r
-      (o, outDiags) = identifyOutput ds cg
+      o = identifyOutput ds cg
       a = identifyArrays ds cg
       (r, retDiags) = identifyReturns ds cg
       f = identifyFinalizers ds cg
@@ -105,7 +105,7 @@ dump opts name m = do
       alloc = identifyAllocators ds e cg
       diags = mconcat [ getDiagnostics s
                       , getDiagnostics a
-                      , outDiags
+                      , getDiagnostics o
                       , retDiags
                       , getDiagnostics f
                       , escDiags

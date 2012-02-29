@@ -21,6 +21,7 @@ import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
 import Foreign.Inference.Report
 import Foreign.Inference.Preprocessing
+import Foreign.Inference.AnalysisMonad
 import Foreign.Inference.Analysis.Allocator
 import Foreign.Inference.Analysis.Array
 import Foreign.Inference.Analysis.Escape
@@ -96,14 +97,14 @@ dump opts name m = do
       repo = repositoryLocation opts
   ds <- loadDependencies [repo] deps
 
-  let (s, nullDiags) = identifyNullable ds m cg r
+  let s {-(s, nullDiags)-} = identifyNullable ds m cg r
       (o, outDiags) = identifyOutput ds cg
       (a, arrayDiags) = identifyArrays ds cg
       (r, retDiags) = identifyReturns ds cg
       (f, finDiags) = identifyFinalizers ds cg
       (e, escDiags) = identifyEscapes ds cg
       (alloc, allocDiags) = identifyAllocators ds e cg
-      diags = mconcat [ nullDiags
+      diags = mconcat [ getDiagnostics s -- nullDiags
                       , arrayDiags
                       , outDiags
                       , retDiags

@@ -106,13 +106,13 @@ module Foreign.Inference.Analysis.Nullable (
   ) where
 
 import Control.Arrow
-import Control.Monad.RWS.Strict
 import Data.Map ( Map )
 import qualified Data.Map as M
 import Data.Set ( Set )
 import qualified Data.Set as S
 import Data.HashMap.Strict ( HashMap )
 import qualified Data.HashMap.Strict as HM
+import Data.Monoid
 import FileLocation
 
 import Data.LLVM
@@ -125,6 +125,7 @@ import Data.LLVM.Analysis.Dominance
 
 import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
+import Foreign.Inference.AnalysisMonad
 import Foreign.Inference.Analysis.Return
 
 -- import Text.Printf
@@ -138,17 +139,20 @@ type SummaryType = Map Function (Set (Argument, [Witness]))
 -- | Note, this could be a Set (Argument, Instruction) where the
 -- Instruction is the fact we saw that led us to believe that Argument
 -- is not nullable.
-newtype NullableSummary = NS { unNS :: SummaryType }
+data NullableSummary =
+  NullableSummary { nullableSummary :: SummaryType
+                  , nullableDiagnostics :: Diagnostics
+                  }
 
 instance Eq NullableSummary where
-  (NS s1) == (NS s2) = s1 == s2
+  (NullableSummary s1 _) == (NullableSummary s2 _) = s1 == s2
 
 instance SummarizeModule NullableSummary where
   summarizeFunction _ _ = []
   summarizeArgument = summarizeNullArgument
 
 summarizeNullArgument :: Argument -> NullableSummary -> [(ParamAnnotation, [Witness])]
-summarizeNullArgument a (NS s) =
+summarizeNullArgument a (NullableSummary s _) =
   case S.toList $ S.filter ((==a) . fst) nonNullableArgs of
     [] -> []
     [(_, insts)] -> [(PANotNull, insts)]
@@ -161,14 +165,16 @@ summarizeNullArgument a (NS s) =
 -- | The top-level entry point of the nullability analysis
 identifyNullable :: DependencySummary -> Module -> CallGraph
                     -> ReturnSummary
-                    -> (NullableSummary, Diagnostics)
-identifyNullable ds m cg retSumm = (NS res, diags)
+                    -> NullableSummary
+identifyNullable ds m cg retSumm =
+  runAnalysis analysis constData cache
   where
     s0 = M.fromList $ zip (moduleDefinedFunctions m) (repeat S.empty)
-    analysis = callGraphSCCTraversal cg nullableAnalysis s0
+    summ0 = NullableSummary s0 mempty
+
+    analysis = callGraphSCCTraversal cg nullableAnalysis summ0
     constData = ND M.empty ds cg retSumm undefined undefined
     cache = NState HM.empty
-    (res, diags) = evalRWS analysis constData cache
 
 data NullData = ND { moduleSummary :: SummaryType
                    , dependencySummary :: DependencySummary
@@ -191,9 +197,12 @@ instance MeetSemiLattice NullInfo where
 instance BoundedMeetSemiLattice NullInfo where
   top = NInfo S.empty M.empty
 
-type AnalysisMonad = RWS NullData Diagnostics NullState
+instance HasDiagnostics NullableSummary where
+  addDiagnostics s d = s { nullableDiagnostics = (nullableDiagnostics s) `mappend` d }
+  getDiagnostics = nullableDiagnostics
 
-instance DataflowAnalysis AnalysisMonad NullInfo where
+type Analysis = AnalysisMonad NullData NullState
+instance DataflowAnalysis Analysis NullInfo where
   transfer = nullTransfer
   edgeTransfer = nullEdgeTransfer
 
@@ -209,8 +218,8 @@ meetNullInfo ni1 ni2 =
 --
 -- This set of arguments is added to the global summary data (set of
 -- all non-nullable arguments).
-nullableAnalysis :: Function -> SummaryType -> AnalysisMonad SummaryType
-nullableAnalysis f summ = do
+nullableAnalysis :: Function -> NullableSummary -> Analysis NullableSummary
+nullableAnalysis f s@(NullableSummary summ _) = do
   -- Run this sub-analysis step with a modified environment - the
   -- summary component is the current module summary (given to us by
   -- the SCC traversal).
@@ -234,7 +243,7 @@ nullableAnalysis f summ = do
 
   -- Update the module symmary with the set of pointer parameters that
   -- we have proven are accessed unchecked.
-  return $! M.insert f argsAndWitnesses summ
+  return s { nullableSummary = M.insert f argsAndWitnesses summ }
 
 attachWitness :: Map Argument (Set Witness)
                  -> Argument
@@ -244,7 +253,7 @@ attachWitness m a =
     Nothing -> (a, [])
     Just is -> (a, S.toList is)
 
-nullEdgeTransfer :: NullInfo -> CFGEdge -> AnalysisMonad NullInfo
+nullEdgeTransfer :: NullInfo -> CFGEdge -> Analysis NullInfo
 nullEdgeTransfer ni (TrueEdge v) = return $! processCFGEdge ni id v
 nullEdgeTransfer ni (FalseEdge v) = return $! processCFGEdge ni not v
 nullEdgeTransfer ni _ = return ni
@@ -261,7 +270,7 @@ nullEdgeTransfer ni _ = return ni
 -- to identify pointers that are dereferenced when they *might* be
 -- NULL.  Also map these possibly-NULL pointers to any corresponding
 -- parameters.
-nullTransfer :: NullInfo -> Instruction -> AnalysisMonad NullInfo
+nullTransfer :: NullInfo -> Instruction -> Analysis NullInfo
 nullTransfer ni i =
   case i of
     LoadInst { loadAddress = ptr } ->
@@ -280,7 +289,7 @@ nullTransfer ni i =
 
     _ -> return ni
 
-valueDereferenced :: Instruction -> Value -> NullInfo -> AnalysisMonad NullInfo
+valueDereferenced :: Instruction -> Value -> NullInfo -> Analysis NullInfo
 valueDereferenced i ptr ni =
   case memAccessBase ptr of
     Nothing -> return ni
@@ -341,7 +350,7 @@ callTransfer ::  Instruction
                  -> Value
                  -> [Value]
                  -> NullInfo
-                 -> AnalysisMonad NullInfo
+                 -> Analysis NullInfo
 callTransfer i calledFunc args ni = do
   ni' <- case valueContent' calledFunc of
     FunctionC f ->do
@@ -387,7 +396,7 @@ isIndirectCallee val =
     _ -> True
 
 definedFunctionTransfer :: Instruction -> SummaryType -> Function
-                           -> NullInfo -> [Value] -> AnalysisMonad NullInfo
+                           -> NullInfo -> [Value] -> Analysis NullInfo
 definedFunctionTransfer i summ f ni args =
   foldM markArgNotNullable ni indexedNotNullArgs
   where
@@ -401,7 +410,7 @@ definedFunctionTransfer i summ f ni args =
       valueDereferenced i a info
 
 externalFunctionTransfer :: Instruction -> DependencySummary -> ExternalFunction
-                            -> NullInfo -> [Value] -> AnalysisMonad NullInfo
+                            -> NullInfo -> [Value] -> Analysis NullInfo
 externalFunctionTransfer i summ e ni args =
   foldM markIfNotNullable ni indexedArgs
   where
@@ -434,7 +443,7 @@ externalFunctionTransfer i summ e ni args =
 -- For Phi nodes, there may be a result for do-while style loops where
 -- the first iteration must always be taken.  In this case, return the
 -- value that *MUST* be accessed on that iteration.
-mustExecuteValue :: Value -> AnalysisMonad (Maybe Value)
+mustExecuteValue :: Value -> Analysis (Maybe Value)
 mustExecuteValue v =
   case valueContent' v of
     InstructionC SelectInst {} -> return Nothing
@@ -448,7 +457,7 @@ mustExecuteValue v =
           return mv
     _ -> return (Just v)
 
-mustExec' :: Instruction -> [(Value, Value)] -> AnalysisMonad (Maybe Value)
+mustExec' :: Instruction -> [(Value, Value)] -> Analysis (Maybe Value)
 mustExec' i ivs = do
   cdg <- asks controlDepGraph
   dt <- asks domTree
@@ -531,7 +540,7 @@ process' ni arg isNull =
 -- | Convert the 'NullableSummary' to a format that is easy to read
 -- from a file for testing purposes.
 nullSummaryToTestFormat :: NullableSummary -> Map String (Set String)
-nullSummaryToTestFormat (NS m) = convert m
+nullSummaryToTestFormat (NullableSummary m _) = convert m
   where
     convert = M.mapKeys keyMapper . M.map valMapper . M.filter notEmptySet
     notEmptySet = not . S.null

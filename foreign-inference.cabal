@@ -31,6 +31,7 @@ library
                    Foreign.Inference.Analysis.Nullable,
                    Foreign.Inference.Analysis.Output,
                    Foreign.Inference.Analysis.Return,
+                   Foreign.Inference.AnalysisMonad,
                    Foreign.Inference.Preprocessing,
                    Foreign.Inference.Report
   other-modules: Foreign.Inference.Report.FunctionText,

@@ -35,7 +35,7 @@ main = do
   where
     parser = parseLLVMFile defaultParserOptions
 
-analyzeNullable ds m = nullSummaryToTestFormat $ fst $ identifyNullable ds m cg r
+analyzeNullable ds m = nullSummaryToTestFormat $ identifyNullable ds m cg r
   where
     pta = runPointsToAnalysis m
     cg = mkCallGraph m pta []

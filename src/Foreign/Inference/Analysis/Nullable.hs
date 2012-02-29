@@ -106,6 +106,7 @@ module Foreign.Inference.Analysis.Nullable (
   ) where
 
 import Control.Arrow
+import Control.DeepSeq
 import Data.Map ( Map )
 import qualified Data.Map as M
 import Data.Set ( Set )
@@ -144,6 +145,14 @@ data NullableSummary =
                   , nullableDiagnostics :: Diagnostics
                   }
 
+instance Monoid NullableSummary where
+  mempty = NullableSummary M.empty mempty
+  mappend (NullableSummary s1 d1) (NullableSummary s2 d2) =
+    NullableSummary (M.unionWith S.union s1 s2) (d1 `mappend` d2)
+
+instance NFData NullableSummary where
+  rnf n@(NullableSummary s d) = d `deepseq` s `deepseq` n `seq` ()
+
 instance Eq NullableSummary where
   (NullableSummary s1 _) == (NullableSummary s2 _) = s1 == s2
 
@@ -167,12 +176,12 @@ identifyNullable :: DependencySummary -> Module -> CallGraph
                     -> ReturnSummary
                     -> NullableSummary
 identifyNullable ds m cg retSumm =
-  runAnalysis analysis constData cache
+  parallelCallGraphSCCTraversal cg runner nullableAnalysis summ0
   where
+    runner a = runAnalysis a constData cache
     s0 = M.fromList $ zip (moduleDefinedFunctions m) (repeat S.empty)
     summ0 = NullableSummary s0 mempty
 
-    analysis = callGraphSCCTraversal cg nullableAnalysis summ0
     constData = ND M.empty ds cg retSumm undefined undefined
     cache = NState HM.empty
 

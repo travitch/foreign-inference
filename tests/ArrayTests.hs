@@ -35,7 +35,7 @@ main = do
   where
     bcParser = parseLLVMFile defaultParserOptions
 
-analyzeArrays ds m = arraySummaryToTestFormat $ fst $ identifyArrays ds cg
+analyzeArrays ds m = arraySummaryToTestFormat $ identifyArrays ds cg
   where
     pta = runPointsToAnalysis m
     cg = mkCallGraph m pta []

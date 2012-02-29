@@ -14,6 +14,7 @@ module Foreign.Inference.Analysis.Array (
   arraySummaryToTestFormat
   ) where
 
+import Control.DeepSeq
 import Control.Monad.RWS.Strict
 import Data.List ( foldl' )
 import Data.Map ( Map )
@@ -24,6 +25,7 @@ import Data.LLVM
 import Data.LLVM.Analysis.CallGraph
 import Data.LLVM.Analysis.CallGraphSCCTraversal
 
+import Foreign.Inference.AnalysisMonad
 import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
 import Foreign.Inference.Internal.FlattenValue
@@ -37,22 +39,43 @@ type SummaryType = Map Argument Int
 
 -- | Summarize the array parameters in the module.  This maps each
 -- array argument to its inferred dimensionality.
-newtype ArraySummary = APS SummaryType
+-- newtype ArraySummary = APS SummaryType
+data ArraySummary =
+  ArraySummary { arraySummary :: SummaryType
+               , arrayDiagnostics :: Diagnostics
+               }
+
+instance Eq ArraySummary where
+  (ArraySummary s1 _) == (ArraySummary s2 _) = s1 == s2
+
+instance Monoid ArraySummary where
+  mempty = ArraySummary M.empty mempty
+  mappend (ArraySummary s1 d1) (ArraySummary s2 d2) =
+    ArraySummary (M.unionWith max s1 s2) (mappend d1 d2)
+
+instance NFData ArraySummary where
+  rnf a@(ArraySummary s d) = d `deepseq` s `deepseq` a `seq` ()
+
+instance HasDiagnostics ArraySummary where
+  addDiagnostics s d =
+    s { arrayDiagnostics = arrayDiagnostics s `mappend` d }
+  getDiagnostics = arrayDiagnostics
 
 instance SummarizeModule ArraySummary where
   summarizeFunction _ _ = []
   summarizeArgument = summarizeArrayArgument
 
 summarizeArrayArgument :: Argument -> ArraySummary -> [(ParamAnnotation, [Witness])]
-summarizeArrayArgument a (APS summ) = case M.lookup a summ of
-  Nothing -> []
-  Just depth -> [(PAArray depth, [])]
+summarizeArrayArgument a (ArraySummary summ _) =
+  case M.lookup a summ of
+    Nothing -> []
+    Just depth -> [(PAArray depth, [])]
 
 data ArrayData = AD { dependencySummary :: DependencySummary
                     , callGraph :: CallGraph
                     }
 
-type AnalysisMonad = RWS ArrayData Diagnostics ()
+type Analysis = AnalysisMonad ArrayData ()
 
 -- | A data type to capture uses of pointers in array contexts.  These
 -- are accumulated in one pass over the function and then used to
@@ -68,27 +91,26 @@ data PointerUse = IndexOperation Value [Value]
 -- >     cg = mkCallGraph m pta []
 -- >     er = runEscapeAnalysis m cg
 -- > in identifyArrays cg er
-identifyArrays :: DependencySummary -> CallGraph -> (ArraySummary, Diagnostics)
-identifyArrays ds cg = (APS summ, diags)
+identifyArrays :: DependencySummary -> CallGraph -> ArraySummary
+identifyArrays ds cg =
+  parallelCallGraphSCCTraversal cg runner arrayAnalysis mempty
   where
-    analysis = callGraphSCCTraversal cg arrayAnalysis M.empty
+    runner a = runAnalysis a readOnlyData ()
     readOnlyData = AD ds cg
-    (summ, diags) = evalRWS analysis readOnlyData ()
 
 -- | The summarization function - add a summary for the current
 -- Function to the current summary.  This function collects all of the
 -- base+offset pairs and then uses @traceFromBases@ to reconstruct
 -- them.
-arrayAnalysis :: Function
-                 -> SummaryType
-                 -> AnalysisMonad SummaryType
-arrayAnalysis f summary = do
+arrayAnalysis :: Function -> ArraySummary -> Analysis ArraySummary
+arrayAnalysis f a@(ArraySummary summary _) = do
   cg <- asks callGraph
   ds <- asks dependencySummary
 
   let basesAndOffsets = concatMap (isArrayDeref cg ds summary) insts
       baseResultMap = foldr addDeref M.empty basesAndOffsets
-  return $! M.foldlWithKey' (traceFromBases baseResultMap) summary baseResultMap
+      summary' = M.foldlWithKey' (traceFromBases baseResultMap) summary baseResultMap
+  return $! a { arraySummary = summary' }
   where
     insts = concatMap basicBlockInstructions (functionBody f)
     addDeref (base, use) = M.insertWith' (++) base [use]
@@ -235,7 +257,8 @@ isArrayAnnot _ = False
 -- Testing
 
 arraySummaryToTestFormat :: ArraySummary -> Map (String, String) Int
-arraySummaryToTestFormat (APS summ) = M.mapKeys argToString summ
+arraySummaryToTestFormat (ArraySummary summ _) =
+  M.mapKeys argToString summ
   where
     argToString a =
       let f = argumentFunction a

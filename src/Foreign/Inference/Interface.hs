@@ -48,6 +48,7 @@ import Prelude hiding ( catch )
 
 import GHC.Generics
 
+import Control.DeepSeq
 import Control.Exception
 import Data.Aeson
 import Data.ByteString.Char8 ( ByteString )
@@ -188,8 +189,11 @@ data StdLib = CStdLib
 --
 -- WARNING: Don't put anything javascript-unsafe in the String.  This
 -- could be enforced but doesn't seem worth the effort right now.
-data Witness = Witness Instruction String
+data Witness = Witness !Instruction String
              deriving (Eq, Ord, Show)
+
+instance NFData Witness where
+  rnf w@(Witness _ s) = s `deepseq` w `seq` ()
 
 -- | An interface for analyses to implement in order to annotate
 -- constructs in 'Module's.

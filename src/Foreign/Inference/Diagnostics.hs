@@ -18,6 +18,7 @@ module Foreign.Inference.Diagnostics (
   formatDiagnostics
   ) where
 
+import Control.DeepSeq
 import Control.Monad.Writer.Class
 import Data.Monoid
 import Data.Set ( Set, singleton )
@@ -26,9 +27,13 @@ import Text.Printf
 
 -- | A source location.
 data Location = Location { locationFilename :: String
-                         , locationLine :: Int
+                         , locationLine :: !Int
                          }
               deriving (Eq, Ord, Show)
+
+instance NFData Location where
+  rnf l@(Location f _) =
+    f `deepseq` l `seq` ()
 
 data Classification = Debug
                     | Info
@@ -37,11 +42,15 @@ data Classification = Debug
                     deriving (Eq, Ord, Read, Show)
 
 data Diagnostic = Diagnostic { diagnosticLocation :: Maybe Location
-                             , diagnosticType :: Classification
+                             , diagnosticType :: !Classification
                              , diagnosticModule :: String
                              , diagnosticContent :: String
                              }
                 deriving (Eq, Ord)
+
+instance NFData Diagnostic where
+  rnf d@(Diagnostic l _ m c) =
+    l `deepseq` m `deepseq` c `deepseq` d `seq` ()
 
 instance Show Diagnostic where
   show = showDiagnostic
@@ -64,6 +73,9 @@ showDiagnostic Diagnostic { diagnosticLocation = Just loc
 -- interface.
 newtype Diagnostics = DS (Set Diagnostic)
                     deriving (Monoid)
+
+instance NFData Diagnostics where
+  rnf d@(DS s) = s `deepseq` d `seq` ()
 
 -- | Emit fine-grained debugging information.
 emitDebugInfo :: (MonadWriter Diagnostics m)

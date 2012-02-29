@@ -1,7 +1,6 @@
 module Main ( main ) where
 
 import Control.Exception ( tryJust )
-import Control.Monad ( guard, when )
 import Data.Monoid
 import System.Console.CmdArgs.Explicit
 import System.Console.CmdArgs.Text
@@ -97,15 +96,15 @@ dump opts name m = do
       repo = repositoryLocation opts
   ds <- loadDependencies [repo] deps
 
-  let s {-(s, nullDiags)-} = identifyNullable ds m cg r
+  let s = identifyNullable ds m cg r
       (o, outDiags) = identifyOutput ds cg
-      (a, arrayDiags) = identifyArrays ds cg
+      a = identifyArrays ds cg
       (r, retDiags) = identifyReturns ds cg
       (f, finDiags) = identifyFinalizers ds cg
       (e, escDiags) = identifyEscapes ds cg
       (alloc, allocDiags) = identifyAllocators ds e cg
-      diags = mconcat [ getDiagnostics s -- nullDiags
-                      , arrayDiags
+      diags = mconcat [ getDiagnostics s
+                      , getDiagnostics a
                       , outDiags
                       , retDiags
                       , finDiags

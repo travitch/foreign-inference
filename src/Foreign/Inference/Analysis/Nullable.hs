@@ -207,7 +207,8 @@ instance BoundedMeetSemiLattice NullInfo where
   top = NInfo S.empty M.empty
 
 instance HasDiagnostics NullableSummary where
-  addDiagnostics s d = s { nullableDiagnostics = (nullableDiagnostics s) `mappend` d }
+  addDiagnostics s d =
+    s { nullableDiagnostics = nullableDiagnostics s `mappend` d }
   getDiagnostics = nullableDiagnostics
 
 type Analysis = AnalysisMonad NullData NullState

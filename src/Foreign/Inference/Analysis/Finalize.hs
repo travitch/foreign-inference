@@ -18,6 +18,7 @@ module Foreign.Inference.Analysis.Finalize (
   finalizerSummaryToTestFormat
   ) where
 
+import Control.DeepSeq
 import Control.Monad.RWS.Strict
 import Data.HashMap.Strict ( HashMap )
 import qualified Data.HashMap.Strict as HM
@@ -34,6 +35,7 @@ import Data.LLVM.Analysis.CallGraph
 import Data.LLVM.Analysis.CallGraphSCCTraversal
 import Data.LLVM.Analysis.Dataflow
 
+import Foreign.Inference.AnalysisMonad
 import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
 
@@ -45,8 +47,28 @@ import Foreign.Inference.Interface
 -- associated witnesses.  If no witnesses could be identified, the
 -- witness list will simply be empty.
 type SummaryType = HashMap Argument [Witness]
-data FinalizerSummary = FS SummaryType
-                      deriving (Eq)
+data FinalizerSummary =
+  FinalizerSummary { finalizerSummary :: SummaryType
+                   , finalizerDiagnostics :: Diagnostics
+                   }
+
+instance Eq FinalizerSummary where
+  (FinalizerSummary s1 _) == (FinalizerSummary s2 _) = s1 == s2
+
+instance Monoid FinalizerSummary where
+  mempty = FinalizerSummary mempty mempty
+  mappend (FinalizerSummary s1 d1) (FinalizerSummary s2 d2) =
+    FinalizerSummary (HM.unionWith merge s1 s2) (mappend d1 d2)
+    where
+      merge l1 l2 = S.toList $ S.union (S.fromList l1) (S.fromList l2)
+
+instance NFData FinalizerSummary where
+  rnf f@(FinalizerSummary s d) = s `deepseq` d `deepseq` f `seq` ()
+
+instance HasDiagnostics FinalizerSummary where
+  addDiagnostics s d =
+    s { finalizerDiagnostics = finalizerDiagnostics s `mappend` d }
+  getDiagnostics = finalizerDiagnostics
 
 instance SummarizeModule FinalizerSummary where
   summarizeFunction _ _ = []
@@ -55,7 +77,7 @@ instance SummarizeModule FinalizerSummary where
 summarizeFinalizerArgument :: Argument
                               -> FinalizerSummary
                               -> [(ParamAnnotation, [Witness])]
-summarizeFinalizerArgument a (FS m) =
+summarizeFinalizerArgument a (FinalizerSummary m _) =
   case HM.lookup a m of
     Nothing -> []
     Just ws -> [(PAFinalize, ws)]
@@ -65,14 +87,12 @@ data FinalizerData =
                 , dependencySummary :: DependencySummary
                 }
 
-identifyFinalizers :: DependencySummary -> CallGraph
-                      -> (FinalizerSummary, Diagnostics)
-identifyFinalizers ds cg = (FS res, diags)
+identifyFinalizers :: DependencySummary -> CallGraph -> FinalizerSummary
+identifyFinalizers ds cg =
+  parallelCallGraphSCCTraversal cg runner finalizerAnalysis mempty
   where
-    s0 = HM.empty
-    analysis = callGraphSCCTraversal cg finalizerAnalysis s0
+    runner a = runAnalysis a constData ()
     constData = FinalizerData HM.empty ds
-    (res, diags) = evalRWS analysis constData ()
 
 data FinalizerInfo =
   FinalizerInfo { notFinalizedOrNull :: HashSet Argument
@@ -89,14 +109,14 @@ instance MeetSemiLattice FinalizerInfo where
 instance BoundedMeetSemiLattice FinalizerInfo where
   top = FinalizerInfo HS.empty HM.empty
 
-type AnalysisMonad = RWS FinalizerData Diagnostics ()
+type Analysis = AnalysisMonad FinalizerData ()
 
-instance DataflowAnalysis AnalysisMonad FinalizerInfo where
+instance DataflowAnalysis Analysis FinalizerInfo where
   transfer = finalizerTransfer
   edgeTransfer = finalizerEdgeTransfer
 
-finalizerAnalysis :: Function -> SummaryType -> AnalysisMonad SummaryType
-finalizerAnalysis f summ = do
+finalizerAnalysis :: Function -> FinalizerSummary -> Analysis FinalizerSummary
+finalizerAnalysis f s@(FinalizerSummary summ _) = do
   -- Update the immutable data with the information we have gathered
   -- from the rest of the module so far.  We want to be able to access
   -- this in the Reader environment
@@ -119,14 +139,14 @@ finalizerAnalysis f summ = do
   -- is important for processing SCCs in the call graph, where a
   -- function may be visited more than once.  We always want the most
   -- up-to-date info.
-  return $! newInfo `HM.union` summ
+  return $! s { finalizerSummary = newInfo `HM.union` summ }
 
-finalizerEdgeTransfer :: FinalizerInfo -> CFGEdge -> AnalysisMonad FinalizerInfo
+finalizerEdgeTransfer :: FinalizerInfo -> CFGEdge -> Analysis FinalizerInfo
 finalizerEdgeTransfer fi (TrueEdge v) = return $! processCFGEdge fi not v
 finalizerEdgeTransfer fi (FalseEdge v) = return $! processCFGEdge fi id v
 finalizerEdgeTransfer fi _ = return fi
 
-finalizerTransfer :: FinalizerInfo -> Instruction -> AnalysisMonad FinalizerInfo
+finalizerTransfer :: FinalizerInfo -> Instruction -> Analysis FinalizerInfo
 finalizerTransfer info i =
   case i of
     CallInst { callFunction = calledFunc, callArguments = args } ->
@@ -135,7 +155,7 @@ finalizerTransfer info i =
       callTransfer i (stripBitcasts calledFunc) (map fst args) info
     _ -> return info
 
-callTransfer :: Instruction -> Value -> [Value] -> FinalizerInfo -> AnalysisMonad FinalizerInfo
+callTransfer :: Instruction -> Value -> [Value] -> FinalizerInfo -> Analysis FinalizerInfo
 callTransfer i v as info =
   case valueContent' v of
     FunctionC f -> do
@@ -152,7 +172,7 @@ callTransfer i v as info =
     _ -> return info
 
 checkInternalArg :: Instruction -> SummaryType -> Function
-                    -> FinalizerInfo -> (Int, Value) -> AnalysisMonad FinalizerInfo
+                    -> FinalizerInfo -> (Int, Value) -> Analysis FinalizerInfo
 checkInternalArg i summ f info (ix, (valueContent' -> ArgumentC a)) =
   case functionIsVararg f && ix >= length formals of
     -- Pointer passed as a vararg, no information
@@ -168,7 +188,7 @@ checkInternalArg i summ f info (ix, (valueContent' -> ArgumentC a)) =
 checkInternalArg _ _ _ info _ = return info
 
 checkExternalArg :: Instruction -> DependencySummary -> ExternalFunction
-                    -> FinalizerInfo -> (Int, Value) -> AnalysisMonad FinalizerInfo
+                    -> FinalizerInfo -> (Int, Value) -> Analysis FinalizerInfo
 checkExternalArg i summ f info (ix, (valueContent' -> ArgumentC a)) =
   case lookupArgumentSummary summ f ix of
     Nothing -> do
@@ -231,7 +251,7 @@ isPointer v =
 -- Testing
 
 finalizerSummaryToTestFormat :: FinalizerSummary -> Map String (Set String)
-finalizerSummaryToTestFormat (FS m) = convert m
+finalizerSummaryToTestFormat (FinalizerSummary m _) = convert m
   where
     convert = foldr addElt M.empty . map toFuncNamePair . HM.keys
     addElt (f, a) = M.insertWith' S.union f (S.singleton a)

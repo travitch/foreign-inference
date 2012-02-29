@@ -100,14 +100,14 @@ dump opts name m = do
       (o, outDiags) = identifyOutput ds cg
       a = identifyArrays ds cg
       (r, retDiags) = identifyReturns ds cg
-      (f, finDiags) = identifyFinalizers ds cg
+      f = identifyFinalizers ds cg
       (e, escDiags) = identifyEscapes ds cg
       (alloc, allocDiags) = identifyAllocators ds e cg
       diags = mconcat [ getDiagnostics s
                       , getDiagnostics a
                       , outDiags
                       , retDiags
-                      , finDiags
+                      , getDiagnostics f
                       , escDiags
                       , allocDiags
                       ]

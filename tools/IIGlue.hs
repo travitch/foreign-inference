@@ -102,14 +102,14 @@ dump opts name m = do
       (r, retDiags) = identifyReturns ds cg
       f = identifyFinalizers ds cg
       (e, escDiags) = identifyEscapes ds cg
-      (alloc, allocDiags) = identifyAllocators ds e cg
+      alloc = identifyAllocators ds e cg
       diags = mconcat [ getDiagnostics s
                       , getDiagnostics a
                       , outDiags
                       , retDiags
                       , getDiagnostics f
                       , escDiags
-                      , allocDiags
+                      , getDiagnostics alloc
                       ]
       summaries = [ ModuleSummary s
                   , ModuleSummary a

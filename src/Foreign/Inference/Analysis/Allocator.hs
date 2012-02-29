@@ -32,7 +32,7 @@ module Foreign.Inference.Analysis.Allocator (
   allocatorSummaryToTestFormat
   ) where
 
-import Control.Monad.RWS.Strict
+import Control.DeepSeq
 import Data.Map ( Map )
 import qualified Data.Map as M
 
@@ -40,6 +40,7 @@ import Data.LLVM
 import Data.LLVM.Analysis.CallGraph
 import Data.LLVM.Analysis.CallGraphSCCTraversal
 
+import Foreign.Inference.AnalysisMonad
 import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
 import Foreign.Inference.Analysis.Escape
@@ -50,18 +51,42 @@ import Foreign.Inference.Internal.FlattenValue
 -- debug = flip trace
 
 type SummaryType = Map Function (Maybe String)
-data AllocatorSummary = AS SummaryType
+data AllocatorSummary =
+  AllocatorSummary { allocatorSummary :: SummaryType
+                   , allocatorDiagnostics :: Diagnostics
+                   }
+
+instance Eq AllocatorSummary where
+  (AllocatorSummary s1 _) == (AllocatorSummary s2 _) = s1 == s2
+
+instance Monoid AllocatorSummary where
+  mempty = AllocatorSummary mempty mempty
+  mappend (AllocatorSummary s1 d1) (AllocatorSummary s2 d2) =
+    AllocatorSummary (M.unionWith merge s1 s2) (mappend d1 d2)
+    where
+      merge Nothing Nothing = Nothing
+      merge v@(Just _) _ = v
+      merge _ v = v
+
+instance NFData AllocatorSummary where
+  rnf a@(AllocatorSummary s d) = s `deepseq` d `deepseq` a `seq` ()
+
+instance HasDiagnostics AllocatorSummary where
+  addDiagnostics s d =
+    s { allocatorDiagnostics = allocatorDiagnostics s `mappend` d }
+  getDiagnostics = allocatorDiagnostics
 
 data AllocatorData =
   AllocatorData { dependencySummary :: DependencySummary
                 , escapeSummary :: EscapeSummary
                 }
 
-type AnalysisMonad = RWS AllocatorData Diagnostics ()
+-- type AnalysisMonad = RWS AllocatorData Diagnostics ()
+type Analysis = AnalysisMonad AllocatorData ()
 
 instance SummarizeModule AllocatorSummary where
   summarizeArgument _ _ = []
-  summarizeFunction f (AS summ) =
+  summarizeFunction f (AllocatorSummary summ _) =
     case M.lookup f summ of
       Nothing -> []
       Just (Just fin) -> [FAAllocator fin]
@@ -70,27 +95,32 @@ instance SummarizeModule AllocatorSummary where
 identifyAllocators :: DependencySummary
                       -> EscapeSummary
                       -> CallGraph
-                      -> (AllocatorSummary, Diagnostics)
-identifyAllocators ds es cg = (AS summ, diags)
+                      -> AllocatorSummary
+identifyAllocators ds es cg =
+  parallelCallGraphSCCTraversal cg runner allocatorAnalysis mempty
+--  (AS summ, diags)
   where
-    analysis = callGraphSCCTraversal cg allocatorAnalysis M.empty
+    runner a = runAnalysis a readOnlyData ()
+--    analysis = callGraphSCCTraversal cg allocatorAnalysis M.empty
     readOnlyData = AllocatorData ds es
-    (summ, diags) = evalRWS analysis readOnlyData ()
+--    (summ, diags) = evalRWS analysis readOnlyData ()
 
 -- | If the function returns a pointer, it is a candidate for an
 -- allocator.  We do not concern ourselves with functions that may
 -- unwind or call exit on error - these can also be allocators.
-allocatorAnalysis :: Function -> SummaryType -> AnalysisMonad SummaryType
-allocatorAnalysis f summ =
+allocatorAnalysis :: Function -> AllocatorSummary -> Analysis AllocatorSummary
+allocatorAnalysis f s@(AllocatorSummary summ _) =
   case exitInst of
     RetInst { retInstValue = Just rv } ->
       case valueType rv of
         -- The function always returns a pointer
-        TypePointer _ _ -> checkReturn f rv summ
+        TypePointer _ _ -> do
+          summ' <- checkReturn f rv summ
+          return s { allocatorSummary = summ' }
         -- Non-pointer return, ignore
-        _ -> return summ
+        _ -> return s
     -- Returns void
-    _ -> return summ
+    _ -> return s
   where
     exitInst = functionExitInstruction f
 
@@ -102,7 +132,7 @@ allocatorAnalysis f summ =
 --
 -- then f is an allocator.  If there is a unique finalizer for the
 -- same type, associate it with this allocator.
-checkReturn :: Function -> Value -> SummaryType -> AnalysisMonad SummaryType
+checkReturn :: Function -> Value -> SummaryType -> Analysis SummaryType
 checkReturn f rv summ =
   case null nonNullRvs of
     -- Always returns NULL, not an allocator
@@ -122,7 +152,7 @@ checkReturn f rv summ =
 
 -- | Return True if the given Value is the result of a call to an
 -- allocator AND does not escape.
-isAllocatedWithoutEscape :: SummaryType -> Value -> AnalysisMonad Bool
+isAllocatedWithoutEscape :: SummaryType -> Value -> Analysis Bool
 isAllocatedWithoutEscape summ rv = do
   allocatorInsts <- case valueContent' rv of
     InstructionC i@CallInst { callFunction = f } ->
@@ -148,7 +178,7 @@ isAllocatedWithoutEscape summ rv = do
     True -> return False
     False -> noneEscape allocatorInsts
 
-checkFunctionIsAllocator :: Value -> SummaryType -> [Instruction] -> AnalysisMonad [Instruction]
+checkFunctionIsAllocator :: Value -> SummaryType -> [Instruction] -> Analysis [Instruction]
 checkFunctionIsAllocator v summ is =
   case valueContent' v of
     FunctionC f ->
@@ -169,7 +199,7 @@ checkFunctionIsAllocator v summ is =
     -- Indirect call
     _ -> return []
 
-noneEscape :: [Instruction] -> AnalysisMonad Bool
+noneEscape :: [Instruction] -> Analysis Bool
 noneEscape is = do
   escSumm <- asks escapeSummary
   return $! not (any (instructionEscapes escSumm) is)
@@ -197,4 +227,5 @@ isNotPhi v =
 -- | Convert an Allocator summary to a format more suitable for
 -- testing
 allocatorSummaryToTestFormat :: AllocatorSummary -> Map String (Maybe String)
-allocatorSummaryToTestFormat (AS s) = M.mapKeys (show . functionName) s
+allocatorSummaryToTestFormat (AllocatorSummary s _) =
+  M.mapKeys (show . functionName) s

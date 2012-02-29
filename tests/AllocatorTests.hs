@@ -1,5 +1,6 @@
 module Main ( main ) where
 
+import Data.Map ( Map )
 import System.FilePath ( (<.>) )
 import System.Environment ( getArgs, withArgs )
 import Test.HUnit ( assertEqual )
@@ -21,6 +22,7 @@ main = do
   let pattern = case args of
         [] -> "tests/allocator/*.c"
         [infile] -> infile
+        _ -> error "At most one argument allowed"
   ds <- loadDependencies' [] [] ["c"]
   let testDescriptors = [ TestDescriptor { testPattern = pattern
                                          , testExpectedMapping = (<.> "expected")
@@ -32,9 +34,10 @@ main = do
   where
     parser = parseLLVMFile defaultParserOptions
 
+analyzeAllocator :: DependencySummary -> Module -> Map String (Maybe String)
 analyzeAllocator ds m = allocatorSummaryToTestFormat ar
   where
     pta = runPointsToAnalysis m
     cg = mkCallGraph m pta []
     (er, _) = identifyEscapes ds cg
-    (ar, _) = identifyAllocators ds er cg
+    ar = identifyAllocators ds er cg

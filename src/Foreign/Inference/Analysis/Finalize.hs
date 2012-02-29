@@ -19,7 +19,6 @@ module Foreign.Inference.Analysis.Finalize (
   ) where
 
 import Control.DeepSeq
-import Control.Monad.RWS.Strict
 import Data.HashMap.Strict ( HashMap )
 import qualified Data.HashMap.Strict as HM
 import Data.HashSet ( HashSet )

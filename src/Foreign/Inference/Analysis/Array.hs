@@ -15,7 +15,6 @@ module Foreign.Inference.Analysis.Array (
   ) where
 
 import Control.DeepSeq
-import Control.Monad.RWS.Strict
 import Data.List ( foldl' )
 import Data.Map ( Map )
 import qualified Data.Map as M

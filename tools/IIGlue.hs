@@ -99,14 +99,14 @@ dump opts name m = do
   let s = identifyNullable ds m cg r
       o = identifyOutput ds cg
       a = identifyArrays ds cg
-      (r, retDiags) = identifyReturns ds cg
+      r = identifyReturns ds cg
       f = identifyFinalizers ds cg
       e = identifyEscapes ds cg
       alloc = identifyAllocators ds e cg
       diags = mconcat [ getDiagnostics s
                       , getDiagnostics a
                       , getDiagnostics o
-                      , retDiags
+                      , getDiagnostics r
                       , getDiagnostics f
                       , getDiagnostics e
                       , getDiagnostics alloc

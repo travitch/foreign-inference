@@ -39,5 +39,5 @@ analyzeAllocator ds m = allocatorSummaryToTestFormat ar
   where
     pta = runPointsToAnalysis m
     cg = mkCallGraph m pta []
-    (er, _) = identifyEscapes ds cg
+    er = identifyEscapes ds cg
     ar = identifyAllocators ds er cg

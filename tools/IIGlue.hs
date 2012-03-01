@@ -85,7 +85,10 @@ main = do
 
   let [inFile] = inputFile opts
       name = takeBaseName inFile
-  mm <- readBitcode (parseLLVMFile defaultParserOptions) inFile
+      parseOpts = case librarySource opts of
+        Nothing -> defaultParserOptions { metaPositionPrecision = PositionNone }
+        Just _ -> defaultParserOptions
+  mm <- readBitcode (parseLLVMFile parseOpts) inFile
   either error (dump opts name) mm
 
 dump :: Opts -> String -> Module -> IO ()

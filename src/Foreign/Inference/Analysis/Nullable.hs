@@ -148,7 +148,7 @@ data NullableSummary =
 instance Monoid NullableSummary where
   mempty = NullableSummary mempty mempty
   mappend (NullableSummary s1 d1) (NullableSummary s2 d2) =
-    NullableSummary (HM.unionWith S.union s1 s2) (d1 `mappend` d2)
+    NullableSummary (s1 `mappend` s2) (d1 `mappend` d2)
 
 instance NFData NullableSummary where
   rnf n@(NullableSummary s d) = d `deepseq` s `deepseq` n `seq` ()

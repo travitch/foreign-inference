@@ -135,20 +135,20 @@ import Foreign.Inference.Analysis.Return
 -- debug' :: c -> String -> c
 -- debug' = flip trace
 
-type SummaryType = Map Function (Set (Argument, [Witness]))
+type SummaryType = HashMap Function (Set (Argument, [Witness]))
 
 -- | Note, this could be a Set (Argument, Instruction) where the
 -- Instruction is the fact we saw that led us to believe that Argument
 -- is not nullable.
 data NullableSummary =
-  NullableSummary { nullableSummary :: SummaryType
-                  , nullableDiagnostics :: Diagnostics
+  NullableSummary { nullableSummary :: !SummaryType
+                  , nullableDiagnostics :: !Diagnostics
                   }
 
 instance Monoid NullableSummary where
-  mempty = NullableSummary M.empty mempty
+  mempty = NullableSummary mempty mempty
   mappend (NullableSummary s1 d1) (NullableSummary s2 d2) =
-    NullableSummary (M.unionWith S.union s1 s2) (d1 `mappend` d2)
+    NullableSummary (HM.unionWith S.union s1 s2) (d1 `mappend` d2)
 
 instance NFData NullableSummary where
   rnf n@(NullableSummary s d) = d `deepseq` s `deepseq` n `seq` ()
@@ -169,20 +169,20 @@ summarizeNullArgument a (NullableSummary s _) =
   where
     f = argumentFunction a
     errMsg = $err' ("Function not in summary: " ++ show (functionName f))
-    nonNullableArgs = M.findWithDefault errMsg f s
+    nonNullableArgs = HM.lookupDefault errMsg f s
 
 -- | The top-level entry point of the nullability analysis
-identifyNullable :: DependencySummary -> Module -> CallGraph
+identifyNullable :: DependencySummary
+                    -> CallGraph
                     -> ReturnSummary
                     -> NullableSummary
-identifyNullable ds m cg retSumm =
+identifyNullable ds cg retSumm =
   parallelCallGraphSCCTraversal cg runner nullableAnalysis summ0
   where
     runner a = runAnalysis a constData cache
-    s0 = M.fromList $ zip (moduleDefinedFunctions m) (repeat S.empty)
-    summ0 = NullableSummary s0 mempty
+    summ0 = NullableSummary mempty mempty
 
-    constData = ND M.empty ds cg retSumm undefined undefined
+    constData = ND HM.empty ds cg retSumm undefined undefined
     cache = NState HM.empty
 
 data NullData = ND { moduleSummary :: SummaryType
@@ -253,7 +253,7 @@ nullableAnalysis f s@(NullableSummary summ _) = do
 
   -- Update the module symmary with the set of pointer parameters that
   -- we have proven are accessed unchecked.
-  return s { nullableSummary = M.insert f argsAndWitnesses summ }
+  return s { nullableSummary = HM.insert f argsAndWitnesses summ }
 
 attachWitness :: Map Argument (Set Witness)
                  -> Argument
@@ -410,9 +410,8 @@ definedFunctionTransfer :: Instruction -> SummaryType -> Function
 definedFunctionTransfer i summ f ni args =
   foldM markArgNotNullable ni indexedNotNullArgs
   where
-    errMsg = $err' ("No Function summary for " ++ show (functionName f))
     formals = functionParameters f
-    notNullableArgs = M.findWithDefault errMsg f summ
+    notNullableArgs = HM.lookupDefault S.empty f summ
     isNotNullable (a, _) = not . S.null $ S.filter ((==a) . fst) notNullableArgs -- S.member a notNullableArgs
     -- | Pairs of not-nullable formals/actuals
     indexedNotNullArgs = filter isNotNullable $ zip formals args
@@ -552,7 +551,7 @@ process' ni arg isNull =
 nullSummaryToTestFormat :: NullableSummary -> Map String (Set String)
 nullSummaryToTestFormat (NullableSummary m _) = convert m
   where
-    convert = M.mapKeys keyMapper . M.map valMapper . M.filter notEmptySet
+    convert = M.fromList . filter (not . S.null . snd) . map (keyMapper *** valMapper) . HM.toList
     notEmptySet = not . S.null
     valMapper = S.map (show . argumentName . fst)
     keyMapper = show . functionName

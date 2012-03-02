@@ -39,4 +39,4 @@ analyzeNullable ds m = nullSummaryToTestFormat $ identifyNullable ds m cg r
   where
     pta = runPointsToAnalysis m
     cg = mkCallGraph m pta []
-    (r,_) = identifyReturns ds cg
+    r = identifyReturns ds cg

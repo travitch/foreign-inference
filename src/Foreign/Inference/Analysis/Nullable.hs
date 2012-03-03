@@ -112,12 +112,12 @@ import qualified Data.Map as M
 import Data.Set ( Set )
 import qualified Data.Set as S
 import Data.HashMap.Strict ( HashMap )
+import Data.Lens.Common
 import qualified Data.HashMap.Strict as HM
 import Data.Monoid
 import FileLocation
 
 import Data.LLVM
-import Data.LLVM.Analysis.CallGraph
 import Data.LLVM.Analysis.CDG
 import Data.LLVM.Analysis.CFG
 import Data.LLVM.Analysis.CallGraphSCCTraversal
@@ -171,23 +171,39 @@ summarizeNullArgument a (NullableSummary s _) =
     errMsg = $err' ("Function not in summary: " ++ show (functionName f))
     nonNullableArgs = HM.lookupDefault errMsg f s
 
+{-
 -- | The top-level entry point of the nullability analysis
 identifyNullable :: DependencySummary
                     -> CallGraph
                     -> ReturnSummary
                     -> NullableSummary
 identifyNullable ds cg retSumm =
-  parallelCallGraphSCCTraversal cg runner nullableAnalysis summ0
+  parallelCallGraphSCCTraversal cg analysisFunction summ0
   where
+    analysisFunction = callGraphAnalysisM runner nullableAnalysis
     runner a = runAnalysis a constData cache
     summ0 = NullableSummary mempty mempty
 
     constData = ND HM.empty ds cg retSumm undefined undefined
     cache = NState HM.empty
+-}
+
+identifyNullable :: (FuncLike funcLike, HasFunction funcLike, HasCFG funcLike)
+                    => DependencySummary
+                    -> Lens compositeSummary NullableSummary
+                    -> Lens compositeSummary ReturnSummary
+                    -> ComposableAnalysis compositeSummary funcLike
+identifyNullable ds lns depLens =
+  monadicComposableDependencyAnalysis runner nullableAnalysis lns depLens
+  where
+    runner a = runAnalysis a constData cache
+    summ0 = NullableSummary mempty mempty
+
+    constData = ND HM.empty ds undefined undefined undefined
+    cache = NState HM.empty
 
 data NullData = ND { moduleSummary :: SummaryType
                    , dependencySummary :: DependencySummary
-                   , callGraph :: CallGraph
                    , returnSummary :: ReturnSummary
                    , controlDepGraph :: CDG
                    , domTree :: DominatorTree
@@ -228,22 +244,26 @@ meetNullInfo ni1 ni2 =
 --
 -- This set of arguments is added to the global summary data (set of
 -- all non-nullable arguments).
-nullableAnalysis :: Function -> NullableSummary -> Analysis NullableSummary
-nullableAnalysis f s@(NullableSummary summ _) = do
+nullableAnalysis :: (FuncLike funcLike, HasCFG funcLike, HasFunction funcLike)
+                    => ReturnSummary
+                    -> funcLike
+                    -> NullableSummary
+                    -> Analysis NullableSummary
+nullableAnalysis retSumm funcLike s@(NullableSummary summ _) = do
   -- Run this sub-analysis step with a modified environment - the
   -- summary component is the current module summary (given to us by
   -- the SCC traversal).
   --
   -- The initial state of the dataflow analysis is top -- all pointer
   -- parameters are NULLable.
-  let cfg = mkCFG f
   let envMod e = e { moduleSummary = summ
+                   , returnSummary = retSumm
                    , controlDepGraph = controlDependenceGraph cfg
                    , domTree = dominatorTree cfg
                    }
       args = filter isPointer (functionParameters f)
       fact0 = top { nullArguments = S.fromList args }
-  localInfo <- local envMod (forwardDataflow fact0 f)
+  localInfo <- local envMod (forwardDataflow fact0 funcLike)
 
   let exitInfo = map (dataflowResult localInfo) (functionExitInstructions f)
       exitInfo' = meets exitInfo
@@ -254,6 +274,9 @@ nullableAnalysis f s@(NullableSummary summ _) = do
   -- Update the module symmary with the set of pointer parameters that
   -- we have proven are accessed unchecked.
   return s { nullableSummary = HM.insert f argsAndWitnesses summ }
+  where
+    cfg = getCFG funcLike
+    f = getFunction funcLike
 
 attachWitness :: Map Argument (Set Witness)
                  -> Argument

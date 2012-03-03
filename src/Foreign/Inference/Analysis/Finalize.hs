@@ -23,6 +23,7 @@ import Data.HashMap.Strict ( HashMap )
 import qualified Data.HashMap.Strict as HM
 import Data.HashSet ( HashSet )
 import qualified Data.HashSet as HS
+import Data.Lens.Common
 import Data.Map ( Map )
 import qualified Data.Map as M
 import Data.Set ( Set )
@@ -30,7 +31,6 @@ import qualified Data.Set as S
 
 import Data.LLVM
 import Data.LLVM.Analysis.CFG
-import Data.LLVM.Analysis.CallGraph
 import Data.LLVM.Analysis.CallGraphSCCTraversal
 import Data.LLVM.Analysis.Dataflow
 
@@ -85,10 +85,21 @@ data FinalizerData =
   FinalizerData { moduleSummary :: SummaryType
                 , dependencySummary :: DependencySummary
                 }
-
+{-
 identifyFinalizers :: DependencySummary -> CallGraph -> FinalizerSummary
 identifyFinalizers ds cg =
-  parallelCallGraphSCCTraversal cg runner finalizerAnalysis mempty
+  parallelCallGraphSCCTraversal cg analysisFunction mempty
+  where
+    analysisFunction = callGraphAnalysisM runner finalizerAnalysis
+    runner a = runAnalysis a constData ()
+    constData = FinalizerData HM.empty ds
+-}
+identifyFinalizers :: (FuncLike funcLike, HasFunction funcLike, HasCFG funcLike)
+                      => DependencySummary
+                      -> Lens compositeSummary FinalizerSummary
+                      -> ComposableAnalysis compositeSummary funcLike
+identifyFinalizers ds lns =
+  monadicComposableAnalysis runner finalizerAnalysis lns
   where
     runner a = runAnalysis a constData ()
     constData = FinalizerData HM.empty ds
@@ -114,8 +125,9 @@ instance DataflowAnalysis Analysis FinalizerInfo where
   transfer = finalizerTransfer
   edgeTransfer = finalizerEdgeTransfer
 
-finalizerAnalysis :: Function -> FinalizerSummary -> Analysis FinalizerSummary
-finalizerAnalysis f s@(FinalizerSummary summ _) = do
+finalizerAnalysis :: (FuncLike funcLike, HasFunction funcLike, HasCFG funcLike)
+                     => funcLike -> FinalizerSummary -> Analysis FinalizerSummary
+finalizerAnalysis funcLike s@(FinalizerSummary summ _) = do
   -- Update the immutable data with the information we have gathered
   -- from the rest of the module so far.  We want to be able to access
   -- this in the Reader environment
@@ -123,7 +135,7 @@ finalizerAnalysis f s@(FinalizerSummary summ _) = do
       set0 = HS.fromList $ filter isPointer (functionParameters f)
       fact0 = FinalizerInfo set0 HM.empty
 
-  funcInfo <- local envMod (forwardDataflow fact0 f)
+  funcInfo <- local envMod (forwardDataflow fact0 funcLike)
 
   let exitInsts = functionExitInstructions f
       exitInfo = map (dataflowResult funcInfo) exitInsts
@@ -139,6 +151,8 @@ finalizerAnalysis f s@(FinalizerSummary summ _) = do
   -- function may be visited more than once.  We always want the most
   -- up-to-date info.
   return $! s { finalizerSummary = newInfo `HM.union` summ }
+  where
+    f = getFunction funcLike
 
 finalizerEdgeTransfer :: FinalizerInfo -> CFGEdge -> Analysis FinalizerInfo
 finalizerEdgeTransfer fi (TrueEdge v) = return $! processCFGEdge fi not v

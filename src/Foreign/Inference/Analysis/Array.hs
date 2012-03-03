@@ -16,12 +16,12 @@ module Foreign.Inference.Analysis.Array (
 
 import Control.DeepSeq
 import Data.List ( foldl' )
+import Data.Lens.Common
 import Data.Map ( Map )
 import qualified Data.Map as M
 import FileLocation
 
 import Data.LLVM
-import Data.LLVM.Analysis.CallGraph
 import Data.LLVM.Analysis.CallGraphSCCTraversal
 
 import Foreign.Inference.AnalysisMonad
@@ -71,7 +71,6 @@ summarizeArrayArgument a (ArraySummary summ _) =
     Just depth -> [(PAArray depth, [])]
 
 data ArrayData = AD { dependencySummary :: DependencySummary
-                    , callGraph :: CallGraph
                     }
 
 type Analysis = AnalysisMonad ArrayData ()
@@ -83,6 +82,8 @@ data PointerUse = IndexOperation Value [Value]
                 | CallArgument Int
                 deriving (Show)
 
+{-
+
 -- | The analysis to generate array parameter summaries for an entire
 -- Module (via the CallGraph).  Example usage:
 --
@@ -92,25 +93,38 @@ data PointerUse = IndexOperation Value [Value]
 -- > in identifyArrays cg er
 identifyArrays :: DependencySummary -> CallGraph -> ArraySummary
 identifyArrays ds cg =
-  parallelCallGraphSCCTraversal cg runner arrayAnalysis mempty
+  parallelCallGraphSCCTraversal cg analysisFunction mempty
   where
+    analysisFunction = callGraphAnalysisM runner arrayAnalysis
     runner a = runAnalysis a readOnlyData ()
     readOnlyData = AD ds cg
+-}
+
+identifyArrays :: (FuncLike funcLike, HasFunction funcLike)
+                  => DependencySummary
+                  -> Lens compositeSummary ArraySummary
+                  -> ComposableAnalysis compositeSummary funcLike
+identifyArrays ds lns =
+  monadicComposableAnalysis runner arrayAnalysis lns
+  where
+    runner a = runAnalysis a readOnlyData ()
+    readOnlyData = AD ds
 
 -- | The summarization function - add a summary for the current
 -- Function to the current summary.  This function collects all of the
 -- base+offset pairs and then uses @traceFromBases@ to reconstruct
 -- them.
-arrayAnalysis :: Function -> ArraySummary -> Analysis ArraySummary
-arrayAnalysis f a@(ArraySummary summary _) = do
-  cg <- asks callGraph
+arrayAnalysis :: (FuncLike funcLike, HasFunction funcLike)
+                 => funcLike -> ArraySummary -> Analysis ArraySummary
+arrayAnalysis funcLike a@(ArraySummary summary _) = do
   ds <- asks dependencySummary
 
-  let basesAndOffsets = concatMap (isArrayDeref cg ds summary) insts
+  let basesAndOffsets = concatMap (isArrayDeref ds summary) insts
       baseResultMap = foldr addDeref M.empty basesAndOffsets
       summary' = M.foldlWithKey' (traceFromBases baseResultMap) summary baseResultMap
   return $! a { arraySummary = summary' }
   where
+    f = getFunction funcLike
     insts = concatMap basicBlockInstructions (functionBody f)
     addDeref (base, use) = M.insertWith' (++) base [use]
 
@@ -162,12 +176,11 @@ traceBackwards baseResultMap result depth =
         IndexOperation result' _ -> traceBackwards baseResultMap result' (depth + 1)
         CallArgument d -> depth + d
 
-isArrayDeref :: CallGraph
-                -> DependencySummary
+isArrayDeref :: DependencySummary
                 -> SummaryType
                 -> Instruction
                 -> [(Value, PointerUse)]
-isArrayDeref cg ds summ inst = case valueContent' inst of
+isArrayDeref ds summ inst = case valueContent' inst of
   InstructionC LoadInst { loadAddress = (valueContent ->
      InstructionC GetElementPtrInst { getElementPtrValue = base
                                     , getElementPtrIndices = idxs
@@ -190,10 +203,10 @@ isArrayDeref cg ds summ inst = case valueContent' inst of
     concatMap (buildArrayDeref inst idxs) (flattenValue base)
   InstructionC CallInst { callFunction = f, callArguments = args } ->
     let indexedArgs = zip [0..] (map fst args)
-    in foldl' (collectArrayArgs cg ds summ f) [] (concatMap expand indexedArgs)
+    in foldl' (collectArrayArgs ds summ f) [] (concatMap expand indexedArgs)
   InstructionC InvokeInst { invokeFunction = f, invokeArguments = args } ->
     let indexedArgs = zip [0..] (map fst args)
-    in foldl' (collectArrayArgs cg ds summ f) [] (concatMap expand indexedArgs)
+    in foldl' (collectArrayArgs ds summ f) [] (concatMap expand indexedArgs)
   _ -> []
   where
     expand (ix, a) = zip (repeat ix) (flattenValue a)
@@ -211,21 +224,10 @@ buildArrayDeref inst idxs base =
 -- Only bother inspecting direct calls.  Information gained from
 -- indirect calls is unreliable since we don't have all possible
 -- callees, even with a very powerful points-to analysis.
-collectArrayArgs :: CallGraph -> DependencySummary -> SummaryType
+collectArrayArgs :: DependencySummary -> SummaryType
                     -> Value -> [(Value, PointerUse)] -> (Int, Value)
                     -> [(Value, PointerUse)]
-collectArrayArgs cg ds summ f lst (ix, arg) =
-  case callTargets of
-    [ct] -> collectArrayArgsForCallee ds summ ix arg lst ct
-    _ -> []
-  -- foldl' (collectArrayArgsForCallee ds summ ix arg) lst callTargets
-  where
-    callTargets = callValueTargets cg f
-
-collectArrayArgsForCallee :: DependencySummary -> SummaryType
-                             -> Int -> Value -> [(Value, PointerUse)] -> Value
-                             -> [(Value, PointerUse)]
-collectArrayArgsForCallee ds summ ix arg lst callee =
+collectArrayArgs ds summ callee lst (ix, arg) =
   case valueContent' callee of
     FunctionC f ->
       let funcArgs = functionParameters f
@@ -246,7 +248,7 @@ collectArrayArgsForCallee ds summ ix arg lst callee =
           [] -> lst
           [PAArray depth] -> (arg, CallArgument depth) : lst
           _ -> $(err "This summary should only produce singleton or empty lists")
-    _ -> $err' $ "Unexpected value; indirect calls should already be resolved: " ++ show callee
+    _ -> []
 
 isArrayAnnot :: ParamAnnotation -> Bool
 isArrayAnnot (PAArray _) = True

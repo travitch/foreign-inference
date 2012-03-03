@@ -42,7 +42,7 @@ library
   build-depends: base > 3 && < 5, containers, filepath, text, bytestring, ghc-prim,
                  unordered-containers >= 0.1.4.0, hashable, mtl > 2 && < 3,
                  aeson >= 0.4.0.0, file-location >= 0.4.3, temporary, process,
-                 llvm-analysis, deepseq,
+                 llvm-analysis, deepseq, data-lens >= 2,
                  -- For the reporting code
                  archive-inspection, directory, attoparsec >= 0.10 && < 1.0, ascii,
                  blaze-html >= 0.4, highlighting-kate >= 0.5, blaze-builder >= 0.3,
@@ -90,7 +90,7 @@ executable IIGlue
   hs-source-dirs: tools
   build-depends: base > 3 && < 5, cmdargs >= 0.9, filepath,
                  llvm-analysis, foreign-inference, llvm-data-interop,
-                 archive-inspection, deepseq
+                 archive-inspection, deepseq, data-lens, deepseq
   main-is: IIGlue.hs
   ghc-options: -Wall -rtsopts -threaded
 

@@ -33,11 +33,11 @@ module Foreign.Inference.Analysis.Allocator (
   ) where
 
 import Control.DeepSeq
+import Data.Lens.Common ( Lens )
 import Data.Map ( Map )
 import qualified Data.Map as M
 
 import Data.LLVM
-import Data.LLVM.Analysis.CallGraph
 import Data.LLVM.Analysis.CallGraphSCCTraversal
 
 import Foreign.Inference.AnalysisMonad
@@ -78,7 +78,7 @@ instance HasDiagnostics AllocatorSummary where
 
 data AllocatorData =
   AllocatorData { dependencySummary :: DependencySummary
-                , escapeSummary :: EscapeSummary
+--                , escapeSummary :: EscapeSummary
                 }
 
 -- type AnalysisMonad = RWS AllocatorData Diagnostics ()
@@ -91,37 +91,51 @@ instance SummarizeModule AllocatorSummary where
       Nothing -> []
       Just (Just fin) -> [FAAllocator fin]
       Just Nothing -> [FAAllocator ""]
-
+{-
 identifyAllocators :: DependencySummary
                       -> EscapeSummary
                       -> CallGraph
                       -> AllocatorSummary
 identifyAllocators ds es cg =
-  parallelCallGraphSCCTraversal cg runner allocatorAnalysis mempty
---  (AS summ, diags)
+  parallelCallGraphSCCTraversal cg analysisFunction mempty
+  where
+    analysisFunction = callGraphAnalysisM runner allocatorAnalysis
+    runner a = runAnalysis a readOnlyData ()
+    readOnlyData = AllocatorData ds es
+-}
+identifyAllocators :: (FuncLike funcLike, HasFunction funcLike)
+                      => DependencySummary
+                      -> Lens compositeSummary AllocatorSummary
+                      -> Lens compositeSummary EscapeSummary
+                      -> ComposableAnalysis compositeSummary funcLike
+identifyAllocators ds lns depLens =
+  monadicComposableDependencyAnalysis runner allocatorAnalysis lns depLens
   where
     runner a = runAnalysis a readOnlyData ()
---    analysis = callGraphSCCTraversal cg allocatorAnalysis M.empty
-    readOnlyData = AllocatorData ds es
---    (summ, diags) = evalRWS analysis readOnlyData ()
+    readOnlyData = AllocatorData ds
 
 -- | If the function returns a pointer, it is a candidate for an
 -- allocator.  We do not concern ourselves with functions that may
 -- unwind or call exit on error - these can also be allocators.
-allocatorAnalysis :: Function -> AllocatorSummary -> Analysis AllocatorSummary
-allocatorAnalysis f s@(AllocatorSummary summ _) =
+allocatorAnalysis :: (FuncLike funcLike, HasFunction funcLike)
+                     => EscapeSummary
+                     -> funcLike
+                     -> AllocatorSummary
+                     -> Analysis AllocatorSummary
+allocatorAnalysis esumm funcLike s@(AllocatorSummary summ _) =
   case exitInst of
     RetInst { retInstValue = Just rv } ->
       case valueType rv of
         -- The function always returns a pointer
         TypePointer _ _ -> do
-          summ' <- checkReturn f rv summ
+          summ' <- checkReturn esumm f rv summ
           return s { allocatorSummary = summ' }
         -- Non-pointer return, ignore
         _ -> return s
     -- Returns void
     _ -> return s
   where
+    f = getFunction funcLike
     exitInst = functionExitInstruction f
 
 -- | If the return value is always one of:
@@ -132,13 +146,13 @@ allocatorAnalysis f s@(AllocatorSummary summ _) =
 --
 -- then f is an allocator.  If there is a unique finalizer for the
 -- same type, associate it with this allocator.
-checkReturn :: Function -> Value -> SummaryType -> Analysis SummaryType
-checkReturn f rv summ =
+checkReturn :: EscapeSummary -> Function -> Value -> SummaryType -> Analysis SummaryType
+checkReturn esumm f rv summ =
   case null nonNullRvs of
     -- Always returns NULL, not an allocator
     True -> return summ
     False -> do
-      valid <- mapM (isAllocatedWithoutEscape summ) nonNullRvs
+      valid <- mapM (isAllocatedWithoutEscape esumm summ) nonNullRvs
       case and valid of
         False -> return summ
         True -> return $ M.insert f Nothing summ
@@ -152,8 +166,8 @@ checkReturn f rv summ =
 
 -- | Return True if the given Value is the result of a call to an
 -- allocator AND does not escape.
-isAllocatedWithoutEscape :: SummaryType -> Value -> Analysis Bool
-isAllocatedWithoutEscape summ rv = do
+isAllocatedWithoutEscape :: EscapeSummary -> SummaryType -> Value -> Analysis Bool
+isAllocatedWithoutEscape esumm summ rv = do
   allocatorInsts <- case valueContent' rv of
     InstructionC i@CallInst { callFunction = f } ->
       checkFunctionIsAllocator f summ [i]
@@ -176,7 +190,7 @@ isAllocatedWithoutEscape summ rv = do
   -- allocator.  If there are values, none may escape.
   case null allocatorInsts of
     True -> return False
-    False -> noneEscape allocatorInsts
+    False -> return $! noneEscape esumm allocatorInsts
 
 checkFunctionIsAllocator :: Value -> SummaryType -> [Instruction] -> Analysis [Instruction]
 checkFunctionIsAllocator v summ is =
@@ -199,10 +213,8 @@ checkFunctionIsAllocator v summ is =
     -- Indirect call
     _ -> return []
 
-noneEscape :: [Instruction] -> Analysis Bool
-noneEscape is = do
-  escSumm <- asks escapeSummary
-  return $! not (any (instructionEscapes escSumm) is)
+noneEscape :: EscapeSummary -> [Instruction] -> Bool
+noneEscape escSumm is = not (any (instructionEscapes escSumm) is)
 
 -- Helpers
 

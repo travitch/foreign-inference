@@ -11,6 +11,7 @@ module Foreign.Inference.Analysis.Output (
 import Control.DeepSeq
 import Data.HashSet ( HashSet )
 import qualified Data.HashSet as HS
+import Data.Lens.Common
 import Data.Map ( Map )
 import qualified Data.Map as M
 import Data.Set ( Set )
@@ -18,7 +19,6 @@ import qualified Data.Set as S
 import FileLocation
 
 import Data.LLVM
-import Data.LLVM.Analysis.CallGraph
 import Data.LLVM.Analysis.CallGraphSCCTraversal
 import Data.LLVM.Analysis.Dataflow
 
@@ -74,18 +74,33 @@ summarizeOutArgument a (OutputSummary s _) =
 
 data OutData = OD { moduleSummary :: SummaryType
                   , dependencySummary :: DependencySummary
-                  , callGraph :: CallGraph
                   }
 
 -- | Note that array parameters are not out parameters, so we rely on
 -- the Array analysis to let us filter those parameters out of our
 -- results.
+{-
 identifyOutput :: DependencySummary -> CallGraph -> OutputSummary
 identifyOutput ds cg =
-  parallelCallGraphSCCTraversal cg runner outAnalysis mempty
+  parallelCallGraphSCCTraversal cg analysisFunction mempty
   where
+    ca = ComposableAnalysis { analysisUnwrap = runner
+                            , analysisFunction = outAnalysis
+                            ,
+    analysisFunction = callGraphAnalysisM runner outAnalysis
     runner a = runAnalysis a constData ()
     constData = OD M.empty ds cg
+-}
+
+identifyOutput :: (FuncLike funcLike, HasCFG funcLike, HasFunction funcLike)
+                  => DependencySummary
+                  -> Lens compositeSummary OutputSummary
+                  -> ComposableAnalysis compositeSummary funcLike
+identifyOutput ds lns =
+  monadicComposableAnalysis runner outAnalysis lns
+  where
+    runner a = runAnalysis a constData ()
+    constData = OD mempty ds
 
 data OutInfo = OI { outputInfo :: !(Map Argument (ArgumentDirection, Set Witness))
                   , aggregates :: !(HashSet Argument)
@@ -117,10 +132,11 @@ instance DataflowAnalysis Analysis OutInfo where
 
 type Analysis = AnalysisMonad OutData ()
 
-outAnalysis :: Function -> OutputSummary -> Analysis OutputSummary
-outAnalysis f s@(OutputSummary summ _) = do
+outAnalysis :: (FuncLike funcLike, HasFunction funcLike, HasCFG funcLike)
+               => funcLike -> OutputSummary -> Analysis OutputSummary
+outAnalysis funcLike s@(OutputSummary summ _) = do
   let envMod e = e { moduleSummary = summ }
-  funcInfo <- local envMod (forwardDataflow top f)
+  funcInfo <- local envMod (forwardDataflow top funcLike)
   let exitInfo = map (dataflowResult funcInfo) (functionExitInstructions f)
       OI exitInfo' aggArgs = meets exitInfo
       exitInfo'' = M.filterWithKey (\k _ -> not (HS.member k aggArgs)) exitInfo'
@@ -129,6 +145,8 @@ outAnalysis f s@(OutputSummary summ _) = do
   -- summary.  Prefer the locally computed info if there are
   -- collisions (could arise while processing SCCs).
   return $! s { outputSummary = M.union exitInfo''' summ }
+  where
+    f = getFunction funcLike
 
 -- | This transfer function only needs to be concerned with Load and
 -- Store instructions (for now).  Loads add in an ArgIn value. Stores

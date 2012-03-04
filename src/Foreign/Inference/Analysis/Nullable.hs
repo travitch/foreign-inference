@@ -114,6 +114,7 @@ import qualified Data.Set as S
 import Data.HashMap.Strict ( HashMap )
 import Data.Lens.Common
 import qualified Data.HashMap.Strict as HM
+import Data.Maybe ( isJust )
 import Data.Monoid
 import FileLocation
 
@@ -135,7 +136,7 @@ import Foreign.Inference.Analysis.Return
 -- debug' :: c -> String -> c
 -- debug' = flip trace
 
-type SummaryType = HashMap Function (Set (Argument, [Witness]))
+type SummaryType = HashMap Argument [Witness]
 
 -- | Note, this could be a Set (Argument, Instruction) where the
 -- Instruction is the fact we saw that led us to believe that Argument
@@ -162,14 +163,9 @@ instance SummarizeModule NullableSummary where
 
 summarizeNullArgument :: Argument -> NullableSummary -> [(ParamAnnotation, [Witness])]
 summarizeNullArgument a (NullableSummary s _) =
-  case S.toList $ S.filter ((==a) . fst) nonNullableArgs of
-    [] -> []
-    [(_, insts)] -> [(PANotNull, insts)]
-    _ -> $err' ("Multiple entries in Null summary for " ++ show a)
-  where
-    f = argumentFunction a
-    errMsg = $err' ("Function not in summary: " ++ show (functionName f))
-    nonNullableArgs = HM.lookupDefault errMsg f s
+  case HM.lookup a s of
+    Nothing -> []
+    Just ws -> [(PANotNull, ws)]
 
 identifyNullable :: (FuncLike funcLike, HasFunction funcLike, HasCFG funcLike)
                     => DependencySummary
@@ -180,8 +176,6 @@ identifyNullable ds lns depLens =
   composableDependencyAnalysisM runner nullableAnalysis lns depLens
   where
     runner a = runAnalysis a constData cache
-    summ0 = NullableSummary mempty mempty
-
     constData = ND HM.empty ds undefined undefined undefined
     cache = NState HM.empty
 
@@ -250,13 +244,15 @@ nullableAnalysis retSumm funcLike s@(NullableSummary summ _) = do
 
   let exitInfo = map (dataflowResult localInfo) (functionExitInstructions f)
       exitInfo' = meets exitInfo
-      notNullableArgs = S.fromList args `S.difference` nullArguments exitInfo'
+      notNullableArgs = S.toList $ S.fromList args `S.difference` nullArguments exitInfo'
       argsAndWitnesses =
-        S.map (attachWitness (nullWitnesses exitInfo')) notNullableArgs
+        map (attachWitness (nullWitnesses exitInfo')) notNullableArgs
 
   -- Update the module symmary with the set of pointer parameters that
   -- we have proven are accessed unchecked.
-  return s { nullableSummary = HM.insert f argsAndWitnesses summ }
+  return s { nullableSummary =
+                foldr (\(a, ws) acc -> HM.insert a ws acc) summ argsAndWitnesses
+           }
   where
     cfg = getCFG funcLike
     f = getFunction funcLike
@@ -273,13 +269,6 @@ nullEdgeTransfer :: NullInfo -> CFGEdge -> Analysis NullInfo
 nullEdgeTransfer ni (TrueEdge v) = return $! processCFGEdge ni id v
 nullEdgeTransfer ni (FalseEdge v) = return $! processCFGEdge ni not v
 nullEdgeTransfer ni _ = return ni
-
--- nullTransfer :: NullInfo
---                 -> Instruction
---                 -> AnalysisMonad NullInfo
--- nullTransfer ni i =
---   let ni' = removeNonNullPointers ni es
---   in transfer' ni' i
 
 -- | First, process the incoming CFG edges to learn about pointers
 -- that are known to be non-NULL.  Then use this updated information
@@ -417,8 +406,8 @@ definedFunctionTransfer i summ f ni args =
   foldM markArgNotNullable ni indexedNotNullArgs
   where
     formals = functionParameters f
-    notNullableArgs = HM.lookupDefault S.empty f summ
-    isNotNullable (a, _) = not . S.null $ S.filter ((==a) . fst) notNullableArgs -- S.member a notNullableArgs
+    notNullableArgs = filter (\frml -> isJust (HM.lookup frml summ)) formals
+    isNotNullable (a, _) = not . null $ filter (==a) notNullableArgs
     -- | Pairs of not-nullable formals/actuals
     indexedNotNullArgs = filter isNotNullable $ zip formals args
     markArgNotNullable info (_, a) =
@@ -486,7 +475,6 @@ mustExec' i ivs = do
         [] -> return Nothing
         [(v,_)] -> return (Just v)
         _ -> return Nothing
-      -- return $! all isUnconditional nonBackedges
     _ -> return Nothing
   where
     toBB v =
@@ -555,9 +543,11 @@ process' ni arg isNull =
 -- | Convert the 'NullableSummary' to a format that is easy to read
 -- from a file for testing purposes.
 nullSummaryToTestFormat :: NullableSummary -> Map String (Set String)
-nullSummaryToTestFormat (NullableSummary m _) = convert m
+nullSummaryToTestFormat (NullableSummary m _) =
+  foldr addArg M.empty (HM.toList m)
   where
-    convert = M.fromList . filter (not . S.null . snd) . map (keyMapper *** valMapper) . HM.toList
-    notEmptySet = not . S.null
-    valMapper = S.map (show . argumentName . fst)
-    keyMapper = show . functionName
+    addArg (a, _) acc =
+      let f = argumentFunction a
+          k = show (functionName f)
+          v = S.singleton (show (argumentName a))
+      in M.insertWith' S.union k v acc

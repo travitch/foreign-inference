@@ -33,7 +33,6 @@ module Foreign.Inference.Analysis.Allocator (
   ) where
 
 import Control.DeepSeq
-import Data.Lens.Common ( Lens )
 import Data.Map ( Map )
 import qualified Data.Map as M
 
@@ -78,10 +77,8 @@ instance HasDiagnostics AllocatorSummary where
 
 data AllocatorData =
   AllocatorData { dependencySummary :: DependencySummary
---                , escapeSummary :: EscapeSummary
                 }
 
--- type AnalysisMonad = RWS AllocatorData Diagnostics ()
 type Analysis = AnalysisMonad AllocatorData ()
 
 instance SummarizeModule AllocatorSummary where
@@ -91,25 +88,14 @@ instance SummarizeModule AllocatorSummary where
       Nothing -> []
       Just (Just fin) -> [FAAllocator fin]
       Just Nothing -> [FAAllocator ""]
-{-
-identifyAllocators :: DependencySummary
-                      -> EscapeSummary
-                      -> CallGraph
-                      -> AllocatorSummary
-identifyAllocators ds es cg =
-  parallelCallGraphSCCTraversal cg analysisFunction mempty
-  where
-    analysisFunction = callGraphAnalysisM runner allocatorAnalysis
-    runner a = runAnalysis a readOnlyData ()
-    readOnlyData = AllocatorData ds es
--}
+
 identifyAllocators :: (FuncLike funcLike, HasFunction funcLike)
                       => DependencySummary
                       -> Lens compositeSummary AllocatorSummary
                       -> Lens compositeSummary EscapeSummary
                       -> ComposableAnalysis compositeSummary funcLike
 identifyAllocators ds lns depLens =
-  monadicComposableDependencyAnalysis runner allocatorAnalysis lns depLens
+  composableDependencyAnalysisM runner allocatorAnalysis lns depLens
   where
     runner a = runAnalysis a readOnlyData ()
     readOnlyData = AllocatorData ds

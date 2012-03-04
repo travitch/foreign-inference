@@ -117,19 +117,19 @@ instance HasCFG FunctionMetadata where
   getCFG = functionCFG
 
 instance FuncLike FunctionMetadata where
-  convertFunction f =
+  fromFunction f =
     FunctionMetadata { functionOriginal = f
                      , functionCFG = mkCFG f
                      }
 
 data AnalysisSummary =
-  AnalysisSummary { _nullableSummary :: NullableSummary
-                  , _outputSummary :: OutputSummary
-                  , _arraySummary :: ArraySummary
-                  , _returnSummary :: ReturnSummary
-                  , _finalizerSummary :: FinalizerSummary
-                  , _escapeSummary :: EscapeSummary
-                  , _allocatorSummary :: AllocatorSummary
+  AnalysisSummary { _nullableSummary :: !NullableSummary
+                  , _outputSummary :: !OutputSummary
+                  , _arraySummary :: !ArraySummary
+                  , _returnSummary :: !ReturnSummary
+                  , _finalizerSummary :: !FinalizerSummary
+                  , _escapeSummary :: !EscapeSummary
+                  , _allocatorSummary :: !AllocatorSummary
                   }
   deriving (Eq)
 
@@ -198,6 +198,8 @@ dump opts name m = do
       repo = repositoryLocation opts
   ds <- loadDependencies [repo] deps
 
+  -- Have to give a type signature here to fix all of the FuncLike
+  -- constraints to our metadata blob.
   let analyses :: [ComposableAnalysis AnalysisSummary FunctionMetadata]
       analyses = [ identifyReturns ds returnSummary
                  , identifyArrays ds arraySummary
@@ -207,7 +209,7 @@ dump opts name m = do
                  , identifyNullable ds nullableSummary returnSummary
                  , identifyAllocators ds allocatorSummary escapeSummary
                  ]
-      analysisFunction = composableAnalysis analyses
+      analysisFunction = callGraphComposeAnalysis analyses
       analysisResult =
         parallelCallGraphSCCTraversal cg analysisFunction mempty
 

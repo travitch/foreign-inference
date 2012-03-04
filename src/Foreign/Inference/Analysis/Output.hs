@@ -79,25 +79,12 @@ data OutData = OD { moduleSummary :: SummaryType
 -- | Note that array parameters are not out parameters, so we rely on
 -- the Array analysis to let us filter those parameters out of our
 -- results.
-{-
-identifyOutput :: DependencySummary -> CallGraph -> OutputSummary
-identifyOutput ds cg =
-  parallelCallGraphSCCTraversal cg analysisFunction mempty
-  where
-    ca = ComposableAnalysis { analysisUnwrap = runner
-                            , analysisFunction = outAnalysis
-                            ,
-    analysisFunction = callGraphAnalysisM runner outAnalysis
-    runner a = runAnalysis a constData ()
-    constData = OD M.empty ds cg
--}
-
 identifyOutput :: (FuncLike funcLike, HasCFG funcLike, HasFunction funcLike)
                   => DependencySummary
                   -> Lens compositeSummary OutputSummary
                   -> ComposableAnalysis compositeSummary funcLike
 identifyOutput ds lns =
-  monadicComposableAnalysis runner outAnalysis lns
+  composableAnalysisM runner outAnalysis lns
   where
     runner a = runAnalysis a constData ()
     constData = OD mempty ds

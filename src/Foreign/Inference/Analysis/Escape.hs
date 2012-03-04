@@ -55,7 +55,7 @@ identifyEscapes :: (FuncLike funcLike, HasFunction funcLike)
                    -> Lens compositeSummary EscapeSummary
                    -> ComposableAnalysis compositeSummary funcLike
 identifyEscapes ds lns =
-  monadicComposableAnalysis runner escapeWrapper lns
+  composableAnalysisM runner escapeWrapper lns
   where
     escapeWrapper f s = do
       er <- escapeAnalysis extSumm f (escapeResult s)
@@ -72,29 +72,6 @@ identifyEscapes ds lns =
           emitWarning Nothing "EscapeAnalysis" msg
           return True
         Just annots -> return $ PAEscape `elem` annots
-
-{-
-identifyEscapes :: DependencySummary -> CallGraph -> EscapeSummary
-identifyEscapes ds cg =
-  -- parallelCallGraphSCCTraversal cg runner escapeWrapper mempty
-  parallelCallGraphSCCTraversal cg analysisFunction mempty
-  where
-    analysisFunction = callGraphAnalysisM runner escapeWrapper
-    escapeWrapper f s = do
-      er <- escapeAnalysis extSumm f (escapeResult s)
-      return $! s { escapeResult = er }
-    runner a =
-      let (e, diags) = runWriter a
-      in e { escapeDiagnostics = diags }
-
-    extSumm ef ix =
-      case lookupArgumentSummary ds ef ix of
-        Nothing -> do
-          let msg = "Missing summary for " ++ show (externalFunctionName ef)
-          emitWarning Nothing "EscapeAnalysis" msg
-          return True
-        Just annots -> return $ PAEscape `elem` annots
--}
 
 instructionEscapes :: EscapeSummary -> Instruction -> Bool
 instructionEscapes (EscapeSummary er _) i =

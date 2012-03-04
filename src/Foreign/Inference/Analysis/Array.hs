@@ -82,30 +82,12 @@ data PointerUse = IndexOperation Value [Value]
                 | CallArgument Int
                 deriving (Show)
 
-{-
-
--- | The analysis to generate array parameter summaries for an entire
--- Module (via the CallGraph).  Example usage:
---
--- > let pta = runPointsToAnalysis m
--- >     cg = mkCallGraph m pta []
--- >     er = runEscapeAnalysis m cg
--- > in identifyArrays cg er
-identifyArrays :: DependencySummary -> CallGraph -> ArraySummary
-identifyArrays ds cg =
-  parallelCallGraphSCCTraversal cg analysisFunction mempty
-  where
-    analysisFunction = callGraphAnalysisM runner arrayAnalysis
-    runner a = runAnalysis a readOnlyData ()
-    readOnlyData = AD ds cg
--}
-
 identifyArrays :: (FuncLike funcLike, HasFunction funcLike)
                   => DependencySummary
                   -> Lens compositeSummary ArraySummary
                   -> ComposableAnalysis compositeSummary funcLike
 identifyArrays ds lns =
-  monadicComposableAnalysis runner arrayAnalysis lns
+  composableAnalysisM runner arrayAnalysis lns
   where
     runner a = runAnalysis a readOnlyData ()
     readOnlyData = AD ds

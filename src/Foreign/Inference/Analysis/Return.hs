@@ -38,25 +38,13 @@ instance SummarizeModule ReturnSummary where
       False -> []
       True -> [FANoRet]
   summarizeArgument _ _ = []
-{-
--- | Never produces diagnostics, but the value is included for
--- consistency.
-identifyReturns :: DependencySummary -> CallGraph -> ReturnSummary
-identifyReturns ds cg = ReturnSummary $
-  parallelCallGraphSCCTraversal cg analysisFunction mempty
-  where
-    analysisFunction = callGraphAnalysisM runIdentity (noReturnAnalysis extSumm)
-    extSumm ef =
-      case lookupFunctionSummary ds ef of
-        Nothing -> return False
-        Just s -> return $ FANoRet `elem` s
--}
+
 identifyReturns :: (FuncLike funcLike, HasCFG funcLike)
                    => DependencySummary
                    -> Lens compositeSummary ReturnSummary
                    -> ComposableAnalysis compositeSummary funcLike
 identifyReturns ds lns =
-  monadicComposableAnalysis runIdentity analysisWrapper lns
+  composableAnalysisM runIdentity analysisWrapper lns
   where
     analysisWrapper f (ReturnSummary s) = do
       res <- noReturnAnalysis extSumm f s

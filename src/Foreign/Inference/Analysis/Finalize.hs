@@ -85,21 +85,13 @@ data FinalizerData =
   FinalizerData { moduleSummary :: SummaryType
                 , dependencySummary :: DependencySummary
                 }
-{-
-identifyFinalizers :: DependencySummary -> CallGraph -> FinalizerSummary
-identifyFinalizers ds cg =
-  parallelCallGraphSCCTraversal cg analysisFunction mempty
-  where
-    analysisFunction = callGraphAnalysisM runner finalizerAnalysis
-    runner a = runAnalysis a constData ()
-    constData = FinalizerData HM.empty ds
--}
+
 identifyFinalizers :: (FuncLike funcLike, HasFunction funcLike, HasCFG funcLike)
                       => DependencySummary
                       -> Lens compositeSummary FinalizerSummary
                       -> ComposableAnalysis compositeSummary funcLike
 identifyFinalizers ds lns =
-  monadicComposableAnalysis runner finalizerAnalysis lns
+  composableAnalysisM runner finalizerAnalysis lns
   where
     runner a = runAnalysis a constData ()
     constData = FinalizerData HM.empty ds

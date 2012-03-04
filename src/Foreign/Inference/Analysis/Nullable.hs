@@ -171,30 +171,13 @@ summarizeNullArgument a (NullableSummary s _) =
     errMsg = $err' ("Function not in summary: " ++ show (functionName f))
     nonNullableArgs = HM.lookupDefault errMsg f s
 
-{-
--- | The top-level entry point of the nullability analysis
-identifyNullable :: DependencySummary
-                    -> CallGraph
-                    -> ReturnSummary
-                    -> NullableSummary
-identifyNullable ds cg retSumm =
-  parallelCallGraphSCCTraversal cg analysisFunction summ0
-  where
-    analysisFunction = callGraphAnalysisM runner nullableAnalysis
-    runner a = runAnalysis a constData cache
-    summ0 = NullableSummary mempty mempty
-
-    constData = ND HM.empty ds cg retSumm undefined undefined
-    cache = NState HM.empty
--}
-
 identifyNullable :: (FuncLike funcLike, HasFunction funcLike, HasCFG funcLike)
                     => DependencySummary
                     -> Lens compositeSummary NullableSummary
                     -> Lens compositeSummary ReturnSummary
                     -> ComposableAnalysis compositeSummary funcLike
 identifyNullable ds lns depLens =
-  monadicComposableDependencyAnalysis runner nullableAnalysis lns depLens
+  composableDependencyAnalysisM runner nullableAnalysis lns depLens
   where
     runner a = runAnalysis a constData cache
     summ0 = NullableSummary mempty mempty

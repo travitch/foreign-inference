@@ -30,6 +30,7 @@ library
                    Foreign.Inference.Analysis.Finalize,
                    Foreign.Inference.Analysis.Nullable,
                    Foreign.Inference.Analysis.Output,
+                   Foreign.Inference.Analysis.RefCount,
                    Foreign.Inference.Analysis.Return,
                    Foreign.Inference.Analysis.Util.CompositeSummary,
                    Foreign.Inference.AnalysisMonad,
@@ -44,6 +45,7 @@ library
                  unordered-containers >= 0.1.4.0, hashable, mtl > 2 && < 3,
                  aeson >= 0.4.0.0, file-location >= 0.4.3, temporary, process,
                  llvm-analysis, deepseq, data-lens >= 2, data-lens-template,
+                 failure >= 0.2,
                  -- For the reporting code
                  archive-inspection, directory, attoparsec >= 0.10 && < 1.0, ascii,
                  blaze-html >= 0.4, highlighting-kate >= 0.5, blaze-builder >= 0.3,

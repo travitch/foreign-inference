@@ -15,7 +15,7 @@ import Data.LLVM.Analysis.CFG
 import Data.LLVM.Analysis.CallGraphSCCTraversal
 import Data.LLVM.Analysis.NoReturn
 
-import Foreign.Inference.AnalysisMonad
+import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
 
 type SummaryType = HashSet Function

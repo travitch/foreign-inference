@@ -13,7 +13,6 @@ import Data.LLVM.Analysis.CallGraphSCCTraversal
 import Data.LLVM.Analysis.Escape hiding ( instructionEscapes )
 import qualified Data.LLVM.Analysis.Escape as LLVM
 
-import Foreign.Inference.AnalysisMonad
 import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
 

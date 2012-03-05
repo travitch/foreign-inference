@@ -1,9 +1,6 @@
-{-# LANGUAGE RankNTypes #-}
 module Main ( main ) where
 
-import Control.DeepSeq
 import Control.Exception ( tryJust )
-import Data.Lens.Common
 import Data.Monoid
 import System.Console.CmdArgs.Explicit
 import System.Console.CmdArgs.Text
@@ -15,7 +12,6 @@ import System.IO.Error ( isDoesNotExistError )
 import Codec.Archive
 
 import Data.LLVM
-import Data.LLVM.Analysis.CFG
 import Data.LLVM.Analysis.CallGraph
 import Data.LLVM.Analysis.CallGraphSCCTraversal
 import Data.LLVM.Analysis.PointsTo.TrivialFunction
@@ -33,6 +29,7 @@ import Foreign.Inference.Analysis.Finalize
 import Foreign.Inference.Analysis.Nullable
 import Foreign.Inference.Analysis.Output
 import Foreign.Inference.Analysis.Return
+import Foreign.Inference.Analysis.Util.CompositeSummary
 
 -- Command line helpers
 addDependency :: String -> Opts -> Either String Opts
@@ -105,71 +102,6 @@ showHelpAndExit arguments exitCmd = do
   putStrLn $ showText (Wrap 80) $ helpText [] HelpFormatOne arguments
   exitCmd
 
-data FunctionMetadata =
-  FunctionMetadata { functionOriginal :: Function
-                   , functionCFG :: CFG
-                   }
-
-instance HasFunction FunctionMetadata where
-  getFunction = functionOriginal
-
-instance HasCFG FunctionMetadata where
-  getCFG = functionCFG
-
-instance FuncLike FunctionMetadata where
-  fromFunction f =
-    FunctionMetadata { functionOriginal = f
-                     , functionCFG = mkCFG f
-                     }
-
-data AnalysisSummary =
-  AnalysisSummary { _nullableSummary :: !NullableSummary
-                  , _outputSummary :: !OutputSummary
-                  , _arraySummary :: !ArraySummary
-                  , _returnSummary :: !ReturnSummary
-                  , _finalizerSummary :: !FinalizerSummary
-                  , _escapeSummary :: !EscapeSummary
-                  , _allocatorSummary :: !AllocatorSummary
-                  }
-  deriving (Eq)
-
-instance NFData AnalysisSummary where
-  rnf a@(AnalysisSummary s1 s2 s3 s4 s5 s6 s7) =
-    s1 `deepseq` s2 `deepseq` s3 `deepseq` s4 `deepseq` s5
-      `deepseq` s6 `deepseq` s7 `deepseq` a `seq` ()
-
-nullableSummary = lens _nullableSummary (\x s -> s { _nullableSummary = x })
-outputSummary = lens _outputSummary (\x s -> s { _outputSummary = x })
-arraySummary = lens _arraySummary (\x s -> s { _arraySummary = x })
-returnSummary = lens _returnSummary (\x s -> s { _returnSummary = x })
-finalizerSummary = lens _finalizerSummary (\x s -> s { _finalizerSummary = x })
-escapeSummary = lens _escapeSummary (\x s -> s { _escapeSummary = x })
-allocatorSummary = lens _allocatorSummary (\x s -> s { _allocatorSummary = x })
-
-instance Monoid AnalysisSummary where
-  mempty = AnalysisSummary mempty mempty mempty mempty mempty mempty mempty
-  mappend a1 a2 =
-    AnalysisSummary { _nullableSummary = _nullableSummary a1 `mappend` _nullableSummary a2
-                    , _outputSummary = _outputSummary a1 `mappend` _outputSummary a2
-                    , _arraySummary = _arraySummary a1 `mappend` _arraySummary a2
-                    , _returnSummary = _returnSummary a1 `mappend` _returnSummary a2
-                    , _finalizerSummary = _finalizerSummary a1 `mappend` _finalizerSummary a2
-                    , _escapeSummary = _escapeSummary a1 `mappend` _escapeSummary a2
-                    , _allocatorSummary = _allocatorSummary a1 `mappend` _allocatorSummary a2
-                    }
-
-extractSummary :: AnalysisSummary ->
-                  (forall a . (HasDiagnostics a, SummarizeModule a) =>  a -> b)
-                  -> [b]
-extractSummary summ f =
-  [ f (_nullableSummary summ)
-  , f (_outputSummary summ)
-  , f (_arraySummary summ)
-  , f (_returnSummary summ)
-  , f (_finalizerSummary summ)
-  , f (_escapeSummary summ)
-  , f (_allocatorSummary summ)
-  ]
 
 main :: IO ()
 main = do

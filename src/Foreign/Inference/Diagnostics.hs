@@ -5,6 +5,8 @@
 -- It is an instance of 'Monoid' so that it can easily be used in a
 -- Writer monad.
 module Foreign.Inference.Diagnostics (
+  -- * Class
+  HasDiagnostics(..),
   -- * Types
   Location(..),
   Classification(..),
@@ -24,6 +26,13 @@ import Data.Monoid
 import Data.Set ( Set, singleton )
 import qualified Data.Set as S
 import Text.Printf
+
+class HasDiagnostics a where
+  addDiagnostics :: a -> Diagnostics -> a
+  addDiagnostics a _ = a
+
+  getDiagnostics :: a -> Diagnostics
+  getDiagnostics _ = mempty
 
 -- | A source location.
 data Location = Location { locationFilename :: String

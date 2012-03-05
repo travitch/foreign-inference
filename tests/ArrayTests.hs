@@ -1,5 +1,6 @@
 module Main ( main ) where
 
+import Data.Monoid
 import System.Environment ( getArgs, withArgs )
 import System.FilePath ( (<.>) )
 import Test.HUnit ( assertEqual )
@@ -7,16 +8,14 @@ import Test.HUnit ( assertEqual )
 import Data.LLVM
 import Data.LLVM.Parse
 import Data.LLVM.Analysis.CallGraph
-import Data.LLVM.Analysis.PointsTo
+import Data.LLVM.Analysis.CallGraphSCCTraversal
 import Data.LLVM.Analysis.PointsTo.TrivialFunction
 import Data.LLVM.Testing
 
 import Foreign.Inference.Interface
 import Foreign.Inference.Preprocessing
 import Foreign.Inference.Analysis.Array
-
-import Debug.Trace
-debug = flip trace
+import Foreign.Inference.Analysis.Util.CompositeSummary
 
 main :: IO ()
 main = do
@@ -35,7 +34,12 @@ main = do
   where
     bcParser = parseLLVMFile defaultParserOptions
 
-analyzeArrays ds m = arraySummaryToTestFormat $ identifyArrays ds cg
+analyzeArrays ds m =
+  arraySummaryToTestFormat (_arraySummary res)
   where
     pta = runPointsToAnalysis m
     cg = mkCallGraph m pta []
+    analyses :: [ComposableAnalysis AnalysisSummary FunctionMetadata]
+    analyses = [ identifyArrays ds arraySummary ]
+    analysisFunc = callGraphComposeAnalysis analyses
+    res = callGraphSCCTraversal cg analysisFunc mempty

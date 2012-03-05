@@ -1,7 +1,6 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 module Foreign.Inference.AnalysisMonad (
   AnalysisMonad,
-  HasDiagnostics(..),
   runAnalysis,
   module Control.Monad.RWS.Strict
   ) where
@@ -15,13 +14,6 @@ newtype AnalysisMonad env state a =
             MonadState state,
             MonadReader env,
             MonadWriter Diagnostics)
-
-class HasDiagnostics a where
-  addDiagnostics :: a -> Diagnostics -> a
-  addDiagnostics a _ = a
-
-  getDiagnostics :: a -> Diagnostics
-  getDiagnostics _ = mempty
 
 -- Add a context on a here that forces a to implement an "attach
 -- diags" function so we can stuff the diagnostics into the result and

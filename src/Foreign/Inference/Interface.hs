@@ -65,7 +65,7 @@ import FileLocation
 import System.FilePath
 import System.IO.Error hiding ( catch )
 
-import Data.LLVM
+import LLVM.Analysis
 
 import Paths_foreign_inference
 

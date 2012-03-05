@@ -3,7 +3,7 @@ module Foreign.Inference.Internal.FlattenValue ( flattenValue ) where
 import Data.List ( foldl' )
 import qualified Data.Set as S
 
-import Data.LLVM
+import LLVM.Analysis
 
 -- | Turn a value into a list of all of the possible values it could
 -- represent.  This effectively means returning all possible values

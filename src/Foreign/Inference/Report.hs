@@ -27,7 +27,7 @@ import System.FilePath
 import Text.Blaze.Renderer.Utf8 ( renderHtml )
 
 import Codec.Archive
-import Data.LLVM
+import LLVM.Analysis
 import Foreign.Inference.Interface
 import Foreign.Inference.Report.FunctionText
 import Foreign.Inference.Report.Html

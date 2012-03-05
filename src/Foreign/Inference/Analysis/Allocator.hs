@@ -36,8 +36,8 @@ import Control.DeepSeq
 import Data.Map ( Map )
 import qualified Data.Map as M
 
-import Data.LLVM
-import Data.LLVM.Analysis.CallGraphSCCTraversal
+import LLVM.Analysis
+import LLVM.Analysis.CallGraphSCCTraversal
 
 import Foreign.Inference.AnalysisMonad
 import Foreign.Inference.Diagnostics

@@ -5,12 +5,12 @@ import System.Environment ( getArgs, withArgs )
 import System.FilePath ( (<.>) )
 import Test.HUnit ( assertEqual )
 
-import Data.LLVM
-import Data.LLVM.Parse
-import Data.LLVM.Analysis.CallGraph
-import Data.LLVM.Analysis.CallGraphSCCTraversal
-import Data.LLVM.Analysis.PointsTo.TrivialFunction
-import Data.LLVM.Testing
+import LLVM.Analysis
+import LLVM.Analysis.CallGraph
+import LLVM.Analysis.CallGraphSCCTraversal
+import LLVM.Analysis.PointsTo.TrivialFunction
+import LLVM.Analysis.Util.Testing
+import LLVM.Parse
 
 import Foreign.Inference.Interface
 import Foreign.Inference.Preprocessing

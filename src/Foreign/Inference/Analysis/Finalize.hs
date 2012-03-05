@@ -29,10 +29,10 @@ import qualified Data.Map as M
 import Data.Set ( Set )
 import qualified Data.Set as S
 
-import Data.LLVM
-import Data.LLVM.Analysis.CFG
-import Data.LLVM.Analysis.CallGraphSCCTraversal
-import Data.LLVM.Analysis.Dataflow
+import LLVM.Analysis
+import LLVM.Analysis.CFG
+import LLVM.Analysis.CallGraphSCCTraversal
+import LLVM.Analysis.Dataflow
 
 import Foreign.Inference.AnalysisMonad
 import Foreign.Inference.Diagnostics

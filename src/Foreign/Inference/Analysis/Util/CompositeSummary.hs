@@ -28,9 +28,9 @@ import Control.DeepSeq
 import Data.Lens.Template
 import Data.Monoid
 
-import Data.LLVM
-import Data.LLVM.Analysis.Types
-import Data.LLVM.Analysis.CFG
+import LLVM.Analysis
+import LLVM.Analysis.Types
+import LLVM.Analysis.CFG
 
 import Foreign.Inference.Analysis.Allocator
 import Foreign.Inference.Analysis.Array

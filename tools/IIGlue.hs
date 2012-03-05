@@ -11,11 +11,11 @@ import System.IO.Error ( isDoesNotExistError )
 
 import Codec.Archive
 
-import Data.LLVM
-import Data.LLVM.Analysis.CallGraph
-import Data.LLVM.Analysis.CallGraphSCCTraversal
-import Data.LLVM.Analysis.PointsTo.TrivialFunction
-import Data.LLVM.Parse
+import LLVM.Analysis
+import LLVM.Analysis.CallGraph
+import LLVM.Analysis.CallGraphSCCTraversal
+import LLVM.Analysis.PointsTo.TrivialFunction
+import LLVM.Parse
 
 import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface

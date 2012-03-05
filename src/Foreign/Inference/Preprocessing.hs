@@ -16,8 +16,8 @@ import System.FilePath
 import System.IO.Temp
 import System.Process
 
-import Data.LLVM
-import Data.LLVM.Environment
+import LLVM.Analysis
+import LLVM.Analysis.Util.Environment
 
 -- | These are the options that the analysis relies on to work.  It
 -- invokes opt with these options to preprocess input bitcode.

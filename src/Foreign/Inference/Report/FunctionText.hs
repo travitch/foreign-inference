@@ -20,7 +20,7 @@ import Data.Monoid
 import System.FilePath
 
 import Codec.Archive
-import Data.LLVM
+import LLVM.Analysis
 
 isEndOfLine :: (Eq a, Num a) => a -> Bool
 isEndOfLine w = w == 13 || w == 10

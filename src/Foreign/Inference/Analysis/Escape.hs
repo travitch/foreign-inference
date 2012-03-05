@@ -8,10 +8,10 @@ import Control.DeepSeq
 import Control.Monad.Writer
 import Data.Lens.Common
 
-import Data.LLVM
-import Data.LLVM.Analysis.CallGraphSCCTraversal
-import Data.LLVM.Analysis.Escape hiding ( instructionEscapes )
-import qualified Data.LLVM.Analysis.Escape as LLVM
+import LLVM.Analysis
+import LLVM.Analysis.CallGraphSCCTraversal
+import LLVM.Analysis.Escape hiding ( instructionEscapes )
+import qualified LLVM.Analysis.Escape as LLVM
 
 import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface

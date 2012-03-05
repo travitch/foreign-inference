@@ -5,8 +5,9 @@ module Foreign.Inference.Report.Types (
 
 import Data.ByteString.Lazy.Char8 ( ByteString )
 import Data.Map ( Map )
+
 import Codec.Archive
-import Data.LLVM
+import LLVM.Analysis
 import Foreign.Inference.Interface
 
 -- | An encapsulation of the report

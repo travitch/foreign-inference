@@ -10,10 +10,10 @@ import Data.Monoid
 import Data.HashSet ( HashSet )
 import qualified Data.HashSet as S
 
-import Data.LLVM
-import Data.LLVM.Analysis.CFG
-import Data.LLVM.Analysis.CallGraphSCCTraversal
-import Data.LLVM.Analysis.NoReturn
+import LLVM.Analysis
+import LLVM.Analysis.CFG
+import LLVM.Analysis.CallGraphSCCTraversal
+import LLVM.Analysis.NoReturn
 
 import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface

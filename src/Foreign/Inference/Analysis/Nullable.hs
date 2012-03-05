@@ -118,12 +118,12 @@ import Data.Maybe ( isJust )
 import Data.Monoid
 import FileLocation
 
-import Data.LLVM
-import Data.LLVM.Analysis.CDG
-import Data.LLVM.Analysis.CFG
-import Data.LLVM.Analysis.CallGraphSCCTraversal
-import Data.LLVM.Analysis.Dataflow
-import Data.LLVM.Analysis.Dominance
+import LLVM.Analysis
+import LLVM.Analysis.CDG
+import LLVM.Analysis.CFG
+import LLVM.Analysis.CallGraphSCCTraversal
+import LLVM.Analysis.Dataflow
+import LLVM.Analysis.Dominance
 
 import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface

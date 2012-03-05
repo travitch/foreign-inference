@@ -21,7 +21,7 @@ import qualified Text.Blaze.Html5.Attributes as A
 import qualified Text.Highlighting.Kate as K
 import Text.Highlighting.Kate.Types ( defaultFormatOpts, FormatOptions(..) )
 
-import Data.LLVM
+import LLVM.Analysis
 
 import Foreign.Inference.Interface
 import Foreign.Inference.Report.Types

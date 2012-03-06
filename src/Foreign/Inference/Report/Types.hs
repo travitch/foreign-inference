@@ -17,3 +17,6 @@ data InterfaceReport =
                   , reportArchive :: ArchiveIndex
                   , reportSummaries :: [ModuleSummary]
                   }
+  | InterfaceSummaryReport { reportModule :: Module
+                           , reportSummaries :: [ModuleSummary]
+                           }

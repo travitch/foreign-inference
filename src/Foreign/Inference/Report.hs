@@ -11,8 +11,10 @@ module Foreign.Inference.Report (
   -- * Types
   InterfaceReport,
   -- * Functions
-  compileReport,
-  writeHTMLReport
+  compileDetailedReport,
+  compileSummaryReport,
+  writeHTMLReport,
+  writeHTMLSummary
   ) where
 
 import GHC.Conc ( getNumCapabilities )
@@ -45,7 +47,7 @@ import Paths_foreign_inference
 writeHTMLReport :: InterfaceReport -> FilePath -> IO ()
 writeHTMLReport r dir = do
   let indexFile = dir </> "index.html"
-      indexPage = htmlIndexPage r
+      indexPage = htmlIndexPage r [LinkDrilldowns]
 
   -- Create the directory tree for the report
   createDirectoryIfMissing True dir
@@ -61,6 +63,30 @@ writeHTMLReport r dir = do
   let bodyPairs = M.toList (reportFunctionBodies r)
       actions = map (writeFunctionBodyPage r dir) bodyPairs
   withPool caps $ \p -> parallel_ p actions
+
+  -- Copy over static resources (like css and js)
+  mapM_ (installStaticFile dir) [ "style.css"
+                                , "hk-espresso.css"
+                                , "hk-pyg.css"
+                                , "hk-tango.css"
+                                , "hk-kate.css"
+                                , "jquery-1.7.1.js"
+                                , "highlight.js"
+                                ]
+
+-- | This is like 'writeHTMLReport', except it only writes out the
+-- top-level overview HTML page.  The per-function breakdowns are not
+-- generated.
+writeHTMLSummary :: InterfaceReport -> FilePath -> IO ()
+writeHTMLSummary r dir = do
+  let indexFile = dir </> "index.html"
+      indexPage = htmlIndexPage r []
+
+  -- Create the directory tree for the report
+  createDirectoryIfMissing True dir
+
+  -- Write out an index page
+  LBS.writeFile indexFile (renderHtml indexPage)
 
   -- Copy over static resources (like css and js)
   mapM_ (installStaticFile dir) [ "style.css"
@@ -93,8 +119,8 @@ writeFunctionBodyPage r dir (f, (srcFile, startLine, body)) = do
 -- | Given a Module, the properties that have been inferred about it,
 -- and an archive of its source, make a best-effort to construct an
 -- informative report of the results.
-compileReport :: Module -> ArchiveIndex -> [ModuleSummary] -> InterfaceReport
-compileReport m a = InterfaceReport m bodies a
+compileDetailedReport :: Module -> ArchiveIndex -> [ModuleSummary] -> InterfaceReport
+compileDetailedReport m a = InterfaceReport m bodies a
   where
     fs = moduleDefinedFunctions m
     bodies = foldr bodyExtractor M.empty fs
@@ -102,3 +128,6 @@ compileReport m a = InterfaceReport m bodies a
       case getFunctionText a f of
         Nothing -> acc
         Just b -> M.insert f b acc
+
+compileSummaryReport :: Module -> [ModuleSummary] -> InterfaceReport
+compileSummaryReport = InterfaceSummaryReport

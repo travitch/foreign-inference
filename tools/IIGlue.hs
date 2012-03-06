@@ -154,16 +154,21 @@ dump opts name m = do
 
   -- Persist the module summary
   saveModule repo name deps m summaries
-  -- Write out a report if requested
-  let defaultRepDir = repo </> name
-  maybe (return ()) (writeReport opts m summaries defaultRepDir) (librarySource opts)
+  case (reportDir opts, librarySource opts) of
+    (Nothing, _) -> return ()
+    (Just d, Nothing) -> writeSummary m summaries d
+    (Just d, Just archive) -> writeDetailedReport m summaries d archive
+
+writeSummary :: Module -> [ModuleSummary] -> FilePath -> IO ()
+writeSummary m summaries rDir = do
+  let rep = compileSummaryReport m summaries
+  writeHTMLSummary rep rDir
 
 -- | Called when a source tarball was provided.  This generates and
 -- writes the report for the Module in the location specified by the
 -- user.
-writeReport :: Opts -> Module -> [ModuleSummary] -> FilePath -> FilePath -> IO ()
-writeReport opts m summaries defDir fp = do
+writeDetailedReport :: Module -> [ModuleSummary] -> FilePath -> FilePath -> IO ()
+writeDetailedReport m summaries rDir fp = do
   arc <- readArchive fp
-  let rep = compileReport m arc summaries
-      repDir = maybe defDir id (reportDir opts)
-  writeHTMLReport rep repDir
+  let rep = compileDetailedReport m arc summaries
+  writeHTMLReport rep rDir

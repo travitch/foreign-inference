@@ -1,6 +1,7 @@
 {-# LANGUAGE OverloadedStrings, TemplateHaskell #-}
 {-# OPTIONS_GHC -fno-warn-unused-do-bind #-}
 module Foreign.Inference.Report.Html (
+  SummaryOption(..),
   htmlIndexPage,
   htmlFunctionPage
   ) where
@@ -25,6 +26,10 @@ import LLVM.Analysis
 
 import Foreign.Inference.Interface
 import Foreign.Inference.Report.Types
+
+-- | Options for generating the HTML summary page
+data SummaryOption = LinkDrilldowns -- ^ Include links to the drilldown pages for each function
+                   deriving (Eq)
 
 -- | This page is a drilled-down view for a particular function.  The
 -- function body is syntax highlighted using the kate syntax
@@ -159,8 +164,8 @@ instructionToLine i =
 -- | Generate an index page listing all of the functions in a module.
 -- Each listing shows the parameters and their inferred annotations.
 -- Each function name is a link to its source code (if it was found.)
-htmlIndexPage :: InterfaceReport -> Html
-htmlIndexPage r = H.docTypeHtml $ do
+htmlIndexPage :: InterfaceReport -> [SummaryOption] -> Html
+htmlIndexPage r opts = H.docTypeHtml $ do
   H.head $ do
     H.title (toHtml pageTitle)
     H.link ! A.href "style.css" ! A.rel "stylesheet" ! A.type_ "text/css"
@@ -169,9 +174,9 @@ htmlIndexPage r = H.docTypeHtml $ do
     H.div ! A.id "module-info" $ do
       "Name: " >> toHtml (decodeUtf8 (moduleIdentifier m))
     H.h1 "Exposed Functions"
-    indexPageFunctionListing r "exposed-functions" externs
+    indexPageFunctionListing r (LinkDrilldowns `elem` opts) "exposed-functions" externs
     H.h1 "Private Functions"
-    indexPageFunctionListing r "private-functions" privates
+    indexPageFunctionListing r (LinkDrilldowns `elem` opts) "private-functions" privates
   where
     pageTitle :: Text
     pageTitle = decodeUtf8 (moduleIdentifier m) `mappend` " summary report"
@@ -188,21 +193,26 @@ htmlIndexPage r = H.docTypeHtml $ do
         LTExternalWeak -> True
         _ -> False
 
-indexPageFunctionListing :: InterfaceReport -> AttributeValue -> [Function] -> Html
-indexPageFunctionListing r divId funcs = do
+indexPageFunctionListing :: InterfaceReport -> Bool -> AttributeValue -> [Function] -> Html
+indexPageFunctionListing r linkFuncs divId funcs = do
   H.div ! A.id divId $ do
     H.ul $ do
-      forM_ funcs (indexPageFunctionEntry r)
+      forM_ funcs (indexPageFunctionEntry r linkFuncs)
 
-indexPageFunctionEntry :: InterfaceReport -> Function -> Html
-indexPageFunctionEntry r f = do
+indexPageFunctionEntry :: InterfaceReport -> Bool -> Function -> Html
+indexPageFunctionEntry r linkFunc f = do
   H.li $ do
     H.span ! A.class_ "code" $ do
-      case M.lookup f (reportFunctionBodies r) of
-        Nothing -> toHtml fname
-        Just _ -> do
-          let drilldown = mconcat [ "functions/", fname, ".html" ]
-          H.a ! A.href (toValue drilldown) $ toHtml fname
+      case r of
+        InterfaceReport { reportFunctionBodies = bodies } ->
+          case M.lookup f bodies of
+            Nothing -> toHtml fname
+            Just _ -> do
+              let drilldown = mconcat [ "functions/", fname, ".html" ]
+              case linkFunc of
+                True -> H.a ! A.href (toValue drilldown) $ toHtml fname
+                False -> toHtml fname
+        _ -> toHtml fname
       "("
       commaSepList args (indexPageArgument r)
       ") -> "

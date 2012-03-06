@@ -5,7 +5,6 @@ module Foreign.Inference.Analysis.Return (
 
 import Control.DeepSeq
 import Control.Monad.Identity
-import Data.Lens.Common
 import Data.Monoid
 import Data.HashSet ( HashSet )
 import qualified Data.HashSet as S

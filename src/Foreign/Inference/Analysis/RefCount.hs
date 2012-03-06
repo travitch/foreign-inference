@@ -1,4 +1,4 @@
-{-# LANGUAGE ViewPatterns #-}
+{-# LANGUAGE TemplateHaskell, ViewPatterns #-}
 {-|
 
 1) Identify functions of 1 parameter that conditionally call a finalizer.
@@ -15,6 +15,8 @@ module Foreign.Inference.Analysis.RefCount where
 import Control.DeepSeq
 import Data.HashSet ( HashSet )
 import qualified Data.HashSet as HS
+import Data.Lens.Common
+import Data.Lens.Template
 import Data.Monoid
 
 import LLVM.Analysis
@@ -28,9 +30,11 @@ import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
 
 data RefCountSummary =
-  RefCountSummary { conditionalFinalizers :: HashSet Function
-                  , refCountDiagnostics :: !Diagnostics
+  RefCountSummary { _conditionalFinalizers :: HashSet Function
+                  , _refCountDiagnostics :: !Diagnostics
                   }
+
+$(makeLens ''RefCountSummary)
 
 instance Monoid RefCountSummary where
   mempty = RefCountSummary mempty mempty
@@ -44,9 +48,10 @@ instance Eq RefCountSummary where
   (RefCountSummary s1 _) == (RefCountSummary s2 _) = s1 == s2
 
 instance HasDiagnostics RefCountSummary where
-  addDiagnostics s d =
-    s { refCountDiagnostics = refCountDiagnostics s `mappend` d }
-  getDiagnostics = refCountDiagnostics
+  diagnosticLens = refCountDiagnostics
+  -- addDiagnostics s d =
+  --   s { refCountDiagnostics = refCountDiagnostics s `mappend` d }
+  -- getDiagnostics = refCountDiagnostics
 
 instance SummarizeModule RefCountSummary where
   summarizeFunction f (RefCountSummary s _) =
@@ -126,6 +131,8 @@ refCountAnalysis finSumm funcLike summ = do
   isCondFin <- isConditionalFinalizer finSumm f
   case isCondFin of
     False -> return summ
-    True -> return summ { conditionalFinalizers = HS.insert f (conditionalFinalizers summ) }
+    True ->
+      let newFin = HS.insert f (summ ^. conditionalFinalizers)
+      in return $! (conditionalFinalizers ^= newFin) summ
   where
     f = getFunction funcLike

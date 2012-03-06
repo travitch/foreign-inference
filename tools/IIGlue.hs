@@ -1,6 +1,7 @@
 module Main ( main ) where
 
 import Control.Exception ( tryJust )
+import Data.Lens.Common
 import Data.Monoid
 import System.Console.CmdArgs.Explicit
 import System.Console.CmdArgs.Text
@@ -147,7 +148,7 @@ dump opts name m = do
       analysisResult =
         parallelCallGraphSCCTraversal cg analysisFunction mempty
 
-      diags = mconcat $ extractSummary analysisResult getDiagnostics
+      diags = mconcat $ extractSummary analysisResult (getL diagnosticLens)
       summaries = extractSummary analysisResult ModuleSummary
 
   case formatDiagnostics (diagnosticLevel opts) diags of

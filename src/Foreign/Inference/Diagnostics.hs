@@ -22,17 +22,20 @@ module Foreign.Inference.Diagnostics (
 
 import Control.DeepSeq
 import Control.Monad.Writer.Class
+import Data.Lens.Common
 import Data.Monoid
 import Data.Set ( Set, singleton )
 import qualified Data.Set as S
 import Text.Printf
 
 class HasDiagnostics a where
-  addDiagnostics :: a -> Diagnostics -> a
-  addDiagnostics a _ = a
+  diagnosticLens :: Lens a Diagnostics
+  diagnosticLens = lens (const mempty) (\_ a -> a)
+  -- addDiagnostics :: a -> Diagnostics -> a
+  -- addDiagnostics a _ = a
 
-  getDiagnostics :: a -> Diagnostics
-  getDiagnostics _ = mempty
+  -- getDiagnostics :: a -> Diagnostics
+  -- getDiagnostics _ = mempty
 
 -- | A source location.
 data Location = Location { locationFilename :: String

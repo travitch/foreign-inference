@@ -6,6 +6,8 @@ module Foreign.Inference.AnalysisMonad (
   ) where
 
 import Control.Monad.RWS.Strict
+import Data.Lens.Common
+
 import Foreign.Inference.Diagnostics
 
 newtype AnalysisMonad env state a =
@@ -14,6 +16,12 @@ newtype AnalysisMonad env state a =
             MonadState state,
             MonadReader env,
             MonadWriter Diagnostics)
+
+addDiagnostics :: HasDiagnostics a => a -> Diagnostics -> a
+addDiagnostics res newDiags =
+  setL diagnosticLens (curDiags `mappend` newDiags) res
+  where
+    curDiags = getL diagnosticLens res
 
 -- Add a context on a here that forces a to implement an "attach
 -- diags" function so we can stuff the diagnostics into the result and

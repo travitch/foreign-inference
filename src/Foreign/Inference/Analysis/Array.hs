@@ -17,6 +17,7 @@ module Foreign.Inference.Analysis.Array (
 import Control.DeepSeq
 import Data.List ( foldl' )
 import Data.Lens.Common
+import Data.Lens.Template
 import Data.Map ( Map )
 import qualified Data.Map as M
 import FileLocation
@@ -40,9 +41,11 @@ type SummaryType = Map Argument Int
 -- array argument to its inferred dimensionality.
 -- newtype ArraySummary = APS SummaryType
 data ArraySummary =
-  ArraySummary { arraySummary :: SummaryType
-               , arrayDiagnostics :: Diagnostics
+  ArraySummary { _arraySummary :: SummaryType
+               , _arrayDiagnostics :: Diagnostics
                }
+
+$(makeLens ''ArraySummary)
 
 instance Eq ArraySummary where
   (ArraySummary s1 _) == (ArraySummary s2 _) = s1 == s2
@@ -56,9 +59,7 @@ instance NFData ArraySummary where
   rnf a@(ArraySummary s d) = d `deepseq` s `deepseq` a `seq` ()
 
 instance HasDiagnostics ArraySummary where
-  addDiagnostics s d =
-    s { arrayDiagnostics = arrayDiagnostics s `mappend` d }
-  getDiagnostics = arrayDiagnostics
+  diagnosticLens = arrayDiagnostics
 
 instance SummarizeModule ArraySummary where
   summarizeFunction _ _ = []
@@ -104,7 +105,7 @@ arrayAnalysis funcLike a@(ArraySummary summary _) = do
   let basesAndOffsets = concatMap (isArrayDeref ds summary) insts
       baseResultMap = foldr addDeref M.empty basesAndOffsets
       summary' = M.foldlWithKey' (traceFromBases baseResultMap) summary baseResultMap
-  return $! a { arraySummary = summary' }
+  return $! (arraySummary ^= summary') a
   where
     f = getFunction funcLike
     insts = concatMap basicBlockInstructions (functionBody f)

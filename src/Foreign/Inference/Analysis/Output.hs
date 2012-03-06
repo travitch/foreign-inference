@@ -12,6 +12,7 @@ import Control.DeepSeq
 import Data.HashSet ( HashSet )
 import qualified Data.HashSet as HS
 import Data.Lens.Common
+import Data.Lens.Template
 import Data.Map ( Map )
 import qualified Data.Map as M
 import Data.Set ( Set )
@@ -41,9 +42,11 @@ instance NFData ArgumentDirection
 
 type SummaryType = Map Argument (ArgumentDirection, [Witness])
 data OutputSummary =
-  OutputSummary { outputSummary :: SummaryType
-                , outputDiagnostics :: Diagnostics
+  OutputSummary { _outputSummary :: SummaryType
+                , _outputDiagnostics :: Diagnostics
                 }
+
+$(makeLens ''OutputSummary)
 
 instance Eq OutputSummary where
   (OutputSummary s1 _) == (OutputSummary s2 _) = s1 == s2
@@ -57,9 +60,7 @@ instance NFData OutputSummary where
   rnf o@(OutputSummary s d) = s `deepseq` d `deepseq` o `seq` ()
 
 instance HasDiagnostics OutputSummary where
-  addDiagnostics s d =
-    s { outputDiagnostics = outputDiagnostics s `mappend` d }
-  getDiagnostics = outputDiagnostics
+  diagnosticLens = outputDiagnostics
 
 instance SummarizeModule OutputSummary where
   summarizeFunction _ _ = []
@@ -132,7 +133,7 @@ outAnalysis funcLike s@(OutputSummary summ _) = do
   -- Merge the local information we just computed with the global
   -- summary.  Prefer the locally computed info if there are
   -- collisions (could arise while processing SCCs).
-  return $! s { outputSummary = M.union exitInfo''' summ }
+  return $! (outputSummary ^= M.union exitInfo''' summ) s
   where
     f = getFunction funcLike
 

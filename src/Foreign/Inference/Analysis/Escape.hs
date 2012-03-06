@@ -1,3 +1,4 @@
+{-# LANGUAGE TemplateHaskell #-}
 module Foreign.Inference.Analysis.Escape (
   EscapeSummary,
   identifyEscapes,
@@ -7,6 +8,7 @@ module Foreign.Inference.Analysis.Escape (
 import Control.DeepSeq
 import Control.Monad.Writer
 import Data.Lens.Common
+import Data.Lens.Template
 
 import LLVM.Analysis
 import LLVM.Analysis.CallGraphSCCTraversal
@@ -17,9 +19,11 @@ import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
 
 data EscapeSummary =
-  EscapeSummary { escapeResult :: EscapeResult
-                , escapeDiagnostics :: Diagnostics
+  EscapeSummary { _escapeResult :: EscapeResult
+                , _escapeDiagnostics :: Diagnostics
                 }
+
+$(makeLens ''EscapeSummary)
 
 instance Eq EscapeSummary where
   (EscapeSummary s1 _) == (EscapeSummary s2 _) = s1 == s2
@@ -33,9 +37,7 @@ instance NFData EscapeSummary where
   rnf e@(EscapeSummary s d) = s `deepseq` d `deepseq` e `seq` ()
 
 instance HasDiagnostics EscapeSummary where
-  addDiagnostics s d =
-    s { escapeDiagnostics = escapeDiagnostics s `mappend` d }
-  getDiagnostics = escapeDiagnostics
+  diagnosticLens = escapeDiagnostics
 
 instance SummarizeModule EscapeSummary where
   summarizeFunction _ _ = []
@@ -57,12 +59,12 @@ identifyEscapes ds lns =
   composableAnalysisM runner escapeWrapper lns
   where
     escapeWrapper f s = do
-      er <- escapeAnalysis extSumm f (escapeResult s)
-      return $! s { escapeResult = er }
+      er <- escapeAnalysis extSumm f (s ^. escapeResult)
+      return $! (escapeResult ^= er) s
 
     runner a =
       let (e, diags) = runWriter a
-      in e { escapeDiagnostics = diags }
+      in (escapeDiagnostics ^= diags) e
 
     extSumm ef ix =
       case lookupArgumentSummary ds ef ix of

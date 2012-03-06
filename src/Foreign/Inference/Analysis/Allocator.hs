@@ -1,4 +1,4 @@
-{-# LANGUAGE ViewPatterns #-}
+{-# LANGUAGE ViewPatterns, TemplateHaskell #-}
 {-|
 
 This analysis identifies functions that are allocators (in the style
@@ -33,6 +33,8 @@ module Foreign.Inference.Analysis.Allocator (
   ) where
 
 import Control.DeepSeq
+import Data.Lens.Common
+import Data.Lens.Template
 import Data.Map ( Map )
 import qualified Data.Map as M
 
@@ -51,9 +53,11 @@ import Foreign.Inference.Internal.FlattenValue
 
 type SummaryType = Map Function (Maybe String)
 data AllocatorSummary =
-  AllocatorSummary { allocatorSummary :: SummaryType
-                   , allocatorDiagnostics :: Diagnostics
+  AllocatorSummary { _allocatorSummary :: SummaryType
+                   , _allocatorDiagnostics :: Diagnostics
                    }
+
+$(makeLens ''AllocatorSummary)
 
 instance Eq AllocatorSummary where
   (AllocatorSummary s1 _) == (AllocatorSummary s2 _) = s1 == s2
@@ -71,9 +75,7 @@ instance NFData AllocatorSummary where
   rnf a@(AllocatorSummary s d) = s `deepseq` d `deepseq` a `seq` ()
 
 instance HasDiagnostics AllocatorSummary where
-  addDiagnostics s d =
-    s { allocatorDiagnostics = allocatorDiagnostics s `mappend` d }
-  getDiagnostics = allocatorDiagnostics
+  diagnosticLens = allocatorDiagnostics
 
 data AllocatorData =
   AllocatorData { dependencySummary :: DependencySummary
@@ -115,7 +117,8 @@ allocatorAnalysis esumm funcLike s@(AllocatorSummary summ _) =
         -- The function always returns a pointer
         TypePointer _ _ -> do
           summ' <- checkReturn esumm f rv summ
-          return s { allocatorSummary = summ' }
+          return $! (allocatorSummary ^= summ') s
+
         -- Non-pointer return, ignore
         _ -> return s
     -- Returns void

@@ -1,5 +1,5 @@
 {-# LANGUAGE TypeSynonymInstances, FlexibleInstances, MultiParamTypeClasses #-}
-{-# LANGUAGE ViewPatterns #-}
+{-# LANGUAGE ViewPatterns, TemplateHaskell #-}
 -- | Identify function arguments that are *finalized*.  An argument is
 -- finalized if, on every path, it is passed as a parameter to a
 -- function that finalizes it *or* the argument is NULL.
@@ -24,6 +24,7 @@ import qualified Data.HashMap.Strict as HM
 import Data.HashSet ( HashSet )
 import qualified Data.HashSet as HS
 import Data.Lens.Common
+import Data.Lens.Template
 import Data.Map ( Map )
 import qualified Data.Map as M
 import Data.Set ( Set )
@@ -47,9 +48,11 @@ import Foreign.Inference.Interface
 -- witness list will simply be empty.
 type SummaryType = HashMap Argument [Witness]
 data FinalizerSummary =
-  FinalizerSummary { finalizerSummary :: SummaryType
-                   , finalizerDiagnostics :: Diagnostics
+  FinalizerSummary { _finalizerSummary :: SummaryType
+                   , _finalizerDiagnostics :: Diagnostics
                    }
+
+$(makeLens ''FinalizerSummary)
 
 instance Eq FinalizerSummary where
   (FinalizerSummary s1 _) == (FinalizerSummary s2 _) = s1 == s2
@@ -65,9 +68,7 @@ instance NFData FinalizerSummary where
   rnf f@(FinalizerSummary s d) = s `deepseq` d `deepseq` f `seq` ()
 
 instance HasDiagnostics FinalizerSummary where
-  addDiagnostics s d =
-    s { finalizerDiagnostics = finalizerDiagnostics s `mappend` d }
-  getDiagnostics = finalizerDiagnostics
+  diagnosticLens = finalizerDiagnostics
 
 instance SummarizeModule FinalizerSummary where
   summarizeFunction _ _ = []
@@ -142,7 +143,7 @@ finalizerAnalysis funcLike s@(FinalizerSummary summ _) = do
   -- is important for processing SCCs in the call graph, where a
   -- function may be visited more than once.  We always want the most
   -- up-to-date info.
-  return $! s { finalizerSummary = newInfo `HM.union` summ }
+  return $! (finalizerSummary ^= newInfo `HM.union` summ) s
   where
     f = getFunction funcLike
 
@@ -160,6 +161,9 @@ finalizerTransfer info i =
       callTransfer i (stripBitcasts calledFunc) (map fst args) info
     _ -> return info
 
+-- FIXME Make a provision (similar to the allocator analysis) for
+-- calls through function pointers that come from global variables
+-- with initializers.
 callTransfer :: Instruction -> Value -> [Value] -> FinalizerInfo -> Analysis FinalizerInfo
 callTransfer i v as info =
   case valueContent' v of

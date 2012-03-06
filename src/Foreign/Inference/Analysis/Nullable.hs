@@ -113,6 +113,7 @@ import Data.Set ( Set )
 import qualified Data.Set as S
 import Data.HashMap.Strict ( HashMap )
 import Data.Lens.Common
+import Data.Lens.Template
 import qualified Data.HashMap.Strict as HM
 import Data.Maybe ( isJust )
 import Data.Monoid
@@ -142,9 +143,11 @@ type SummaryType = HashMap Argument [Witness]
 -- Instruction is the fact we saw that led us to believe that Argument
 -- is not nullable.
 data NullableSummary =
-  NullableSummary { nullableSummary :: !SummaryType
-                  , nullableDiagnostics :: !Diagnostics
+  NullableSummary { _nullableSummary :: !SummaryType
+                  , _nullableDiagnostics :: !Diagnostics
                   }
+
+$(makeLens ''NullableSummary)
 
 instance Monoid NullableSummary where
   mempty = NullableSummary mempty mempty
@@ -200,9 +203,7 @@ instance BoundedMeetSemiLattice NullInfo where
   top = NInfo S.empty M.empty
 
 instance HasDiagnostics NullableSummary where
-  addDiagnostics s d =
-    s { nullableDiagnostics = nullableDiagnostics s `mappend` d }
-  getDiagnostics = nullableDiagnostics
+  diagnosticLens = nullableDiagnostics
 
 type Analysis = AnalysisMonad NullData NullState
 instance DataflowAnalysis Analysis NullInfo where
@@ -250,9 +251,8 @@ nullableAnalysis retSumm funcLike s@(NullableSummary summ _) = do
 
   -- Update the module symmary with the set of pointer parameters that
   -- we have proven are accessed unchecked.
-  return s { nullableSummary =
-                foldr (\(a, ws) acc -> HM.insert a ws acc) summ argsAndWitnesses
-           }
+  let newSumm = foldr (\(a, ws) acc -> HM.insert a ws acc) summ argsAndWitnesses
+  return $! (nullableSummary ^= newSumm) s
   where
     cfg = getCFG funcLike
     f = getFunction funcLike

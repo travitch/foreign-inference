@@ -175,6 +175,9 @@ callTransfer i v as info =
       depSum <- asks dependencySummary
       let indexedArgs = zip [0..] as
       foldM (checkExternalArg i depSum f) info indexedArgs
+    InstructionC LoadInst { loadAddress = (valueContent' ->
+      GlobalVariableC GlobalVariable { globalVariableInitializer = Just val0 })} ->
+      callTransfer i val0 as info
 
     -- Indirect call - no point in resolving it since we aren't
     -- getting any useful information.

@@ -103,6 +103,7 @@ instance ToJSON ParamAnnotation
 data FuncAnnotation = FAAllocator String -- ^ Record the associated finalizer
                     | FANoRet -- ^ The function does not return to the caller
                     | FAVarArg
+                    | FACondFinalizer
                     deriving (Show, Generic, Eq, Ord)
 instance FromJSON FuncAnnotation
 instance ToJSON FuncAnnotation

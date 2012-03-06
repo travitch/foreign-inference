@@ -28,6 +28,7 @@ import Foreign.Inference.Analysis.Escape
 import Foreign.Inference.Analysis.Finalize
 import Foreign.Inference.Analysis.Nullable
 import Foreign.Inference.Analysis.Output
+import Foreign.Inference.Analysis.RefCount
 import Foreign.Inference.Analysis.Return
 import Foreign.Inference.Analysis.Util.CompositeSummary
 
@@ -140,6 +141,7 @@ dump opts name m = do
                  , identifyOutput ds outputSummary
                  , identifyNullable ds nullableSummary returnSummary
                  , identifyAllocators ds allocatorSummary escapeSummary
+                 , identifyRefCounting ds refCountSummary finalizerSummary
                  ]
       analysisFunction = callGraphComposeAnalysis analyses
       analysisResult =

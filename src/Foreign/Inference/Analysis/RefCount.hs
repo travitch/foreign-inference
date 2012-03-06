@@ -1,3 +1,4 @@
+{-# LANGUAGE ViewPatterns #-}
 {-|
 
 1) Identify functions of 1 parameter that conditionally call a finalizer.
@@ -13,7 +14,7 @@ module Foreign.Inference.Analysis.RefCount where
 
 import Control.DeepSeq
 import Data.HashSet ( HashSet )
-import qualified Data.HashSet as S
+import qualified Data.HashSet as HS
 import Data.Monoid
 
 import LLVM.Analysis
@@ -47,8 +48,16 @@ instance HasDiagnostics RefCountSummary where
     s { refCountDiagnostics = refCountDiagnostics s `mappend` d }
   getDiagnostics = refCountDiagnostics
 
+instance SummarizeModule RefCountSummary where
+  summarizeFunction f (RefCountSummary s _) =
+    case HS.member f s of
+      True -> [FACondFinalizer]
+      False -> []
+  summarizeArgument _ _ = []
+
 data RefCountData =
-  RefCountData DependencySummary
+  RefCountData { dependencySummary :: DependencySummary
+               }
 
 type Analysis = AnalysisMonad RefCountData ()
 
@@ -63,9 +72,60 @@ identifyRefCounting ds lns depLens =
     runner a = runAnalysis a constData ()
     constData = RefCountData ds
 
+isConditionalFinalizer :: FinalizerSummary -> Function -> Analysis Bool
+isConditionalFinalizer summ f =
+  case functionIsFinalizer summ f of
+    True -> return False
+    False -> do
+      ds <- asks dependencySummary
+      return $! any (isFinalizerCall ds summ) functionInstructions
+  where
+    functionInstructions = concatMap basicBlockInstructions (functionBody f)
+
+isFinalizerCall :: DependencySummary -> FinalizerSummary -> Instruction -> Bool
+isFinalizerCall ds summ i =
+  case i of
+    CallInst { callFunction = (valueContent' -> FunctionC f) } ->
+      functionIsFinalizer summ f
+    CallInst { callFunction = (valueContent' -> ExternalFunctionC e) } ->
+      externalIsFinalizer ds e
+    InvokeInst { invokeFunction = (valueContent' -> FunctionC f) } ->
+      functionIsFinalizer summ f
+    InvokeInst { invokeFunction = (valueContent' -> ExternalFunctionC e) } ->
+      externalIsFinalizer ds e
+    _ -> False
+
+externalIsFinalizer :: DependencySummary -> ExternalFunction -> Bool
+externalIsFinalizer ds ef =
+  any argFinalizes allArgAnnots
+  where
+    TypeFunction _ atypes _ = externalFunctionType ef
+    maxArg = length atypes - 1
+    allArgAnnots = map (lookupArgumentSummary ds ef) [0..maxArg]
+    argFinalizes Nothing = False
+    argFinalizes (Just annots) = any (==PAFinalize) annots
+
+functionIsFinalizer :: FinalizerSummary -> Function -> Bool
+functionIsFinalizer summ f = and (map snd annotatedArgs)
+  where
+    funcArgs = functionParameters f
+    annotatedArgs = map (annotateArg summ) funcArgs
+
+annotateArg :: FinalizerSummary -> Argument -> (Argument, Bool)
+annotateArg summ a = (a, any doesFinalize (summarizeArgument a summ))
+  where
+    doesFinalize (PAFinalize, _) = True
+    doesFinalize _ = False
+
 refCountAnalysis :: (FuncLike funcLike, HasCFG funcLike, HasFunction funcLike)
                     => FinalizerSummary
                     -> funcLike
                     -> RefCountSummary
                     -> Analysis RefCountSummary
-refCountAnalysis finSumm funcLike summ = return summ
+refCountAnalysis finSumm funcLike summ = do
+  isCondFin <- isConditionalFinalizer finSumm f
+  case isCondFin of
+    False -> return summ
+    True -> return summ { conditionalFinalizers = HS.insert f (conditionalFinalizers summ) }
+  where
+    f = getFunction funcLike

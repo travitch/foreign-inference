@@ -31,6 +31,7 @@ import Foreign.Inference.Analysis.Nullable
 import Foreign.Inference.Analysis.Output
 import Foreign.Inference.Analysis.RefCount
 import Foreign.Inference.Analysis.Return
+import Foreign.Inference.Analysis.ScalarEffects
 import Foreign.Inference.Analysis.Util.CompositeSummary
 
 -- Command line helpers
@@ -136,6 +137,7 @@ dump opts name m = do
   -- constraints to our metadata blob.
   let analyses :: [ComposableAnalysis AnalysisSummary FunctionMetadata]
       analyses = [ identifyReturns ds returnSummary
+                 , identifyScalarEffects scalarEffectSummary
                  , identifyArrays ds arraySummary
                  , identifyFinalizers ds finalizerSummary
                  , identifyEscapes ds escapeSummary

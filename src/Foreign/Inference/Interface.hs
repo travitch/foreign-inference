@@ -1,5 +1,5 @@
 {-# LANGUAGE DeriveGeneric, OverloadedStrings, ExistentialQuantification, DeriveDataTypeable #-}
-{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TemplateHaskell, StandaloneDeriving #-}
 -- | This module defines an external representation of library
 -- interfaces.  Individual libraries are represented by the
 -- 'LibraryInterface'.  The analysis reads these in and writes these
@@ -66,6 +66,7 @@ import System.FilePath
 import System.IO.Error hiding ( catch )
 
 import LLVM.Analysis
+import LLVM.Analysis.AccessPath
 
 import Paths_foreign_inference
 
@@ -90,9 +91,15 @@ data ParamAnnotation = PAArray !Int
                      | PAFinalize
                      | PAEscape
                      | PAWillEscape
+                     | PAScalarEffectAddOne String [AccessType]
+                     | PAScalarEffectSubOne String [AccessType]
                      deriving (Show, Generic, Eq, Ord)
 instance FromJSON ParamAnnotation
 instance ToJSON ParamAnnotation
+
+deriving instance Generic AccessType
+instance FromJSON AccessType
+instance ToJSON AccessType
 
 -- | The annotations that can apply at the 'ForeignFunction' level.
 -- The FAVarArg annotation is not inferred but is still necessary.

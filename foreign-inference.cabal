@@ -32,6 +32,7 @@ library
                    Foreign.Inference.Analysis.Output,
                    Foreign.Inference.Analysis.RefCount,
                    Foreign.Inference.Analysis.Return,
+                   Foreign.Inference.Analysis.ScalarEffects,
                    Foreign.Inference.Analysis.Util.CompositeSummary,
                    Foreign.Inference.AnalysisMonad,
                    Foreign.Inference.Preprocessing,

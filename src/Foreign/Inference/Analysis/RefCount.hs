@@ -25,7 +25,6 @@ import LLVM.Analysis.CallGraphSCCTraversal
 
 import Foreign.Inference.AnalysisMonad
 import Foreign.Inference.Analysis.Finalize
-import Foreign.Inference.Analysis.Util.AccessPath
 import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
 

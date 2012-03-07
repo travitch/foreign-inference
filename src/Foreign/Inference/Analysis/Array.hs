@@ -20,7 +20,7 @@ import Data.Lens.Common
 import Data.Lens.Template
 import Data.Map ( Map )
 import qualified Data.Map as M
-import FileLocation
+import Debug.Trace.LocationTH
 
 import LLVM.Analysis
 import LLVM.Analysis.CallGraphSCCTraversal
@@ -197,7 +197,7 @@ isArrayDeref ds summ inst = case valueContent' inst of
 buildArrayDeref :: Instruction -> [Value] -> Value -> [(Value, PointerUse)]
 buildArrayDeref inst idxs base =
   case idxs of
-    [] -> $err' ("GEP with no indices: " ++ show inst)
+    [] -> $failure ("GEP with no indices: " ++ show inst)
     [_] -> [(base, IndexOperation (Value inst) idxs)]
     (valueContent' -> ConstantC ConstantInt { constantIntValue = 0 }) : _ -> []
     _ -> [(base, IndexOperation (Value inst) idxs )]
@@ -220,7 +220,7 @@ collectArrayArgs ds summ callee lst (ix, arg) =
           Just depth -> (arg, CallArgument depth) : lst
         -- Args passed as varargs don't give us any information (in general)
         (False, True) -> []
-        (False, False) -> $err' ("ArrayAnalysis: argument index out of range: " ++ show (functionName f) ++ " : " ++ show arg)
+        (False, False) -> $failure ("ArrayAnalysis: argument index out of range: " ++ show (functionName f) ++ " : " ++ show arg)
     -- Look up the ixth argument of the callee in the
     -- DependencySummary and record it if it is tagged with a PAArray
     -- annotation
@@ -230,7 +230,7 @@ collectArrayArgs ds summ callee lst (ix, arg) =
         Just annots -> case filter isArrayAnnot annots of
           [] -> lst
           [PAArray depth] -> (arg, CallArgument depth) : lst
-          _ -> $(err "This summary should only produce singleton or empty lists")
+          _ -> $failure "This summary should only produce singleton or empty lists"
     _ -> []
 
 isArrayAnnot :: ParamAnnotation -> Bool

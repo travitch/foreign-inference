@@ -61,7 +61,7 @@ import Data.Maybe ( mapMaybe )
 import Data.Set ( Set )
 import qualified Data.Set as S
 import Data.List ( foldl' )
-import FileLocation
+import Debug.Trace.LocationTH
 import System.FilePath
 import System.IO.Error hiding ( catch )
 
@@ -292,7 +292,7 @@ mergeFunction m f = case M.lookup fn m of
   Just f' -> case foreignFunctionLinkage f of
     LinkWeak -> m
     LinkDefault ->
-      $err' ("Functions with overlapping linkage: " ++ show f ++ " and " ++ show f')
+      $failure ("Functions with overlapping linkage: " ++ show f ++ " and " ++ show f')
   where
     fn = foreignFunctionName f
 
@@ -391,7 +391,7 @@ lookupArgumentSummary ds ef ix =
     Nothing -> Nothing
     Just s -> case (isVarArg ef, ix < length (foreignFunctionParameters s)) of
       (True, False) -> Just [] -- Vararg and we don't have a summary for the given function
-      (False, False) -> $err' ("lookupArgumentSummary: no parameter " ++ show ix ++ " for " ++ show ef)
+      (False, False) -> $failure ("lookupArgumentSummary: no parameter " ++ show ix ++ " for " ++ show ef)
       (_, True) -> Just $ parameterAnnotations (foreignFunctionParameters s !! ix)
   where
     fname = identifierContent $ externalFunctionName ef

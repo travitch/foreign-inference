@@ -9,7 +9,7 @@ module Foreign.Inference.Preprocessing (
 
 import Control.Monad ( when )
 
-import FileLocation
+import Debug.Trace.LocationTH
 
 import System.Exit ( ExitCode(ExitSuccess) )
 import System.FilePath
@@ -48,5 +48,5 @@ readBitcode parseFile fp =
     let optCmd = proc opt ("-o" : optFname : fp : requiredOptimizations)
     (_, _, _, p) <- createProcess optCmd
     rc <- waitForProcess p
-    when (rc /= ExitSuccess) ($err' ("Could not optimize bitcode: " ++ fp))
+    when (rc /= ExitSuccess) ($failure ("Could not optimize bitcode: " ++ fp))
     parseFile optFname

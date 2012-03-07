@@ -17,7 +17,7 @@ import Data.Map ( Map )
 import qualified Data.Map as M
 import Data.Set ( Set )
 import qualified Data.Set as S
-import FileLocation
+import Debug.Trace.LocationTH
 
 import LLVM.Analysis
 import LLVM.Analysis.CFG
@@ -184,7 +184,7 @@ merge i arg newVal info@(OI oi a) =
           let nw = Witness i (show ArgBoth)
           in OI (M.insert arg (ArgBoth, S.insert nw ws) oi) a
         ArgIn -> info
-        ArgBoth -> $err' "Infeasible path"
+        ArgBoth -> $failure "Infeasible path"
 
 removeArrayPtr :: Argument -> OutInfo -> OutInfo
 removeArrayPtr a (OI oi ag) = OI (M.delete a oi) ag

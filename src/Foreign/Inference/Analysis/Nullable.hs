@@ -117,7 +117,7 @@ import Data.Lens.Template
 import qualified Data.HashMap.Strict as HM
 import Data.Maybe ( isJust )
 import Data.Monoid
-import FileLocation
+import Debug.Trace.LocationTH
 
 import LLVM.Analysis
 import LLVM.Analysis.CDG
@@ -480,7 +480,7 @@ mustExec' i ivs = do
     toBB v =
       case valueContent v of
         BasicBlockC bb -> bb
-        _ -> $err' ("Expected basic block: " ++ show v)
+        _ -> $failure ("Expected basic block: " ++ show v)
     isUnconditional UnconditionalBranchInst {} = True
     isUnconditional _ = False
     isNotBackedge g inst (_, br) = not (dominates g inst br)

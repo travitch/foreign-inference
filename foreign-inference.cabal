@@ -43,7 +43,7 @@ library
                  Paths_foreign_inference
   build-depends: base > 3 && < 5, containers, filepath, text, bytestring, ghc-prim,
                  unordered-containers >= 0.1.4.0, hashable, mtl > 2 && < 3,
-                 aeson >= 0.4.0.0, file-location >= 0.4.3, temporary, process,
+                 aeson >= 0.4.0.0, loch-th >= 0.2, temporary, process,
                  llvm-analysis, deepseq, data-lens >= 2, data-lens-template,
                  failure >= 0.2,
                  -- For the reporting code

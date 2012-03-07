@@ -15,7 +15,7 @@ import Data.Monoid
 import Data.Text ( Text, pack )
 import Data.Text.Encoding ( decodeUtf8 )
 import qualified Data.Text as T
-import FileLocation
+import Debug.Trace.LocationTH
 import Text.Blaze.Html5 ( toValue, toHtml, (!), Html, AttributeValue )
 import qualified Text.Blaze.Html5 as H
 import qualified Text.Blaze.Html5.Attributes as A
@@ -159,7 +159,7 @@ instructionToLine i =
   case instructionSrcLoc i of
     Nothing -> Nothing
     Just (MetaSourceLocation r _ _) -> Just (fromIntegral r)
-    m -> $err' ("Expected source location: " ++ show (instructionMetadata i))
+    m -> $failure ("Expected source location: " ++ show (instructionMetadata i))
 
 -- | Generate an index page listing all of the functions in a module.
 -- Each listing shows the parameters and their inferred annotations.

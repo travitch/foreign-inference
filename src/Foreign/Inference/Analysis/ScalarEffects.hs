@@ -60,12 +60,12 @@ scalarEffectAddOne :: ScalarEffectSummary -> Argument -> Maybe AbstractAccessPat
 scalarEffectAddOne (ScalarEffectSummary s) a =
   case HM.lookup a s of
     Nothing -> Nothing
-    Just (EffectAdd1 ap) -> Just ap
+    Just (EffectAdd1 accPath) -> Just accPath
     _ -> Nothing
 
 scalarEffectSubOne :: ScalarEffectSummary -> Argument -> Maybe AbstractAccessPath
 scalarEffectSubOne (ScalarEffectSummary s) a =
   case HM.lookup a s of
     Nothing -> Nothing
-    Just (EffectSub1 ap) -> Just ap
+    Just (EffectSub1 accPath) -> Just accPath
     _ -> Nothing

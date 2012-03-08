@@ -12,21 +12,29 @@
 -}
 module Foreign.Inference.Analysis.RefCount where
 
+import Control.Arrow
 import Control.DeepSeq
 import Data.HashSet ( HashSet )
 import qualified Data.HashSet as HS
 import Data.Lens.Common
 import Data.Lens.Template
+import Data.Maybe ( mapMaybe )
 import Data.Monoid
 
 import LLVM.Analysis
+import LLVM.Analysis.AccessPath
 import LLVM.Analysis.CFG
 import LLVM.Analysis.CallGraphSCCTraversal
 
 import Foreign.Inference.AnalysisMonad
 import Foreign.Inference.Analysis.Finalize
+import Foreign.Inference.Analysis.ScalarEffects
 import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
+
+import Text.Printf
+import Debug.Trace
+debug = flip trace
 
 data RefCountSummary =
   RefCountSummary { _conditionalFinalizers :: HashSet Function
@@ -48,9 +56,6 @@ instance Eq RefCountSummary where
 
 instance HasDiagnostics RefCountSummary where
   diagnosticLens = refCountDiagnostics
-  -- addDiagnostics s d =
-  --   s { refCountDiagnostics = refCountDiagnostics s `mappend` d }
-  -- getDiagnostics = refCountDiagnostics
 
 instance SummarizeModule RefCountSummary where
   summarizeFunction f (RefCountSummary s _) =
@@ -69,12 +74,14 @@ identifyRefCounting :: (FuncLike funcLike, HasFunction funcLike, HasCFG funcLike
                        => DependencySummary
                        -> Lens compositeSummary RefCountSummary
                        -> Lens compositeSummary FinalizerSummary
+                       -> Lens compositeSummary ScalarEffectSummary
                        -> ComposableAnalysis compositeSummary funcLike
-identifyRefCounting ds lns depLens =
+identifyRefCounting ds lns depLens1 depLens2 =
   composableDependencyAnalysisM runner refCountAnalysis lns depLens
   where
     runner a = runAnalysis a constData ()
     constData = RefCountData ds
+    depLens = lens (getL depLens1 &&& getL depLens2) (\(f, s) -> setL depLens1 f . setL depLens2 s)
 
 isConditionalFinalizer :: FinalizerSummary -> Function -> Analysis Bool
 isConditionalFinalizer summ f =
@@ -122,16 +129,109 @@ annotateArg summ a = (a, any doesFinalize (summarizeArgument a summ))
     doesFinalize _ = False
 
 refCountAnalysis :: (FuncLike funcLike, HasCFG funcLike, HasFunction funcLike)
-                    => FinalizerSummary
+                    => (FinalizerSummary, ScalarEffectSummary)
                     -> funcLike
                     -> RefCountSummary
                     -> Analysis RefCountSummary
-refCountAnalysis finSumm funcLike summ = do
+refCountAnalysis (finSumm, seSumm) funcLike summ = do
   isCondFin <- isConditionalFinalizer finSumm f
   case isCondFin of
     False -> return summ
     True ->
       let newFin = HS.insert f (summ ^. conditionalFinalizers)
-      in return $! (conditionalFinalizers ^= newFin) summ
+      in return $! (conditionalFinalizers ^= newFin) summ `debug`
+           printf "Ref counted fields: %s\n" (show (refCountFields seSumm f))
   where
     f = getFunction funcLike
+
+refCountFields :: ScalarEffectSummary -> Function -> [AbstractAccessPath]
+refCountFields seSumm f = mapMaybe (checkRefCount seSumm args) allInsts
+  where
+    args = HS.fromList $ functionParameters f
+    allInsts = concatMap basicBlockInstructions (functionBody f)
+
+checkRefCount :: ScalarEffectSummary
+                 -> HashSet Argument
+                 -> Instruction
+                 -> Maybe AbstractAccessPath
+checkRefCount seSumm args i =
+  case i of
+    AtomicRMWInst { atomicRMWOperation = AOSub
+                  , atomicRMWValue = (valueContent ->
+      ConstantC ConstantInt { constantIntValue = 1 })} ->
+      absPathIfArg args i
+    AtomicRMWInst { atomicRMWOperation = AOAdd
+                  , atomicRMWValue =
+      (valueContent -> ConstantC ConstantInt { constantIntValue = -1 })} ->
+      absPathIfArg args i
+    StoreInst { storeValue = (valueContent' ->
+      InstructionC SubInst { binaryRhs = (valueContent' ->
+        ConstantC ConstantInt { constantIntValue = 1 })
+                           , binaryLhs = (valueContent' ->
+        InstructionC oldRefCount) })} ->
+      absPathIfArg args oldRefCount
+    StoreInst { storeValue = (valueContent' ->
+      InstructionC AddInst { binaryRhs = (valueContent' ->
+        ConstantC ConstantInt { constantIntValue = -1 })
+                           , binaryLhs = (valueContent' ->
+        InstructionC oldRefCount) })} ->
+      absPathIfArg args oldRefCount
+    StoreInst { storeValue = (valueContent' ->
+      InstructionC AddInst { binaryLhs = (valueContent' ->
+        ConstantC ConstantInt { constantIntValue = -1 })
+                           , binaryRhs = (valueContent' ->
+        InstructionC oldRefCount) })} ->
+      absPathIfArg args oldRefCount
+    CallInst { callFunction = (valueContent' -> FunctionC f)
+             , callArguments = [(a,_)]
+             } ->
+      absPathThroughCall seSumm args f a
+    InvokeInst { invokeFunction = (valueContent' -> FunctionC f)
+               , invokeArguments = [(a,_)]
+               } ->
+      absPathThroughCall seSumm args f a
+    _ -> Nothing
+
+absPathThroughCall :: ScalarEffectSummary
+                      -> HashSet Argument
+                      -> Function
+                      -> Value
+                      -> Maybe AbstractAccessPath
+absPathThroughCall seSumm args f a =
+  case functionParameters f of
+    [p] -> case scalarEffectSubOne seSumm p of
+      Nothing -> Nothing
+      Just ap ->
+        case valueContent' a of
+          InstructionC i ->
+            case accessPath i of
+              Nothing -> Nothing
+              Just argPath ->
+                case valueContent' (accessPathBaseValue argPath) of
+                  ArgumentC baseArg ->
+                    case baseArg `HS.member` args of
+                      True -> abstractAccessPath argPath `appendAccessPath` ap
+                      False -> Nothing
+                  _ -> Nothing
+        -- iff a is reachable from something in args.
+        --Also need to get the access path for a and then
+        --merge it with ap
+          _ -> Nothing
+
+      -- Tweak the access path code to work on other kinds of
+      -- instructions (e.g., GEP) and then take the access path of a.
+      -- If its base is an argument, then abstract it and merge with
+      -- ap.
+    _ -> Nothing
+
+absPathIfArg :: HashSet Argument -> Instruction -> Maybe AbstractAccessPath
+absPathIfArg args i =
+  case accessPath i of
+    Nothing -> Nothing
+    Just cap ->
+      case valueContent' (accessPathBaseValue cap) of
+        ArgumentC a ->
+          case HS.member a args of
+            False -> Nothing
+            True -> Just (abstractAccessPath cap)
+        _ -> Nothing

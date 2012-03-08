@@ -1,6 +1,8 @@
 module Foreign.Inference.Analysis.ScalarEffects (
   ScalarEffectSummary,
-  identifyScalarEffects
+  identifyScalarEffects,
+  scalarEffectAddOne,
+  scalarEffectSubOne
   ) where
 
 import Control.DeepSeq
@@ -39,9 +41,9 @@ summarizeEffectArgument :: Argument -> ScalarEffectSummary -> [(ParamAnnotation,
 summarizeEffectArgument a (ScalarEffectSummary s) =
   case HM.lookup a s of
     Nothing -> []
-    Just (EffectAdd1 (AbstractAccessPath t ats)) ->
+    Just (EffectAdd1 (AbstractAccessPath t _ ats)) ->
       [(PAScalarEffectAddOne (show t) ats, [])]
-    Just (EffectSub1 (AbstractAccessPath t ats)) ->
+    Just (EffectSub1 (AbstractAccessPath t _ ats)) ->
       [(PAScalarEffectSubOne (show t) ats, [])]
 
 identifyScalarEffects :: (FuncLike funcLike, HasCFG funcLike, HasFunction funcLike)
@@ -53,3 +55,17 @@ identifyScalarEffects lns =
     analysisWrapper f (ScalarEffectSummary s) = do
       res <- scalarEffectAnalysis f s
       return $! ScalarEffectSummary res
+
+scalarEffectAddOne :: ScalarEffectSummary -> Argument -> Maybe AbstractAccessPath
+scalarEffectAddOne (ScalarEffectSummary s) a =
+  case HM.lookup a s of
+    Nothing -> Nothing
+    Just (EffectAdd1 ap) -> Just ap
+    _ -> Nothing
+
+scalarEffectSubOne :: ScalarEffectSummary -> Argument -> Maybe AbstractAccessPath
+scalarEffectSubOne (ScalarEffectSummary s) a =
+  case HM.lookup a s of
+    Nothing -> Nothing
+    Just (EffectSub1 ap) -> Just ap
+    _ -> Nothing

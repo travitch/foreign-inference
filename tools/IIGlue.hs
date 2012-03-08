@@ -144,7 +144,7 @@ dump opts name m = do
                  , identifyOutput ds outputSummary
                  , identifyNullable ds nullableSummary returnSummary
                  , identifyAllocators ds allocatorSummary escapeSummary
-                 , identifyRefCounting ds refCountSummary finalizerSummary
+                 , identifyRefCounting ds refCountSummary finalizerSummary scalarEffectSummary
                  ]
       analysisFunction = callGraphComposeAnalysis analyses
       analysisResult =

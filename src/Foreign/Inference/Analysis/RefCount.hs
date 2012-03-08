@@ -185,44 +185,43 @@ checkRefCount seSumm args i =
     CallInst { callFunction = (valueContent' -> FunctionC f)
              , callArguments = [(a,_)]
              } ->
-      absPathThroughCall seSumm args f a
+      absPathThroughCall seSumm args (functionParameters f) a
     InvokeInst { invokeFunction = (valueContent' -> FunctionC f)
                , invokeArguments = [(a,_)]
                } ->
-      absPathThroughCall seSumm args f a
+      absPathThroughCall seSumm args (functionParameters f) a
     _ -> Nothing
 
 absPathThroughCall :: ScalarEffectSummary
                       -> HashSet Argument
-                      -> Function
+                      -> [Argument]
                       -> Value
                       -> Maybe AbstractAccessPath
-absPathThroughCall seSumm args f a =
-  case functionParameters f of
-    [p] -> case scalarEffectSubOne seSumm p of
-      Nothing -> Nothing
-      Just ap ->
-        case valueContent' a of
-          InstructionC i ->
-            case accessPath i of
-              Nothing -> Nothing
-              Just argPath ->
-                case valueContent' (accessPathBaseValue argPath) of
-                  ArgumentC baseArg ->
-                    case baseArg `HS.member` args of
-                      True -> abstractAccessPath argPath `appendAccessPath` ap
-                      False -> Nothing
-                  _ -> Nothing
-        -- iff a is reachable from something in args.
-        --Also need to get the access path for a and then
-        --merge it with ap
-          _ -> Nothing
-
-      -- Tweak the access path code to work on other kinds of
-      -- instructions (e.g., GEP) and then take the access path of a.
-      -- If its base is an argument, then abstract it and merge with
-      -- ap.
+absPathThroughCall seSumm args [singleFormal] actual = do
+  -- This is the access path of the argument of the callee (if and
+  -- only if the function subtracts one from an int component of the
+  -- argument).  The access path describes *which* component of the
+  -- argument is modified.
+  calleeAccessPath <- scalarEffectSubOne seSumm singleFormal
+  case valueContent' actual of
+    InstructionC i -> do
+      actualAccessPath <- accessPath i
+      -- Now see if the actual passed to this call is derived from one
+      -- of the formal parameters of the current function.  This
+      -- access path tells us which component of the argument was
+      -- passed to the callee.
+      case valueContent' (accessPathBaseValue actualAccessPath) of
+        ArgumentC baseArg ->
+          case baseArg `HS.member` args of
+            -- If it really was derived from an argument, connect up
+            -- the access paths for the caller and callee so we have a
+            -- single description of the field that was modified
+            -- (interprocedurally).
+            True -> abstractAccessPath actualAccessPath `appendAccessPath` calleeAccessPath
+            False -> Nothing
+        _ -> Nothing
     _ -> Nothing
+absPathThroughCall _ _ _ _ = Nothing
 
 absPathIfArg :: HashSet Argument -> Instruction -> Maybe AbstractAccessPath
 absPathIfArg args i =

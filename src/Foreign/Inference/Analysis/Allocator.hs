@@ -46,6 +46,7 @@ import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
 import Foreign.Inference.Analysis.Escape
 -- import Foreign.Inference.Analysis.Finalize
+import Foreign.Inference.Analysis.SingleInitializer
 import Foreign.Inference.Internal.FlattenValue
 
 -- import Debug.Trace
@@ -79,6 +80,7 @@ instance HasDiagnostics AllocatorSummary where
 
 data AllocatorData =
   AllocatorData { dependencySummary :: DependencySummary
+                , singleInitSummary :: SingleInitializerSummary
                 }
 
 type Analysis = AnalysisMonad AllocatorData ()
@@ -93,14 +95,15 @@ instance SummarizeModule AllocatorSummary where
 
 identifyAllocators :: (FuncLike funcLike, HasFunction funcLike)
                       => DependencySummary
+                      -> SingleInitializerSummary
                       -> Lens compositeSummary AllocatorSummary
                       -> Lens compositeSummary EscapeSummary
                       -> ComposableAnalysis compositeSummary funcLike
-identifyAllocators ds lns depLens =
+identifyAllocators ds sis lns depLens =
   composableDependencyAnalysisM runner allocatorAnalysis lns depLens
   where
     runner a = runAnalysis a readOnlyData ()
-    readOnlyData = AllocatorData ds
+    readOnlyData = AllocatorData ds sis
 
 -- | If the function returns a pointer, it is a candidate for an
 -- allocator.  We do not concern ourselves with functions that may
@@ -196,9 +199,12 @@ checkFunctionIsAllocator v summ is =
           case any isAllocatorAnnot annots of
             False -> return []
             True -> return is
-    InstructionC LoadInst { loadAddress = (valueContent' ->
-      GlobalVariableC GlobalVariable { globalVariableInitializer = Just val0 })} ->
-      checkFunctionIsAllocator val0 summ is
+    InstructionC LoadInst { loadAddress = la } -> do
+      sis <- asks singleInitSummary
+      case singleInitializer sis la of
+        Nothing -> return []
+        Just i -> checkFunctionIsAllocator i summ is
+
     -- Indirect call
     _ -> return []
 

@@ -36,6 +36,7 @@ import LLVM.Analysis.CallGraphSCCTraversal
 import LLVM.Analysis.Dataflow
 
 import Foreign.Inference.AnalysisMonad
+import Foreign.Inference.Analysis.SingleInitializer
 import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
 
@@ -85,17 +86,19 @@ summarizeFinalizerArgument a (FinalizerSummary m _) =
 data FinalizerData =
   FinalizerData { moduleSummary :: SummaryType
                 , dependencySummary :: DependencySummary
+                , singleInitSummary :: SingleInitializerSummary
                 }
 
 identifyFinalizers :: (FuncLike funcLike, HasFunction funcLike, HasCFG funcLike)
                       => DependencySummary
+                      -> SingleInitializerSummary
                       -> Lens compositeSummary FinalizerSummary
                       -> ComposableAnalysis compositeSummary funcLike
-identifyFinalizers ds lns =
+identifyFinalizers ds sis lns =
   composableAnalysisM runner finalizerAnalysis lns
   where
     runner a = runAnalysis a constData ()
-    constData = FinalizerData HM.empty ds
+    constData = FinalizerData HM.empty ds sis
 
 data FinalizerInfo =
   FinalizerInfo { notFinalizedOrNull :: HashSet Argument
@@ -161,9 +164,6 @@ finalizerTransfer info i =
       callTransfer i (stripBitcasts calledFunc) (map fst args) info
     _ -> return info
 
--- FIXME Make a provision (similar to the allocator analysis) for
--- calls through function pointers that come from global variables
--- with initializers.
 callTransfer :: Instruction -> Value -> [Value] -> FinalizerInfo -> Analysis FinalizerInfo
 callTransfer i v as info =
   case valueContent' v of
@@ -175,9 +175,15 @@ callTransfer i v as info =
       depSum <- asks dependencySummary
       let indexedArgs = zip [0..] as
       foldM (checkExternalArg i depSum f) info indexedArgs
-    InstructionC LoadInst { loadAddress = (valueContent' ->
-      GlobalVariableC GlobalVariable { globalVariableInitializer = Just val0 })} ->
-      callTransfer i val0 as info
+
+    -- Call through a function pointer.  We might be able to learn
+    -- something about the call if the value being called only has one
+    -- initializer in the library code.
+    InstructionC LoadInst { loadAddress = la } -> do
+      sis <- asks singleInitSummary
+      case singleInitializer sis la of
+        Nothing -> return info
+        Just singleInit -> callTransfer i singleInit as info
 
     -- Indirect call - no point in resolving it since we aren't
     -- getting any useful information.

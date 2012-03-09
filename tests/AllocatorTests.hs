@@ -17,6 +17,7 @@ import Foreign.Inference.Interface
 import Foreign.Inference.Preprocessing
 import Foreign.Inference.Analysis.Allocator
 import Foreign.Inference.Analysis.Escape
+import Foreign.Inference.Analysis.SingleInitializer
 import Foreign.Inference.Analysis.Util.CompositeSummary
 
 main :: IO ()
@@ -41,11 +42,12 @@ analyzeAllocator :: DependencySummary -> Module -> Map String (Maybe String)
 analyzeAllocator ds m =
   allocatorSummaryToTestFormat (_allocatorSummary res)
   where
+    sis = identifySingleInitializers m
     pta = runPointsToAnalysis m
     cg = mkCallGraph m pta []
     analyses :: [ComposableAnalysis AnalysisSummary FunctionMetadata]
     analyses = [ identifyEscapes ds escapeSummary
-               , identifyAllocators ds allocatorSummary escapeSummary
+               , identifyAllocators ds sis allocatorSummary escapeSummary
                ]
     analysisFunc = callGraphComposeAnalysis analyses
     res = callGraphSCCTraversal cg analysisFunc mempty

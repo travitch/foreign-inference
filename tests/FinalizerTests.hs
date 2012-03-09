@@ -17,6 +17,7 @@ import LLVM.Parse
 import Foreign.Inference.Interface
 import Foreign.Inference.Preprocessing
 import Foreign.Inference.Analysis.Finalize
+import Foreign.Inference.Analysis.SingleInitializer
 import Foreign.Inference.Analysis.Util.CompositeSummary
 
 main :: IO ()
@@ -41,9 +42,10 @@ analyzeFinalize :: DependencySummary -> Module -> Map String (Set String)
 analyzeFinalize ds m =
   finalizerSummaryToTestFormat (_finalizerSummary res)
   where
+    sis = identifySingleInitializers m
     pta = runPointsToAnalysis m
     cg = mkCallGraph m pta []
     analyses :: [ComposableAnalysis AnalysisSummary FunctionMetadata]
-    analyses = [ identifyFinalizers ds finalizerSummary ]
+    analyses = [ identifyFinalizers ds sis finalizerSummary ]
     analysisFunc = callGraphComposeAnalysis analyses
     res = callGraphSCCTraversal cg analysisFunc mempty

@@ -32,6 +32,7 @@ import Foreign.Inference.Analysis.Output
 import Foreign.Inference.Analysis.RefCount
 import Foreign.Inference.Analysis.Return
 import Foreign.Inference.Analysis.ScalarEffects
+import Foreign.Inference.Analysis.SingleInitializer
 import Foreign.Inference.Analysis.Util.CompositeSummary
 
 -- Command line helpers
@@ -133,17 +134,19 @@ dump opts name m = do
       repo = repositoryLocation opts
   ds <- loadDependencies [repo] deps
 
+  let sis = identifySingleInitializers m
+
   -- Have to give a type signature here to fix all of the FuncLike
   -- constraints to our metadata blob.
   let analyses :: [ComposableAnalysis AnalysisSummary FunctionMetadata]
       analyses = [ identifyReturns ds returnSummary
                  , identifyScalarEffects scalarEffectSummary
                  , identifyArrays ds arraySummary
-                 , identifyFinalizers ds finalizerSummary
+                 , identifyFinalizers ds sis finalizerSummary
                  , identifyEscapes ds escapeSummary
                  , identifyOutput ds outputSummary
                  , identifyNullable ds nullableSummary returnSummary
-                 , identifyAllocators ds allocatorSummary escapeSummary
+                 , identifyAllocators ds sis allocatorSummary escapeSummary
                  , identifyRefCounting ds refCountSummary finalizerSummary scalarEffectSummary
                  ]
       analysisFunction = callGraphComposeAnalysis analyses

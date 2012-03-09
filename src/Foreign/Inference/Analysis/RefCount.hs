@@ -10,7 +10,10 @@
    accessible via that same access path
 
 -}
-module Foreign.Inference.Analysis.RefCount where
+module Foreign.Inference.Analysis.RefCount (
+  RefCountSummary,
+  identifyRefCounting
+  ) where
 
 import Control.Arrow
 import Control.DeepSeq
@@ -38,31 +41,36 @@ debug = flip trace
 
 data RefCountSummary =
   RefCountSummary { _conditionalFinalizers :: HashSet Function
+                  , _unrefArguments :: HashSet Argument
                   , _refCountDiagnostics :: !Diagnostics
                   }
 
 $(makeLens ''RefCountSummary)
 
 instance Monoid RefCountSummary where
-  mempty = RefCountSummary mempty mempty
-  mappend (RefCountSummary s1 d1) (RefCountSummary s2 d2) =
-    RefCountSummary (s1 `mappend` s2) (d1 `mappend` d2)
+  mempty = RefCountSummary mempty mempty mempty
+  mappend (RefCountSummary s1 a1 d1) (RefCountSummary s2 a2 d2) =
+    RefCountSummary (s1 `mappend` s2) (a1 `mappend` a2) (d1 `mappend` d2)
 
 instance NFData RefCountSummary where
-  rnf r@(RefCountSummary s _) = s `deepseq` r `seq` ()
+  rnf r@(RefCountSummary s a _) = s `deepseq` a `deepseq` r `seq` ()
 
 instance Eq RefCountSummary where
-  (RefCountSummary s1 _) == (RefCountSummary s2 _) = s1 == s2
+  (RefCountSummary s1 a1 _) == (RefCountSummary s2 a2 _) =
+    s1 == s2 && a1 == a2
 
 instance HasDiagnostics RefCountSummary where
   diagnosticLens = refCountDiagnostics
 
 instance SummarizeModule RefCountSummary where
-  summarizeFunction f (RefCountSummary s _) =
+  summarizeFunction f (RefCountSummary s _ _) =
     case HS.member f s of
       True -> [FACondFinalizer]
       False -> []
-  summarizeArgument _ _ = []
+  summarizeArgument a (RefCountSummary _ am _) =
+    case HS.member a am of
+      False -> []
+      True -> [(PAUnref, [])]
 
 data RefCountData =
   RefCountData { dependencySummary :: DependencySummary
@@ -114,10 +122,10 @@ externalIsFinalizer ds ef =
     maxArg = length atypes - 1
     allArgAnnots = map (lookupArgumentSummary ds ef) [0..maxArg]
     argFinalizes Nothing = False
-    argFinalizes (Just annots) = any (==PAFinalize) annots
+    argFinalizes (Just annots) = PAFinalize `elem` annots
 
 functionIsFinalizer :: FinalizerSummary -> Function -> Bool
-functionIsFinalizer summ f = and (map snd annotatedArgs)
+functionIsFinalizer summ f = all snd annotatedArgs
   where
     funcArgs = functionParameters f
     annotatedArgs = map (annotateArg summ) funcArgs
@@ -139,8 +147,12 @@ refCountAnalysis (finSumm, seSumm) funcLike summ = do
     False -> return summ
     True ->
       let newFin = HS.insert f (summ ^. conditionalFinalizers)
-      in return $! (conditionalFinalizers ^= newFin) summ `debug`
-           printf "Ref counted fields: %s\n" (show (refCountFields seSumm f))
+          newUnref = case (refCountFields seSumm f, functionParameters f) of
+            ([_], [a]) -> HS.insert a (summ ^. unrefArguments)
+            _ -> summ ^. unrefArguments
+      in return $! (unrefArguments ^= newUnref) $ (conditionalFinalizers ^= newFin) summ
+         -- `debug`
+         --   printf "Ref counted fields: %s\n" (show (refCountFields seSumm f))
   where
     f = getFunction funcLike
 
@@ -210,6 +222,7 @@ absPathThroughCall seSumm args [singleFormal] actual = do
       -- of the formal parameters of the current function.  This
       -- access path tells us which component of the argument was
       -- passed to the callee.
+      return () `debug` printf "Callee: %s\nCaller: %s\n" (show calleeAccessPath) (show actualAccessPath)
       case valueContent' (accessPathBaseValue actualAccessPath) of
         ArgumentC baseArg ->
           case baseArg `HS.member` args of

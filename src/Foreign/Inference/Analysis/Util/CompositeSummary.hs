@@ -83,12 +83,21 @@ $(makeLens ''AnalysisSummary)
 
 instance NFData AnalysisSummary where
   rnf a@(AnalysisSummary s1 s2 s3 s4 s5 s6 s7 s8 s9) =
-    s1 `deepseq` s2 `deepseq` s3 `deepseq` s4 `deepseq` s5
-      `deepseq` s6 `deepseq` s7 `deepseq` s8 `deepseq` s9
-      `deepseq` a `seq` ()
+    s1 `deepseq` s2 `deepseq` s3 `deepseq` s4 `deepseq`
+      s5 `deepseq` s6 `deepseq` s7 `deepseq` s8 `deepseq`
+      s9 `deepseq` a `seq` ()
 
 instance Monoid AnalysisSummary where
-  mempty = AnalysisSummary mempty mempty mempty mempty mempty mempty mempty mempty mempty
+  mempty = AnalysisSummary { _nullableSummary = mempty
+                           , _outputSummary = mempty
+                           , _arraySummary = mempty
+                           , _returnSummary = mempty
+                           , _finalizerSummary = mempty
+                           , _escapeSummary = mempty
+                           , _allocatorSummary = mempty
+                           , _refCountSummary = mempty
+                           , _scalarEffectSummary = mempty
+                           }
   mappend a1 a2 =
     AnalysisSummary { _nullableSummary = _nullableSummary a1 `mappend` _nullableSummary a2
                     , _outputSummary = _outputSummary a1 `mappend` _outputSummary a2

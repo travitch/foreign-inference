@@ -89,6 +89,7 @@ data ParamAnnotation = PAArray !Int
                      | PAString
                      | PAConst
                      | PAFinalize
+                     | PAUnref
                      | PAEscape
                      | PAWillEscape
                      | PAScalarEffectAddOne String [AccessType]

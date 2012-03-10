@@ -28,6 +28,7 @@ module Foreign.Inference.Analysis.SingleInitializer (
   singleInitializer
   ) where
 
+import Data.List ( foldl' )
 import Data.Map ( Map )
 import qualified Data.Map as M
 import Data.Monoid
@@ -62,7 +63,7 @@ singleInitializer s v =
 
 identifySingleInitializers :: Module -> SingleInitializerSummary
 identifySingleInitializers m =
-  foldr recordInitializers s0 allInsts
+  foldl' (flip recordInitializers) s0 allInsts
   where
     s0 = mempty { concreteValueInitializers = M.fromList globalsWithInits }
     allBlocks = concatMap functionBody $ moduleDefinedFunctions m

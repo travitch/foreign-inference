@@ -182,8 +182,9 @@ callTransfer i v as info =
     InstructionC LoadInst { loadAddress = la } -> do
       sis <- asks singleInitSummary
       case singleInitializer sis la of
-        Nothing -> return info
-        Just singleInit -> callTransfer i singleInit as info
+        [] -> return info
+        [singleInit] -> callTransfer i singleInit as info
+        _ -> return info
 
     -- Indirect call - no point in resolving it since we aren't
     -- getting any useful information.

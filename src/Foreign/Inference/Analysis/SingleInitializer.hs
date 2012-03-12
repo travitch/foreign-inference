@@ -29,37 +29,34 @@ module Foreign.Inference.Analysis.SingleInitializer (
   ) where
 
 import Data.List ( foldl' )
+import Data.List.Ordered ( insertSet )
 import Data.Map ( Map )
 import qualified Data.Map as M
 import Data.Monoid
-import Data.Set ( Set )
-import qualified Data.Set as S
 
 import LLVM.Analysis
 import LLVM.Analysis.AccessPath
 
 data SingleInitializerSummary =
-  SIS { abstractPathInitializers :: !(Map AbstractAccessPath Value)
-      , concreteValueInitializers :: !(Map GlobalVariable Value)
-      , abstractBlacklist :: !(Set AbstractAccessPath)
-      , concreteBlacklist :: !(Set GlobalVariable)
+  SIS { abstractPathInitializers :: !(Map AbstractAccessPath [Value])
+      , concreteValueInitializers :: !(Map GlobalVariable [Value])
       }
   deriving (Eq)
 
 instance Monoid SingleInitializerSummary where
-  mempty = SIS mempty mempty mempty mempty
-  mappend (SIS a1 c1 bla1 blc1) (SIS a2 c2 bla2 blc2) =
-    SIS (a1 `mappend` a2) (c1 `mappend` c2) (bla1 `mappend` bla2) (blc1 `mappend` blc2)
+  mempty = SIS mempty mempty
+  mappend (SIS a1 c1) (SIS a2 c2) =
+    SIS (a1 `mappend` a2) (c1 `mappend` c2)
 
-singleInitializer :: SingleInitializerSummary -> Value -> Maybe Value
+singleInitializer :: SingleInitializerSummary -> Value -> [Value]
 singleInitializer s v =
   case valueContent' v of
-    GlobalVariableC gv -> M.lookup gv (concreteValueInitializers s)
-    InstructionC i -> do
+    GlobalVariableC gv -> maybe [] id $ M.lookup gv (concreteValueInitializers s)
+    InstructionC i -> maybe [] id $ do
       accPath <- accessPath i
       let absPath = abstractAccessPath accPath
       M.lookup absPath (abstractPathInitializers s)
-    _ -> Nothing
+    _ -> []
 
 identifySingleInitializers :: Module -> SingleInitializerSummary
 identifySingleInitializers m =
@@ -73,7 +70,7 @@ identifySingleInitializers m =
 extractGlobalsWithInits gv acc =
   case globalVariableInitializer gv of
     Nothing -> acc
-    Just i -> (gv, i) : acc
+    Just i -> (gv, [i]) : acc
 
 recordInitializers :: Instruction -> SingleInitializerSummary -> SingleInitializerSummary
 recordInitializers i s =
@@ -85,12 +82,23 @@ recordInitializers i s =
         _ -> s
     _ -> s
 
+-- | Initializers here (sv) are only functions (external or otherwise)
 maybeRecordInitializer :: Instruction -> Value -> Value
                           -> SingleInitializerSummary
                           -> SingleInitializerSummary
 maybeRecordInitializer i sv sa s =
   case valueContent' sa of
     GlobalVariableC gv ->
+      case M.lookup gv (concreteValueInitializers s) of
+        Nothing ->
+          s { concreteValueInitializers =
+                 M.insert gv [sv] (concreteValueInitializers s)
+            }
+        Just current ->
+          s { concreteValueInitializers =
+                 M.insert gv (insertSet sv current) (concreteValueInitializers s)
+            }
+                        {-
       case (S.member gv (concreteBlacklist s),
             M.lookup gv (concreteValueInitializers s)) of
         (True, _) -> s
@@ -100,7 +108,22 @@ maybeRecordInitializer i sv sa s =
                         , concreteValueInitializers =
                              M.delete gv (concreteValueInitializers s)
                         }
+-}
     _ ->
+      case accessPath i of
+        Nothing -> s
+        Just accPath ->
+          let absPath = abstractAccessPath accPath
+          in case M.lookup absPath (abstractPathInitializers s) of
+            Nothing ->
+              s { abstractPathInitializers =
+                     M.insert absPath [sv] (abstractPathInitializers s)
+                }
+            Just current ->
+              s { abstractPathInitializers =
+                     M.insert absPath (insertSet sv current) (abstractPathInitializers s)
+                }
+              {-
       case accessPath i of
         Nothing -> s
         Just accPath ->
@@ -115,3 +138,4 @@ maybeRecordInitializer i sv sa s =
                                , abstractPathInitializers =
                                     M.delete absPath (abstractPathInitializers s)
                                }
+-}

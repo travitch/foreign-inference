@@ -202,9 +202,9 @@ checkFunctionIsAllocator v summ is =
     InstructionC LoadInst { loadAddress = la } -> do
       sis <- asks singleInitSummary
       case singleInitializer sis la of
-        Nothing -> return []
-        Just i -> checkFunctionIsAllocator i summ is
-
+        [] -> return []
+        [i] -> checkFunctionIsAllocator i summ is
+        _ -> return []
     -- Indirect call
     _ -> return []
 

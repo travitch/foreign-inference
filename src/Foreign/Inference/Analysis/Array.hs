@@ -168,22 +168,22 @@ isArrayDeref ds summ inst = case valueContent' inst of
      InstructionC GetElementPtrInst { getElementPtrValue = base
                                     , getElementPtrIndices = idxs
                                     })} ->
-    concatMap (buildArrayDeref inst idxs) (flattenValue base)
+    handleGEP idxs base
   InstructionC StoreInst { storeAddress = (valueContent ->
      InstructionC GetElementPtrInst { getElementPtrValue = base
                                     , getElementPtrIndices = idxs
                                     })} ->
-    concatMap (buildArrayDeref inst idxs) (flattenValue base)
+    handleGEP idxs base
   InstructionC AtomicCmpXchgInst { atomicCmpXchgPointer = (valueContent ->
     InstructionC GetElementPtrInst { getElementPtrValue = base
                                     , getElementPtrIndices = idxs
                                     })} ->
-    concatMap (buildArrayDeref inst idxs) (flattenValue base)
+    handleGEP idxs base
   InstructionC AtomicRMWInst { atomicRMWPointer = (valueContent ->
     InstructionC GetElementPtrInst { getElementPtrValue = base
                                     , getElementPtrIndices = idxs
                                     })} ->
-    concatMap (buildArrayDeref inst idxs) (flattenValue base)
+    handleGEP idxs base
   InstructionC CallInst { callFunction = f, callArguments = args } ->
     let indexedArgs = zip [0..] (map fst args)
     in foldl' (collectArrayArgs ds summ f) [] (concatMap expand indexedArgs)
@@ -193,14 +193,17 @@ isArrayDeref ds summ inst = case valueContent' inst of
   _ -> []
   where
     expand (ix, a) = zip (repeat ix) (flattenValue a)
+    handleGEP idxs base =
+      let flatVals = flattenValue base
+      in foldr (buildArrayDeref inst idxs) [] flatVals
 
-buildArrayDeref :: Instruction -> [Value] -> Value -> [(Value, PointerUse)]
-buildArrayDeref inst idxs base =
+buildArrayDeref :: Instruction -> [Value] -> Value -> [(Value, PointerUse)] -> [(Value, PointerUse)]
+buildArrayDeref inst idxs base acc =
   case idxs of
     [] -> $failure ("GEP with no indices: " ++ show inst)
-    [_] -> [(base, IndexOperation (Value inst) idxs)]
-    (valueContent' -> ConstantC ConstantInt { constantIntValue = 0 }) : _ -> []
-    _ -> [(base, IndexOperation (Value inst) idxs )]
+    [_] -> (base, IndexOperation (Value inst) idxs) : acc
+    (valueContent' -> ConstantC ConstantInt { constantIntValue = 0 }) : _ -> acc
+    _ -> (base, IndexOperation (Value inst) idxs ) : acc
 
 -- | If the argument is an array (according to either the module
 -- summary or the dependency summary), make a CallArgument tag for it.

@@ -14,12 +14,15 @@ module Foreign.Inference.Analysis.Array (
   arraySummaryToTestFormat
   ) where
 
+import Control.Arrow
 import Control.DeepSeq
 import Data.List ( foldl' )
 import Data.Lens.Common
 import Data.Lens.Template
+import Data.HashMap.Strict ( HashMap )
+import qualified Data.HashMap.Strict as M
 import Data.Map ( Map )
-import qualified Data.Map as M
+import qualified Data.Map as Map
 import Debug.Trace.LocationTH
 
 import LLVM.Analysis
@@ -35,7 +38,7 @@ import Foreign.Inference.Internal.FlattenValue
 
 -- | The real type of the summary (without the wrapper that is exposed
 -- to clients).
-type SummaryType = Map Argument Int
+type SummaryType = HashMap Argument Int
 
 -- | Summarize the array parameters in the module.  This maps each
 -- array argument to its inferred dimensionality.
@@ -102,14 +105,14 @@ arrayAnalysis :: (FuncLike funcLike, HasFunction funcLike)
 arrayAnalysis funcLike a@(ArraySummary summary _) = do
   ds <- asks dependencySummary
 
-  let basesAndOffsets = concatMap (isArrayDeref ds summary) insts
-      baseResultMap = foldr addDeref M.empty basesAndOffsets
+  let basesAndOffsets = map (isArrayDeref ds summary) insts
+      baseResultMap = foldr (\itm acc -> foldr addDeref acc itm) M.empty basesAndOffsets
       summary' = M.foldlWithKey' (traceFromBases baseResultMap) summary baseResultMap
   return $! (arraySummary ^= summary') a
   where
     f = getFunction funcLike
     insts = concatMap basicBlockInstructions (functionBody f)
-    addDeref (base, use) = M.insertWith' (++) base [use]
+    addDeref (base, use) = M.insertWith (++) base [use]
 
 -- | Examine a GetElementPtr instruction result.  If the base is an
 -- argument, trace its access structure (using the @baseResultMap@ via
@@ -117,7 +120,7 @@ arrayAnalysis funcLike a@(ArraySummary summary _) = do
 --
 -- Otherwise, just pass the summary along and try to find the next
 -- access.
-traceFromBases :: Map Value [PointerUse]
+traceFromBases :: HashMap Value [PointerUse]
                   -> SummaryType
                   -> Value
                   -> [PointerUse]
@@ -146,7 +149,7 @@ addToSummary depth arg =
   M.insertWith max arg depth
 
 
-traceBackwards :: Map Value [PointerUse] -> Value -> Int -> Int
+traceBackwards :: HashMap Value [PointerUse] -> Value -> Int -> Int
 traceBackwards baseResultMap result depth =
   -- Is the current result used as the base of an indexing operation?
   -- If so, that adds a level of array wrapping.
@@ -195,7 +198,7 @@ isArrayDeref ds summ inst = case valueContent' inst of
     expand (ix, a) = zip (repeat ix) (flattenValue a)
     handleGEP idxs base =
       let flatVals = flattenValue base
-      in foldr (buildArrayDeref inst idxs) [] flatVals
+      in foldl' (flip (buildArrayDeref inst idxs)) [] flatVals
 
 buildArrayDeref :: Instruction -> [Value] -> Value -> [(Value, PointerUse)] -> [(Value, PointerUse)]
 buildArrayDeref inst idxs base acc =
@@ -245,7 +248,7 @@ isArrayAnnot _ = False
 
 arraySummaryToTestFormat :: ArraySummary -> Map (String, String) Int
 arraySummaryToTestFormat (ArraySummary summ _) =
-  M.mapKeys argToString summ
+  Map.fromList $ map (first argToString) $ M.toList summ
   where
     argToString a =
       let f = argumentFunction a

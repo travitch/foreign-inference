@@ -199,9 +199,9 @@ checkFunctionIsAllocator v summ is =
           case any isAllocatorAnnot annots of
             False -> return []
             True -> return is
-    InstructionC LoadInst { loadAddress = la } -> do
+    InstructionC LoadInst { } -> do
       sis <- asks singleInitSummary
-      case singleInitializer sis la of
+      case singleInitializer sis v of
         [] -> return []
         [i] -> checkFunctionIsAllocator i summ is
         _ -> return []

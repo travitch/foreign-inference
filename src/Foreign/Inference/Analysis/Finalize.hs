@@ -179,9 +179,9 @@ callTransfer i v as info =
     -- Call through a function pointer.  We might be able to learn
     -- something about the call if the value being called only has one
     -- initializer in the library code.
-    InstructionC LoadInst { loadAddress = la } -> do
+    InstructionC LoadInst { } -> do
       sis <- asks singleInitSummary
-      case singleInitializer sis la of
+      case singleInitializer sis v of
         [] -> return info
         [singleInit] -> callTransfer i singleInit as info
         _ -> return info

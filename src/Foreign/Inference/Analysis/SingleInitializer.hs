@@ -51,11 +51,15 @@ instance Monoid SingleInitializerSummary where
 singleInitializer :: SingleInitializerSummary -> Value -> [Value]
 singleInitializer s v =
   case valueContent' v of
-    GlobalVariableC gv -> maybe [] id $ M.lookup gv (concreteValueInitializers s)
     InstructionC i -> maybe [] id $ do
       accPath <- accessPath i
       let absPath = abstractAccessPath accPath
-      M.lookup absPath (abstractPathInitializers s)
+      case valueContent' (accessPathBaseValue accPath) of
+        GlobalVariableC gv@GlobalVariable { globalVariableInitializer = Just initVal } ->
+          case followAccessPath absPath initVal of
+            Nothing -> M.lookup gv (concreteValueInitializers s)
+            accPathVal -> fmap return accPathVal
+        _ -> M.lookup absPath (abstractPathInitializers s)
     _ -> []
 
 identifySingleInitializers :: Module -> SingleInitializerSummary
@@ -98,17 +102,6 @@ maybeRecordInitializer i sv sa s =
           s { concreteValueInitializers =
                  M.insert gv (insertSet sv current) (concreteValueInitializers s)
             }
-                        {-
-      case (S.member gv (concreteBlacklist s),
-            M.lookup gv (concreteValueInitializers s)) of
-        (True, _) -> s
-        (False, Nothing) -> s { concreteValueInitializers =
-                                   M.insert gv sv (concreteValueInitializers s) }
-        (False, _) -> s { concreteBlacklist = S.insert gv (concreteBlacklist s)
-                        , concreteValueInitializers =
-                             M.delete gv (concreteValueInitializers s)
-                        }
--}
     _ ->
       case accessPath i of
         Nothing -> s
@@ -123,19 +116,3 @@ maybeRecordInitializer i sv sa s =
               s { abstractPathInitializers =
                      M.insert absPath (insertSet sv current) (abstractPathInitializers s)
                 }
-              {-
-      case accessPath i of
-        Nothing -> s
-        Just accPath ->
-          let absPath = abstractAccessPath accPath
-          in case (S.member absPath (abstractBlacklist s),
-                   M.lookup absPath (abstractPathInitializers s)) of
-               (True, _) -> s
-               (False, Nothing) -> s { abstractPathInitializers =
-                                          M.insert absPath sv (abstractPathInitializers s)
-                                     }
-               (False, _) -> s { abstractBlacklist = S.insert absPath (abstractBlacklist s)
-                               , abstractPathInitializers =
-                                    M.delete absPath (abstractPathInitializers s)
-                               }
--}

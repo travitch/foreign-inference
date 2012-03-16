@@ -91,15 +91,13 @@ identifyRefCounting ds lns depLens1 depLens2 =
     constData = RefCountData ds
     depLens = lens (getL depLens1 &&& getL depLens2) (\(f, s) -> setL depLens1 f . setL depLens2 s)
 
-isConditionalFinalizer :: FinalizerSummary -> Function -> Analysis Bool
-isConditionalFinalizer summ f =
+isConditionalFinalizer :: FinalizerSummary -> Function -> [Instruction] -> Analysis Bool
+isConditionalFinalizer summ f funcInstructions =
   case functionIsFinalizer summ f of
     True -> return False
     False -> do
       ds <- asks dependencySummary
-      return $! any (isFinalizerCall ds summ) functionInstructions
-  where
-    functionInstructions = concatMap basicBlockInstructions (functionBody f)
+      return $! any (isFinalizerCall ds summ) funcInstructions
 
 isFinalizerCall :: DependencySummary -> FinalizerSummary -> Instruction -> Bool
 isFinalizerCall ds summ i =
@@ -142,19 +140,59 @@ refCountAnalysis :: (FuncLike funcLike, HasCFG funcLike, HasFunction funcLike)
                     -> RefCountSummary
                     -> Analysis RefCountSummary
 refCountAnalysis (finSumm, seSumm) funcLike summ = do
-  isCondFin <- isConditionalFinalizer finSumm f
+  isCondFin <- isConditionalFinalizer finSumm f functionInstructions
   case isCondFin of
     False -> return summ
     True ->
       let newFin = HS.insert f (summ ^. conditionalFinalizers)
+          -- If this is a conditional finalizer, figure out which
+          -- field (if any) is unrefed.
           newUnref = case (refCountFields seSumm f, functionParameters f) of
             ([_], [a]) -> HS.insert a (summ ^. unrefArguments)
             _ -> summ ^. unrefArguments
-      in return $! (unrefArguments ^= newUnref) $ (conditionalFinalizers ^= newFin) summ
+      in return $! (unrefArguments ^= newUnref) $ (conditionalFinalizers ^= newFin) summ -- `debug`
+           -- printf "%s calls through fptr: %s\n" (show (functionName f)) (show fptrAccessPaths)
          -- `debug`
          --   printf "Ref counted fields: %s\n" (show (refCountFields seSumm f))
   where
     f = getFunction funcLike
+    functionInstructions = concatMap basicBlockInstructions (functionBody f)
+    fptrAccessPaths = mapMaybe indirectCallAccessPath functionInstructions
+
+indirectCallAccessPath :: Instruction -> Maybe AccessPath
+indirectCallAccessPath i =
+  case i of
+    CallInst { callFunction = f } -> notDirect f
+    InvokeInst { invokeFunction = f } -> notDirect f
+    _ -> Nothing
+  where
+    notDirect v =
+      case valueContent' v of
+        FunctionC _ -> Nothing
+        ExternalFunctionC _ -> Nothing
+        InstructionC callee -> accessPath callee
+        _ -> Nothing
+
+
+-- If we find a ref counting function that calls some functions
+-- through a function pointer of one argument (where that argument is
+-- reachable from the argument of the current function), try to
+-- resolve the function pointer using the initializer value analysis.
+--
+-- Check what each of those possible call targets casts their argument
+-- to.
+
+-- For incRef, look for scalar effects of Add1 for access paths
+-- matching the decRef access path.  We can look at functions that
+-- have already been processed by the scalar effects pass.  That isn't
+-- enough, though, because the function might not have been analyzed yet.
+-- So check:
+--
+--  (1) after identifying an unref function, and
+--
+--  (2) before analyzing a function (check a list of un-identified
+--      increfs)
+--
 
 refCountFields :: ScalarEffectSummary -> Function -> [AbstractAccessPath]
 refCountFields seSumm f = mapMaybe (checkRefCount seSumm args) allInsts
@@ -162,6 +200,7 @@ refCountFields seSumm f = mapMaybe (checkRefCount seSumm args) allInsts
     args = HS.fromList $ functionParameters f
     allInsts = concatMap basicBlockInstructions (functionBody f)
 
+-- FIXME: Add support for cmpxchg?
 checkRefCount :: ScalarEffectSummary
                  -> HashSet Argument
                  -> Instruction

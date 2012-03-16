@@ -37,6 +37,12 @@ import Data.Monoid
 import LLVM.Analysis
 import LLVM.Analysis.AccessPath
 
+-- import Text.Printf
+-- import Debug.Trace
+-- debug = flip trace
+
+-- Also, allow paths in finalizers to include exit-like functions.
+
 data SingleInitializerSummary =
   SIS { abstractPathInitializers :: !(Map AbstractAccessPath [Value])
       , concreteValueInitializers :: !(Map GlobalVariable [Value])

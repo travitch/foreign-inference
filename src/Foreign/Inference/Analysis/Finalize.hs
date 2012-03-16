@@ -193,7 +193,7 @@ callTransfer i v as info =
 checkInternalArg :: Instruction -> SummaryType -> Function
                     -> FinalizerInfo -> (Int, Value) -> Analysis FinalizerInfo
 checkInternalArg i summ f info (ix, (valueContent' -> ArgumentC a)) =
-  case functionIsVararg f && ix >= length formals of
+  case ix >= length formals of
     -- Pointer passed as a vararg, no information
     True -> return info
     False ->

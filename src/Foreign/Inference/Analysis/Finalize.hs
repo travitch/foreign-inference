@@ -194,7 +194,9 @@ checkInternalArg :: Instruction -> SummaryType -> Function
                     -> FinalizerInfo -> (Int, Value) -> Analysis FinalizerInfo
 checkInternalArg i summ f info (ix, (valueContent' -> ArgumentC a)) =
   case ix >= length formals of
-    -- Pointer passed as a vararg, no information
+    -- Pointer passed as a vararg, no information.  If f is not
+    -- vararg, then it was casted to a different type.  It cannot use
+    -- arguments beyond its arity so we have no summmary for them.
     True -> return info
     False ->
       -- If the formal corresponding to this actual is in the summary map,

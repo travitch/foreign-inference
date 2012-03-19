@@ -117,7 +117,7 @@ drilldownArgumentEntry startLine r arg = H.li $ do
   where
     argName = decodeUtf8 (identifierContent (argumentName arg))
     clickScript = mconcat [ "highlight('", argName, "');" ]
-    annots = concatMap (summarizeArgument' arg) (reportSummaries r)
+    annots = concatMap (summarizeArgument arg) (reportSummaries r)
 
 drilldownArgumentAnnotations :: Int -> [(ParamAnnotation, [Witness])] -> Html
 drilldownArgumentAnnotations _ [] = return ()
@@ -219,7 +219,7 @@ indexPageFunctionEntry r linkFunc f = do
       H.span ! A.class_ "code-type" $ toHtml (show fretType)
       functionAnnotations fannots
   where
-    fannots = concatMap (summarizeFunction' f) (reportSummaries r)
+    fannots = concatMap (summarizeFunction f) (reportSummaries r)
     fname = decodeUtf8 (identifierContent (functionName f))
     -- Use a bit of trickery to flag when we need to insert commas
     -- after arguments (so we don't end up with a trailing comma in
@@ -237,7 +237,7 @@ indexPageArgument r arg = do
   where
     paramType = show (argumentType arg)
     paramName = decodeUtf8 (identifierContent (argumentName arg))
-    annots = concatMap (map fst . summarizeArgument' arg) (reportSummaries r)
+    annots = concatMap (map fst . summarizeArgument arg) (reportSummaries r)
 
 indexArgumentAnnotations :: [ParamAnnotation] -> Html
 indexArgumentAnnotations [] = return ()

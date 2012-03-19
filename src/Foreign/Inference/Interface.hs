@@ -39,8 +39,6 @@ module Foreign.Inference.Interface (
   moduleToLibraryInterface,
   saveInterface,
   saveModule,
-  summarizeArgument',
-  summarizeFunction',
   readLibraryInterface
   ) where
 
@@ -204,21 +202,19 @@ data Witness = Witness !Instruction String
 instance NFData Witness where
   rnf w@(Witness _ s) = s `deepseq` w `seq` ()
 
+-- | An existential wrapper around types implementing
+-- 'SummarizeModule' to allow heterogenous lists of analysis results.
+data ModuleSummary = forall a . (SummarizeModule a) => ModuleSummary a
+
 -- | An interface for analyses to implement in order to annotate
 -- constructs in 'Module's.
 class SummarizeModule s where
   summarizeArgument :: Argument -> s -> [(ParamAnnotation, [Witness])]
   summarizeFunction :: Function -> s -> [FuncAnnotation]
 
-summarizeArgument' :: Argument -> ModuleSummary -> [(ParamAnnotation, [Witness])]
-summarizeArgument' a (ModuleSummary s) = summarizeArgument a s
-
-summarizeFunction' :: Function -> ModuleSummary -> [FuncAnnotation]
-summarizeFunction' f (ModuleSummary s) = summarizeFunction f s
-
--- | An existential wrapper around types implementing
--- 'SummarizeModule' to allow heterogenous lists of analysis results.
-data ModuleSummary = forall a . (SummarizeModule a) => ModuleSummary a
+instance SummarizeModule ModuleSummary where
+  summarizeArgument a (ModuleSummary s) = summarizeArgument a s
+  summarizeFunction f (ModuleSummary s) = summarizeFunction f s
 
 -- | Persist a 'LibraryInterface' to disk in the given @summaryDir@.
 -- It uses the name specified in the 'LibraryInterface' to choose the
@@ -376,7 +372,7 @@ functionToExternal summaries f =
                              }
   where
     vis = functionVisibility f
-    annots = concatMap (summarizeFunction' f) summaries
+    annots = concatMap (summarizeFunction f) summaries
     fretType = case functionType f of
       TypeFunction rt _ _ -> rt
       t -> t
@@ -389,7 +385,7 @@ paramToExternal summaries arg = do
                    , parameterAnnotations =
                      -- The map fst here drops witness information -
                      -- we don't need to expose that in summaries.
-                     concatMap (map fst . summarizeArgument' arg) summaries
+                     concatMap (map fst . summarizeArgument arg) summaries
                    }
 
 -- | Look up the summary information for the indicated parameter.

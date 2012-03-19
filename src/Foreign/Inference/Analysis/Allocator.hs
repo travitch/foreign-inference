@@ -113,15 +113,12 @@ allocatorAnalysis :: (FuncLike funcLike, HasFunction funcLike)
                      -> funcLike
                      -> AllocatorSummary
                      -> Analysis AllocatorSummary
-allocatorAnalysis esumm funcLike s@(AllocatorSummary summ _) =
+allocatorAnalysis esumm funcLike s =
   case exitInst of
     RetInst { retInstValue = Just rv } ->
       case valueType rv of
         -- The function always returns a pointer
-        TypePointer _ _ -> do
-          summ' <- checkReturn esumm f rv summ
-          return $! (allocatorSummary ^= summ') s
-
+        TypePointer _ _ -> checkReturn esumm f rv s
         -- Non-pointer return, ignore
         _ -> return s
     -- Returns void
@@ -138,7 +135,7 @@ allocatorAnalysis esumm funcLike s@(AllocatorSummary summ _) =
 --
 -- then f is an allocator.  If there is a unique finalizer for the
 -- same type, associate it with this allocator.
-checkReturn :: EscapeSummary -> Function -> Value -> SummaryType -> Analysis SummaryType
+checkReturn :: EscapeSummary -> Function -> Value -> AllocatorSummary -> Analysis AllocatorSummary
 checkReturn esumm f rv summ =
   case null nonNullRvs of
     -- Always returns NULL, not an allocator
@@ -147,7 +144,9 @@ checkReturn esumm f rv summ =
       valid <- mapM (isAllocatedWithoutEscape esumm summ) nonNullRvs
       case and valid of
         False -> return summ
-        True -> return $ M.insert f Nothing summ
+        True ->
+          let summ' = M.insert f Nothing (summ ^. allocatorSummary)
+          in return $! (allocatorSummary ^= summ') summ
   where
     rvs = flattenValue rv
     -- Here, drop all NULLs that are being returned since that is
@@ -158,7 +157,7 @@ checkReturn esumm f rv summ =
 
 -- | Return True if the given Value is the result of a call to an
 -- allocator AND does not escape.
-isAllocatedWithoutEscape :: EscapeSummary -> SummaryType -> Value -> Analysis Bool
+isAllocatedWithoutEscape :: EscapeSummary -> AllocatorSummary -> Value -> Analysis Bool
 isAllocatedWithoutEscape esumm summ rv = do
   allocatorInsts <- case valueContent' rv of
     InstructionC i@CallInst { callFunction = f } ->
@@ -184,29 +183,23 @@ isAllocatedWithoutEscape esumm summ rv = do
     True -> return False
     False -> return $! noneEscape esumm allocatorInsts
 
-checkFunctionIsAllocator :: Value -> SummaryType -> [Instruction] -> Analysis [Instruction]
+checkFunctionIsAllocator :: Value -> AllocatorSummary -> [Instruction] -> Analysis [Instruction]
 checkFunctionIsAllocator v summ is =
   case valueContent' v of
-    FunctionC f ->
-      case M.lookup f summ of
-        Nothing -> return []
-        Just _ -> return is
-    ExternalFunctionC f -> do
-      depSumm <- asks dependencySummary
-      case lookupFunctionSummary depSumm f of
-        Nothing -> return []
-        Just annots ->
-          case any isAllocatorAnnot annots of
-            False -> return []
-            True -> return is
     InstructionC LoadInst { } -> do
       sis <- asks singleInitSummary
       case singleInitializer sis v of
         [] -> return []
         [i] -> checkFunctionIsAllocator i summ is
         _ -> return []
-    -- Indirect call
-    _ -> return []
+    _ -> do
+      depSumm <- asks dependencySummary
+      case lookupFunctionSummary depSumm summ v of
+        Nothing -> return []
+        Just annots ->
+          case any isAllocatorAnnot annots of
+            False -> return []
+            True -> return is
 
 noneEscape :: EscapeSummary -> [Instruction] -> Bool
 noneEscape escSumm is = not (any (instructionEscapes escSumm) is)

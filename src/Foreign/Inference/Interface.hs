@@ -389,30 +389,75 @@ paramToExternal summaries arg = do
                    }
 
 -- | Look up the summary information for the indicated parameter.
-lookupArgumentSummary :: DependencySummary -> ExternalFunction -> Int -> Maybe [ParamAnnotation]
-lookupArgumentSummary ds ef ix =
-  case fsum of
-    Nothing -> Nothing
-    Just s -> case (isVarArg ef, ix < length (foreignFunctionParameters s)) of
-      (True, False) -> Just [] -- Vararg and we don't have a summary for the given function
-      (False, False) -> $failure ("lookupArgumentSummary: no parameter " ++ show ix ++ " for " ++ show ef)
-      (_, True) -> Just $ parameterAnnotations (foreignFunctionParameters s !! ix)
-  where
-    fname = identifierContent $ externalFunctionName ef
-    summ = depSummary ds
-    fsum = M.lookup fname summ
+-- lookupArgumentSummary :: DependencySummary -> ExternalFunction -> Int -> Maybe [ParamAnnotation]
+-- lookupArgumentSummary ds ef ix =
+--   case fsum of
+--     Nothing -> Nothing
+--     Just s -> case (isVarArg ef, ix < length (foreignFunctionParameters s)) of
+--       (True, False) -> Just [] -- Vararg and we don't have a summary for the given function
+--       (False, False) -> $failure ("lookupArgumentSummary: no parameter " ++ show ix ++ " for " ++ show ef)
+--       (_, True) -> Just $ parameterAnnotations (foreignFunctionParameters s !! ix)
+--   where
+--     fname = identifierContent $ externalFunctionName ef
+--     summ = depSummary ds
+--     fsum = M.lookup fname summ
 
-lookupFunctionSummary :: DependencySummary -> ExternalFunction -> Maybe [FuncAnnotation]
-lookupFunctionSummary ds ef = do
-  let fname = identifierContent $ externalFunctionName ef
-      summ = depSummary ds
-  fsum <- M.lookup fname summ
-  return (foreignFunctionAnnotations fsum)
+-- lookupFunctionSummary :: DependencySummary -> ExternalFunction -> Maybe [FuncAnnotation]
+-- lookupFunctionSummary ds ef = do
+--   let fname = identifierContent $ externalFunctionName ef
+--       summ = depSummary ds
+--   fsum <- M.lookup fname summ
+--   return (foreignFunctionAnnotations fsum)
 
 isVarArg :: ExternalFunction -> Bool
 isVarArg ef = isVa
   where
     (TypeFunction _ _ isVa) = externalFunctionType ef
+
+lookupFunctionSummary :: (IsValue v, SummarizeModule s)
+                         => DependencySummary
+                         -> s
+                         -> v
+                         -> Maybe [FuncAnnotation]
+lookupFunctionSummary ds ms val =
+  case valueContent' val of
+    FunctionC f -> return $! summarizeFunction f ms
+    ExternalFunctionC ef -> do
+      let fname = identifierContent $ externalFunctionName ef
+          summ = depSummary ds
+      fsum <- M.lookup fname summ
+      return (foreignFunctionAnnotations fsum)
+    _ -> return $! []
+
+lookupArgumentSummary :: (IsValue v, SummarizeModule s)
+                         => DependencySummary
+                         -> s
+                         -> v
+                         -> Int
+                         -> Maybe [ParamAnnotation]
+lookupArgumentSummary ds ms val ix =
+  case valueContent' val of
+    FunctionC f ->
+      case ix < length (functionParameters f) of
+        False -> Just []
+        True ->
+          let annots = summarizeArgument (functionParameters f !! ix) ms
+          in Just (map fst annots)
+    ExternalFunctionC ef -> do
+      let fname = identifierContent $ externalFunctionName ef
+          summ = depSummary ds
+      fsum <- M.lookup fname summ
+      let ps = foreignFunctionParameters fsum
+      case ix < length ps of
+        -- Either this was a vararg or the function was cast to a
+        -- strange type (with extra parameters) before being called.
+        False -> Just []
+        True -> Just $ parameterAnnotations (ps !! ix)
+      --   (True, False) -> Just [] -- Vararg and we don't have a summary for the given function
+      -- (False, False) -> $failure ("lookupArgumentSummary: no parameter " ++ show ix ++ " for " ++ show ef)
+      -- (_, True) -> Just $ parameterAnnotations (foreignFunctionParameters s !! ix)
+    _ -> Just []
+
 
 -- Helpers
 

@@ -67,7 +67,7 @@ identifyEscapes ds lns =
       in (escapeDiagnostics ^= diags) e
 
     extSumm ef ix =
-      case lookupArgumentSummary ds ef ix of
+      case lookupArgumentSummary ds (undefined :: EscapeSummary) ef ix of
         Nothing -> do
           let msg = "Missing summary for " ++ show (externalFunctionName ef)
           emitWarning Nothing "EscapeAnalysis" msg

@@ -105,7 +105,7 @@ arrayAnalysis :: (FuncLike funcLike, HasFunction funcLike)
 arrayAnalysis funcLike a@(ArraySummary summary _) = do
   ds <- asks dependencySummary
 
-  let basesAndOffsets = map (isArrayDeref ds summary) insts
+  let basesAndOffsets = map (isArrayDeref ds a) insts
       baseResultMap = foldr (\itm acc -> foldr addDeref acc itm) M.empty basesAndOffsets
       summary' = M.foldlWithKey' (traceFromBases baseResultMap) summary baseResultMap
   return $! (arraySummary ^= summary') a
@@ -163,7 +163,7 @@ traceBackwards baseResultMap result depth =
         CallArgument d -> depth + d
 
 isArrayDeref :: DependencySummary
-                -> SummaryType
+                -> ArraySummary
                 -> Instruction
                 -> [(Value, PointerUse)]
 isArrayDeref ds summ inst = case valueContent' inst of
@@ -213,31 +213,17 @@ buildArrayDeref inst idxs base acc =
 -- Only bother inspecting direct calls.  Information gained from
 -- indirect calls is unreliable since we don't have all possible
 -- callees, even with a very powerful points-to analysis.
-collectArrayArgs :: DependencySummary -> SummaryType
+collectArrayArgs :: DependencySummary -> ArraySummary
                     -> Value -> [(Value, PointerUse)] -> (Int, Value)
                     -> [(Value, PointerUse)]
 collectArrayArgs ds summ callee lst (ix, arg) =
-  case valueContent' callee of
-    FunctionC f ->
-      let funcArgs = functionParameters f
-      in case (ix < length funcArgs, functionIsVararg f) of
-        (True, _) -> case M.lookup (funcArgs !! ix) summ of
-          Nothing -> lst
-          Just depth -> (arg, CallArgument depth) : lst
-        -- Args passed as varargs don't give us any information (in general)
-        (False, True) -> []
-        (False, False) -> $failure ("ArrayAnalysis: argument index out of range: " ++ show (functionName f) ++ " : " ++ show arg)
-    -- Look up the ixth argument of the callee in the
-    -- DependencySummary and record it if it is tagged with a PAArray
-    -- annotation
-    ExternalFunctionC e ->
-      case lookupArgumentSummary ds e ix of
-        Nothing -> lst
-        Just annots -> case filter isArrayAnnot annots of
-          [] -> lst
-          [PAArray depth] -> (arg, CallArgument depth) : lst
-          _ -> $failure "This summary should only produce singleton or empty lists"
-    _ -> []
+  case lookupArgumentSummary ds summ callee ix of
+    Nothing -> lst
+    Just annots ->
+      case filter isArrayAnnot annots of
+        [] -> lst
+        [PAArray depth] -> (arg, CallArgument depth) : lst
+        _ -> $failure "This summary should only produce singleton or empty lists"
 
 isArrayAnnot :: ParamAnnotation -> Bool
 isArrayAnnot (PAArray _) = True

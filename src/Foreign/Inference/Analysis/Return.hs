@@ -49,6 +49,6 @@ identifyReturns ds lns =
       res <- noReturnAnalysis extSumm f s
       return $! ReturnSummary res
     extSumm ef =
-      case lookupFunctionSummary ds ef of
+      case lookupFunctionSummary ds (undefined ::  ReturnSummary) ef of
         Nothing -> return False
         Just s -> return $ FANoRet `elem` s

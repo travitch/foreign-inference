@@ -84,7 +84,7 @@ summarizeFinalizerArgument a (FinalizerSummary m _) =
     Just ws -> [(PAFinalize, ws)]
 
 data FinalizerData =
-  FinalizerData { moduleSummary :: SummaryType
+  FinalizerData { moduleSummary :: FinalizerSummary
                 , dependencySummary :: DependencySummary
                 , singleInitSummary :: SingleInitializerSummary
                 }
@@ -98,7 +98,7 @@ identifyFinalizers ds sis lns =
   composableAnalysisM runner finalizerAnalysis lns
   where
     runner a = runAnalysis a constData ()
-    constData = FinalizerData HM.empty ds sis
+    constData = FinalizerData mempty ds sis
 
 data FinalizerInfo =
   FinalizerInfo { notFinalizedOrNull :: HashSet Argument
@@ -127,7 +127,7 @@ finalizerAnalysis funcLike s@(FinalizerSummary summ _) = do
   -- Update the immutable data with the information we have gathered
   -- from the rest of the module so far.  We want to be able to access
   -- this in the Reader environment
-  let envMod e = e { moduleSummary = summ }
+  let envMod e = e { moduleSummary = s }
       set0 = HS.fromList $ filter isPointer (functionParameters f)
       fact0 = FinalizerInfo set0 HM.empty
 
@@ -167,61 +167,29 @@ finalizerTransfer info i =
 callTransfer :: Instruction -> Value -> [Value] -> FinalizerInfo -> Analysis FinalizerInfo
 callTransfer i v as info =
   case valueContent' v of
-    FunctionC f -> do
-      modSum <- asks moduleSummary
-      let indexedArgs = zip [0..] as
-      foldM (checkInternalArg i modSum f) info indexedArgs
-    ExternalFunctionC f -> do
-      depSum <- asks dependencySummary
-      let indexedArgs = zip [0..] as
-      foldM (checkExternalArg i depSum f) info indexedArgs
-
-    -- Call through a function pointer.  We might be able to learn
-    -- something about the call if the value being called only has one
-    -- initializer in the library code.
     InstructionC LoadInst { } -> do
       sis <- asks singleInitSummary
       case singleInitializer sis v of
         [] -> return info
         [singleInit] -> callTransfer i singleInit as info
         _ -> return info
-
-    -- Indirect call - no point in resolving it since we aren't
-    -- getting any useful information.
-    _ -> return info
-
-checkInternalArg :: Instruction -> SummaryType -> Function
-                    -> FinalizerInfo -> (Int, Value) -> Analysis FinalizerInfo
-checkInternalArg i summ f info (ix, (valueContent' -> ArgumentC a)) =
-  case ix >= length formals of
-    -- Pointer passed as a vararg, no information.  If f is not
-    -- vararg, then it was casted to a different type.  It cannot use
-    -- arguments beyond its arity so we have no summmary for them.
-    True -> return info
-    False ->
-      -- If the formal corresponding to this actual is in the summary map,
-      -- it is finalized (and so is @a@ on this path).
-      case HM.lookup (formals !! ix) summ of
-        Nothing -> return info
-        Just _ -> return $! removeArgWithWitness a i "finalized" info
+    _ -> do
+      modSumm <- asks moduleSummary
+      depSumm <- asks dependencySummary
+      foldM (checkArg depSumm modSumm) info indexedArgs
   where
-    formals = functionParameters f
-checkInternalArg _ _ _ info _ = return info
-
-checkExternalArg :: Instruction -> DependencySummary -> ExternalFunction
-                    -> FinalizerInfo -> (Int, Value) -> Analysis FinalizerInfo
-checkExternalArg i summ f info (ix, (valueContent' -> ArgumentC a)) =
-  case lookupArgumentSummary summ f ix of
-    Nothing -> do
-      emitWarning Nothing "FinalizerAnalysis" errMsg
-      return info
-    Just attrs ->
-      case PAFinalize `elem` attrs of
-        False -> return info
-        True -> return $! removeArgWithWitness a i "finalized" info
-  where
-    errMsg = "No ExternalFunction summary for " ++ show (externalFunctionName f)
-checkExternalArg _ _ _ info _ = return info
+    indexedArgs = zip [0..] as
+    checkArg ds ms acc (ix, (valueContent' -> ArgumentC a)) =
+      case lookupArgumentSummary ds ms v ix of
+        Nothing -> do
+          let errMsg = "No ExternalFunction summary for " ++ show (valueName v)
+          emitWarning Nothing "FinalizerAnalysis" errMsg
+          return acc
+        Just attrs ->
+          case PAFinalize `elem` attrs of
+            False -> return acc
+            True -> return $! removeArgWithWitness a i "finalized" acc
+    checkArg _ _ acc _ = return acc
 
 removeArgWithWitness :: Argument -> Instruction -> String -> FinalizerInfo -> FinalizerInfo
 removeArgWithWitness a i reason (FinalizerInfo s m) =

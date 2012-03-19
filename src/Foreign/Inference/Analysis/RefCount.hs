@@ -92,8 +92,9 @@ identifyRefCounting ds lns depLens1 depLens2 =
     depLens = lens (getL depLens1 &&& getL depLens2) (\(f, s) -> setL depLens1 f . setL depLens2 s)
 
 isConditionalFinalizer :: FinalizerSummary -> Function -> [Instruction] -> Analysis Bool
-isConditionalFinalizer summ f funcInstructions =
-  case functionIsFinalizer summ f of
+isConditionalFinalizer summ f funcInstructions = do
+  ds <- asks dependencySummary
+  case functionIsFinalizer ds summ (Value f) of
     True -> return False
     False -> do
       ds <- asks dependencySummary
@@ -102,31 +103,21 @@ isConditionalFinalizer summ f funcInstructions =
 isFinalizerCall :: DependencySummary -> FinalizerSummary -> Instruction -> Bool
 isFinalizerCall ds summ i =
   case i of
-    CallInst { callFunction = (valueContent' -> FunctionC f) } ->
-      functionIsFinalizer summ f
-    CallInst { callFunction = (valueContent' -> ExternalFunctionC e) } ->
-      externalIsFinalizer ds e
-    InvokeInst { invokeFunction = (valueContent' -> FunctionC f) } ->
-      functionIsFinalizer summ f
-    InvokeInst { invokeFunction = (valueContent' -> ExternalFunctionC e) } ->
-      externalIsFinalizer ds e
+    CallInst { callFunction = callee } ->
+      functionIsFinalizer ds summ callee
+    InvokeInst { invokeFunction = callee } ->
+      functionIsFinalizer ds summ callee
     _ -> False
 
-externalIsFinalizer :: DependencySummary -> ExternalFunction -> Bool
-externalIsFinalizer ds ef =
+functionIsFinalizer :: DependencySummary -> FinalizerSummary -> Value -> Bool
+functionIsFinalizer ds fs callee =
   any argFinalizes allArgAnnots
   where
-    TypeFunction _ atypes _ = externalFunctionType ef
+    TypeFunction _ atypes _ = valueType callee
     maxArg = length atypes - 1
-    allArgAnnots = map (lookupArgumentSummary ds ef) [0..maxArg]
+    allArgAnnots = map (lookupArgumentSummary ds fs callee) [0..maxArg]
     argFinalizes Nothing = False
     argFinalizes (Just annots) = PAFinalize `elem` annots
-
-functionIsFinalizer :: FinalizerSummary -> Function -> Bool
-functionIsFinalizer summ f = all snd annotatedArgs
-  where
-    funcArgs = functionParameters f
-    annotatedArgs = map (annotateArg summ) funcArgs
 
 annotateArg :: FinalizerSummary -> Argument -> (Argument, Bool)
 annotateArg summ a = (a, any doesFinalize (summarizeArgument a summ))

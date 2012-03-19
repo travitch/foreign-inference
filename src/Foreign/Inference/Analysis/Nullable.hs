@@ -115,7 +115,6 @@ import Data.HashMap.Strict ( HashMap )
 import Data.Lens.Common
 import Data.Lens.Template
 import qualified Data.HashMap.Strict as HM
-import Data.Maybe ( isJust )
 import Data.Monoid
 import Debug.Trace.LocationTH
 
@@ -179,10 +178,10 @@ identifyNullable ds lns depLens =
   composableDependencyAnalysisM runner nullableAnalysis lns depLens
   where
     runner a = runAnalysis a constData cache
-    constData = ND HM.empty ds undefined undefined undefined
+    constData = ND mempty ds undefined undefined undefined
     cache = NState HM.empty
 
-data NullData = ND { moduleSummary :: SummaryType
+data NullData = ND { moduleSummary :: NullableSummary
                    , dependencySummary :: DependencySummary
                    , returnSummary :: ReturnSummary
                    , controlDepGraph :: CDG
@@ -234,7 +233,7 @@ nullableAnalysis retSumm funcLike s@(NullableSummary summ _) = do
   --
   -- The initial state of the dataflow analysis is top -- all pointer
   -- parameters are NULLable.
-  let envMod e = e { moduleSummary = summ
+  let envMod e = e { moduleSummary = s
                    , returnSummary = retSumm
                    , controlDepGraph = controlDependenceGraph cfg
                    , domTree = dominatorTree cfg
@@ -357,35 +356,34 @@ callTransfer ::  Instruction
                  -> NullInfo
                  -> Analysis NullInfo
 callTransfer i calledFunc args ni = do
-  ni' <- case valueContent' calledFunc of
-    FunctionC f ->do
-      summ <- asks moduleSummary
-      retSumm <- asks returnSummary
-      case FANoRet `elem` summarizeFunction f retSumm of
-        False -> definedFunctionTransfer i summ f ni args
-        True ->
-          return ni { nullArguments = S.empty
-                    , nullWitnesses =
-                      S.foldl' (addWitness i) (nullWitnesses ni) (nullArguments ni)
-                    }
-    ExternalFunctionC e ->  do
-      summ <- asks dependencySummary
-      case lookupFunctionSummary summ e of
-        Nothing -> externalFunctionTransfer i summ e ni args
-        Just s -> case FANoRet `elem` s of
-          True ->
-            return ni { nullArguments = S.empty
+  let indexedArgs = zip [0..] args
+  modSumm <- asks moduleSummary
+  retSumm <- asks returnSummary
+  depSumm <- asks dependencySummary
+  let retAttrs = maybe [] id $ lookupFunctionSummary depSumm retSumm calledFunc
+
+  ni' <- case FANoRet `elem` retAttrs of
+    True -> return ni { nullArguments = S.empty
                       , nullWitnesses =
                         S.foldl' (addWitness i) (nullWitnesses ni) (nullArguments ni)
                       }
-          False -> externalFunctionTransfer i summ e ni args
-    _ -> return ni
+    False -> foldM (checkArg depSumm modSumm) ni indexedArgs
   -- We also learn information about pointers that are not null if
   -- this is a call through a function pointer (calling a NULL
   -- function pointer is illegal)
   case isIndirectCallee calledFunc of
     False -> return ni'
     True -> valueDereferenced i calledFunc ni'
+  where
+    checkArg ds ms acc (ix, arg) =
+      case lookupArgumentSummary ds ms calledFunc ix of
+        Nothing -> do
+          let errMsg = "No summary for " ++ show (valueName calledFunc)
+          emitWarning Nothing "NullAnalysis" errMsg
+          return acc
+        Just attrs -> case PANotNull `elem` attrs of
+          False -> return acc
+          True -> valueDereferenced i arg acc
 
 addWitness :: Instruction
               -> Map Argument (Set Witness)
@@ -399,35 +397,6 @@ isIndirectCallee val =
     FunctionC _ -> False
     ExternalFunctionC _ -> False
     _ -> True
-
-definedFunctionTransfer :: Instruction -> SummaryType -> Function
-                           -> NullInfo -> [Value] -> Analysis NullInfo
-definedFunctionTransfer i summ f ni args =
-  foldM markArgNotNullable ni indexedNotNullArgs
-  where
-    formals = functionParameters f
-    notNullableArgs = filter (\frml -> isJust (HM.lookup frml summ)) formals
-    isNotNullable (a, _) = not . null $ filter (==a) notNullableArgs
-    -- | Pairs of not-nullable formals/actuals
-    indexedNotNullArgs = filter isNotNullable $ zip formals args
-    markArgNotNullable info (_, a) =
-      valueDereferenced i a info
-
-externalFunctionTransfer :: Instruction -> DependencySummary -> ExternalFunction
-                            -> NullInfo -> [Value] -> Analysis NullInfo
-externalFunctionTransfer i summ e ni args =
-  foldM markIfNotNullable ni indexedArgs
-  where
-    errMsg = "No ExternalFunction summary for " ++ show (externalFunctionName e)
-    indexedArgs = zip [0..] args
-    markIfNotNullable info (ix, arg) =
-      case lookupArgumentSummary summ e ix of
-        Nothing -> do
-          emitWarning Nothing "NullAnalysis" errMsg
-          return info
-        Just attrs -> case PANotNull `elem` attrs of
-          False -> return info
-          True -> valueDereferenced i arg info
 
 -- We can tell that a piece of code MUST execute if:
 --

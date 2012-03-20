@@ -873,7 +873,7 @@
           "foreignFunctionLinkage": { "LinkDefault": [] },
           "foreignFunctionReturnType": {"CInt": 32},
           "foreignFunctionParameters": [
-              { "parameterAnnotations": [{"PAFinalize":[]}],
+              { "parameterAnnotations": [],
                 "parameterName": "func",
                 "parameterType": {"CPointer": {"CFunction": [{"CVoid":[]}, []]}}
               }

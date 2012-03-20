@@ -24,6 +24,7 @@ module Foreign.Inference.Interface (
   Witness(..),
   DependencySummary,
   LibraryInterface(..),
+  LibraryAnnotations,
   ForeignFunction(..),
   Parameter(..),
   CType(..),
@@ -39,7 +40,9 @@ module Foreign.Inference.Interface (
   moduleToLibraryInterface,
   saveInterface,
   saveModule,
-  readLibraryInterface
+  readLibraryInterface,
+  addLibraryAnnotations,
+  loadAnnotations
   ) where
 
 import Prelude hiding ( catch )
@@ -55,7 +58,12 @@ import qualified Data.ByteString.Lazy as LBS
 import Data.Data
 import Data.HashMap.Strict ( HashMap )
 import qualified Data.HashMap.Strict as M
+import Data.Map ( Map )
+import qualified Data.Map as Map
+import Data.IntMap ( IntMap )
+import qualified Data.IntMap as IM
 import Data.Maybe ( mapMaybe )
+import Data.Monoid
 import Data.Set ( Set )
 import qualified Data.Set as S
 import Data.List ( foldl' )
@@ -174,12 +182,18 @@ data LibraryInterface = LibraryInterface { libraryFunctions :: [ForeignFunction]
 instance FromJSON LibraryInterface
 instance ToJSON LibraryInterface
 
+type LibraryAnnotations = Map ByteString ([FuncAnnotation], IntMap [ParamAnnotation])
 type DepMap = HashMap ByteString ForeignFunction
 
 -- | A summary of all of the functions that are dependencies of the
 -- current library.
-data DependencySummary = DS { depSummary :: DepMap }
+data DependencySummary = DS { depSummary :: DepMap
+                            , libraryAnnotations :: LibraryAnnotations
+                            }
                        deriving (Show)
+
+addLibraryAnnotations :: DependencySummary -> LibraryAnnotations -> DependencySummary
+addLibraryAnnotations ds as = ds { libraryAnnotations = libraryAnnotations ds `mappend` as }
 
 -- | The standard library summaries that can be automatically loaded
 -- by 'loadDependencies''.
@@ -234,6 +248,16 @@ saveModule summaryDir name deps m summaries = do
   let i = moduleToLibraryInterface m name deps summaries
   saveInterface summaryDir i
 
+-- | Load annotations supplied by the user
+loadAnnotations :: FilePath -> IO LibraryAnnotations
+loadAnnotations p = do
+  c <- LBS.readFile p
+  case decode' c of
+    Nothing ->
+      let ex = mkIOError doesNotExistErrorType "loadAnnotations" Nothing (Just p)
+      in ioError ex
+    Just li -> return li
+
 -- | A call
 --
 -- > loadDependencies summaryDir deps
@@ -256,7 +280,7 @@ loadDependencies' includeStd summaryDirs deps = do
   let deps' = foldl' addStdlibDeps deps includeStd
   predefinedSummaries <- getDataFileName "stdlibs"
   m <- loadTransDeps (predefinedSummaries : summaryDirs) deps' S.empty M.empty
-  return (DS m)
+  return (DS m mempty)
   where
     addStdlibDeps ds CStdLib = "c" : "m" : ds
     addStdlibDeps ds CxxStdLib = "stdc++" : ds
@@ -388,31 +412,32 @@ paramToExternal summaries arg = do
                      concatMap (map fst . summarizeArgument arg) summaries
                    }
 
--- | Look up the summary information for the indicated parameter.
--- lookupArgumentSummary :: DependencySummary -> ExternalFunction -> Int -> Maybe [ParamAnnotation]
--- lookupArgumentSummary ds ef ix =
---   case fsum of
---     Nothing -> Nothing
---     Just s -> case (isVarArg ef, ix < length (foreignFunctionParameters s)) of
---       (True, False) -> Just [] -- Vararg and we don't have a summary for the given function
---       (False, False) -> $failure ("lookupArgumentSummary: no parameter " ++ show ix ++ " for " ++ show ef)
---       (_, True) -> Just $ parameterAnnotations (foreignFunctionParameters s !! ix)
---   where
---     fname = identifierContent $ externalFunctionName ef
---     summ = depSummary ds
---     fsum = M.lookup fname summ
-
--- lookupFunctionSummary :: DependencySummary -> ExternalFunction -> Maybe [FuncAnnotation]
--- lookupFunctionSummary ds ef = do
---   let fname = identifierContent $ externalFunctionName ef
---       summ = depSummary ds
---   fsum <- M.lookup fname summ
---   return (foreignFunctionAnnotations fsum)
-
 isVarArg :: ExternalFunction -> Bool
 isVarArg ef = isVa
   where
     (TypeFunction _ _ isVa) = externalFunctionType ef
+
+userFunctionAnnotations :: DependencySummary -> Function -> [FuncAnnotation]
+userFunctionAnnotations ds f =
+  case fannots of
+    Nothing -> []
+    Just (fas, _) -> fas
+  where
+    fname = identifierContent $ functionName f
+    allAnnots = libraryAnnotations ds
+    fannots = Map.lookup fname allAnnots
+
+userParameterAnnotations :: DependencySummary -> Function -> Int -> [ParamAnnotation]
+userParameterAnnotations ds f ix =
+  case fannots of
+    Nothing -> []
+    Just (_, pmap) -> IM.findWithDefault [] ix pmap
+
+  where
+    fname = identifierContent $ functionName f
+    allAnnots = libraryAnnotations ds
+    fannots = Map.lookup fname allAnnots
+
 
 lookupFunctionSummary :: (IsValue v, SummarizeModule s)
                          => DependencySummary
@@ -421,7 +446,9 @@ lookupFunctionSummary :: (IsValue v, SummarizeModule s)
                          -> Maybe [FuncAnnotation]
 lookupFunctionSummary ds ms val =
   case valueContent' val of
-    FunctionC f -> return $! summarizeFunction f ms
+    FunctionC f ->
+      let fannots = userFunctionAnnotations ds f
+      in return $! fannots ++ summarizeFunction f ms
     ExternalFunctionC ef -> do
       let fname = identifierContent $ externalFunctionName ef
           summ = depSummary ds
@@ -442,7 +469,8 @@ lookupArgumentSummary ds ms val ix =
         False -> Just []
         True ->
           let annots = summarizeArgument (functionParameters f !! ix) ms
-          in Just (map fst annots)
+              uannots = userParameterAnnotations ds f ix
+          in Just $! uannots ++ map fst annots
     ExternalFunctionC ef -> do
       let fname = identifierContent $ externalFunctionName ef
           summ = depSummary ds

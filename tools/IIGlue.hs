@@ -60,6 +60,9 @@ setDiagnostics d opts =
     [(diagLevel, "")] -> Right opts { diagnosticLevel = diagLevel }
     _ -> Left $ "Invalid diagnostic level: " ++ d
 
+setAnnotations :: String -> Opts -> Either String Opts
+setAnnotations a opts = Right opts { annotationFile = Just a }
+
 setHelp :: Opts -> Opts
 setHelp opts = opts { wantsHelp = True }
 
@@ -73,6 +76,7 @@ cmdOpts defs = mode "IIGlue" defs desc bitcodeArg as
          , flagReq ["diagnostics"] setDiagnostics "DIAGNOSTIC" "The level of diagnostics to show (Debug, Info, Warning, Error).  Default: Warning"
          , flagReq ["source"] setSource "FILE" "The source for the library being analyzed (tarball or zip archive).  If provided, a report will be generated"
          , flagReq ["reportDir"] setReportDir "DIRECTORY" "The directory in which the summary report will be produced.  Defaults to the REPOSITORY."
+         , flagReq ["annotations"] setAnnotations "FILE" "An optional file containing annotations for the library being analyzed"
          , flagHelpSimple setHelp
          ]
 
@@ -86,6 +90,7 @@ data Opts = Opts { inputDependencies :: [String]
                  , reportDir :: Maybe FilePath
                  , inputFile :: [FilePath]
                  , diagnosticLevel :: Classification
+                 , annotationFile :: Maybe FilePath
                  , wantsHelp :: Bool
                  }
           deriving (Show)
@@ -97,6 +102,7 @@ defOpts rl = Opts { inputDependencies = []
                   , reportDir = Nothing
                   , inputFile = []
                   , diagnosticLevel = Info
+                  , annotationFile = Nothing
                   , wantsHelp = False
                   }
 
@@ -132,7 +138,12 @@ dump opts name m = do
       cg = mkCallGraph m pta []
       deps = inputDependencies opts
       repo = repositoryLocation opts
-  ds <- loadDependencies [repo] deps
+  baseDeps <- loadDependencies [repo] deps
+  ds <- case annotationFile opts of
+    Nothing -> return baseDeps
+    Just af -> do
+      annots <- loadAnnotations af
+      return $! addLibraryAnnotations baseDeps annots
 
   let sis = identifySingleInitializers m
 

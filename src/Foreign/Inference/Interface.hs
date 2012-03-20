@@ -456,6 +456,10 @@ lookupFunctionSummary ds ms val =
       return (foreignFunctionAnnotations fsum)
     _ -> return $! []
 
+-- FIXME Need to add some kind of hook to incorporate annotations into
+-- the interface summaries generated. (saveModule).  Also need to make
+-- sure the information appears in generated HTML reports.
+
 lookupArgumentSummary :: (IsValue v, SummarizeModule s)
                          => DependencySummary
                          -> s
@@ -481,9 +485,6 @@ lookupArgumentSummary ds ms val ix =
         -- strange type (with extra parameters) before being called.
         False -> Just []
         True -> Just $ parameterAnnotations (ps !! ix)
-      --   (True, False) -> Just [] -- Vararg and we don't have a summary for the given function
-      -- (False, False) -> $failure ("lookupArgumentSummary: no parameter " ++ show ix ++ " for " ++ show ef)
-      -- (_, True) -> Just $ parameterAnnotations (foreignFunctionParameters s !! ix)
     _ -> Just []
 
 

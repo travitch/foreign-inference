@@ -97,9 +97,7 @@ isConditionalFinalizer summ f funcInstructions = do
   ds <- asks dependencySummary
   case functionIsFinalizer ds summ (Value f) of
     True -> return False
-    False -> do
-      ds <- asks dependencySummary
-      return $! any (isFinalizerCall ds summ) funcInstructions
+    False -> return $! any (isFinalizerCall ds summ) funcInstructions
 
 isFinalizerCall :: DependencySummary -> FinalizerSummary -> Instruction -> Bool
 isFinalizerCall ds summ i =

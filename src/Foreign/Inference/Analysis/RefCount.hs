@@ -113,7 +113,9 @@ functionIsFinalizer :: DependencySummary -> FinalizerSummary -> Value -> Bool
 functionIsFinalizer ds fs callee =
   any argFinalizes allArgAnnots
   where
-    TypeFunction _ atypes _ = valueType callee
+    atypes = case valueType callee of
+      TypeFunction _ ats _ -> ats
+      TypePointer (TypeFunction _ ats _) _ -> ats
     maxArg = length atypes - 1
     allArgAnnots = map (lookupArgumentSummary ds fs callee) [0..maxArg]
     argFinalizes Nothing = False

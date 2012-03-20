@@ -23,6 +23,7 @@ import Data.Lens.Common
 import Data.Lens.Template
 import Data.Maybe ( mapMaybe )
 import Data.Monoid
+import Debug.Trace.LocationTH
 
 import LLVM.Analysis
 import LLVM.Analysis.AccessPath
@@ -116,6 +117,7 @@ functionIsFinalizer ds fs callee =
     atypes = case valueType callee of
       TypeFunction _ ats _ -> ats
       TypePointer (TypeFunction _ ats _) _ -> ats
+      _ -> $failure ("Expected function type: " ++ show (valueType callee))
     maxArg = length atypes - 1
     allArgAnnots = map (lookupArgumentSummary ds fs callee) [0..maxArg]
     argFinalizes Nothing = False

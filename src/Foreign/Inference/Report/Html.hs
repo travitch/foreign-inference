@@ -53,7 +53,7 @@ htmlFunctionPage r f srcFile startLine functionText = H.docTypeHtml $ do
     H.div $ do
       H.ul $ forM_ (functionParameters f) (drilldownArgumentEntry startLine r)
 
-    toHtml funcName >> "(" >> commaSepList args (indexPageArgument r) >> ") -> "
+    toHtml funcName >> "(" >> commaSepList (zip [0..] args) (indexPageArgument r) >> ") -> "
     H.span ! A.class_ "code-type" $ toHtml (show fretType)
     let lang : _ = K.languagesByFilename srcFile
         highlightedSrc = K.highlightAs lang (preprocessFunction functionText)
@@ -214,12 +214,15 @@ indexPageFunctionEntry r linkFunc f = do
                 False -> toHtml fname
         _ -> toHtml fname
       "("
-      commaSepList args (indexPageArgument r)
+      commaSepList (zip [0..] args) (indexPageArgument r)
       ") -> "
       H.span ! A.class_ "code-type" $ toHtml (show fretType)
       functionAnnotations fannots
   where
-    fannots = concatMap (summarizeFunction f) (reportSummaries r)
+    allAnnots = libraryAnnotations $ reportDependencies r
+    fannots = concat [ userFunctionAnnotations allAnnots f
+                     , concatMap (summarizeFunction f) (reportSummaries r)
+                     ]
     fname = decodeUtf8 (identifierContent (functionName f))
     -- Use a bit of trickery to flag when we need to insert commas
     -- after arguments (so we don't end up with a trailing comma in
@@ -229,15 +232,18 @@ indexPageFunctionEntry r linkFunc f = do
       TypeFunction rt _ _ -> rt
       rtype -> rtype
 
-indexPageArgument :: InterfaceReport -> Argument -> Html
-indexPageArgument r arg = do
+indexPageArgument :: InterfaceReport -> (Int, Argument) -> Html
+indexPageArgument r (ix, arg) = do
   H.span ! A.class_ "code-type" $ do
     toHtml paramType
   " " >> toHtml paramName >> " " >> indexArgumentAnnotations annots
   where
     paramType = show (argumentType arg)
     paramName = decodeUtf8 (identifierContent (argumentName arg))
-    annots = concatMap (map fst . summarizeArgument arg) (reportSummaries r)
+    allAnnots = libraryAnnotations $ reportDependencies r
+    annots = concat [ userParameterAnnotations allAnnots (argumentFunction arg) ix
+                    , concatMap (map fst . summarizeArgument arg) (reportSummaries r)
+                    ]
 
 indexArgumentAnnotations :: [ParamAnnotation] -> Html
 indexArgumentAnnotations [] = return ()

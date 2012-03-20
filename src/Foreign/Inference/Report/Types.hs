@@ -16,7 +16,9 @@ data InterfaceReport =
                   , reportFunctionBodies :: Map Function (FilePath, Int, ByteString)
                   , reportArchive :: ArchiveIndex
                   , reportSummaries :: [ModuleSummary]
+                  , reportDependencies :: DependencySummary
                   }
   | InterfaceSummaryReport { reportModule :: Module
                            , reportSummaries :: [ModuleSummary]
+                           , reportDependencies :: DependencySummary
                            }

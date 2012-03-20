@@ -172,22 +172,22 @@ dump opts name m = do
     Just diagString -> putStrLn diagString
 
   -- Persist the module summary
-  saveModule repo name deps m summaries
+  saveModule repo name deps m summaries ds
   case (reportDir opts, librarySource opts) of
     (Nothing, _) -> return ()
-    (Just d, Nothing) -> writeSummary m summaries d
-    (Just d, Just archive) -> writeDetailedReport m summaries d archive
+    (Just d, Nothing) -> writeSummary m summaries ds d
+    (Just d, Just archive) -> writeDetailedReport m summaries ds d archive
 
-writeSummary :: Module -> [ModuleSummary] -> FilePath -> IO ()
-writeSummary m summaries rDir = do
-  let rep = compileSummaryReport m summaries
+writeSummary :: Module -> [ModuleSummary] -> DependencySummary -> FilePath -> IO ()
+writeSummary m summaries ds rDir = do
+  let rep = compileSummaryReport m summaries ds
   writeHTMLSummary rep rDir
 
 -- | Called when a source tarball was provided.  This generates and
 -- writes the report for the Module in the location specified by the
 -- user.
-writeDetailedReport :: Module -> [ModuleSummary] -> FilePath -> FilePath -> IO ()
-writeDetailedReport m summaries rDir fp = do
+writeDetailedReport :: Module -> [ModuleSummary] -> DependencySummary -> FilePath -> FilePath -> IO ()
+writeDetailedReport m summaries ds rDir fp = do
   arc <- readArchive fp
-  let rep = compileDetailedReport m arc summaries
+  let rep = compileDetailedReport m arc summaries ds
   writeHTMLReport rep rDir

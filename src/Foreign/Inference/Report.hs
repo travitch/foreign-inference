@@ -119,7 +119,7 @@ writeFunctionBodyPage r dir (f, (srcFile, startLine, body)) = do
 -- | Given a Module, the properties that have been inferred about it,
 -- and an archive of its source, make a best-effort to construct an
 -- informative report of the results.
-compileDetailedReport :: Module -> ArchiveIndex -> [ModuleSummary] -> InterfaceReport
+compileDetailedReport :: Module -> ArchiveIndex -> [ModuleSummary] -> DependencySummary -> InterfaceReport
 compileDetailedReport m a = InterfaceReport m bodies a
   where
     fs = moduleDefinedFunctions m
@@ -129,5 +129,5 @@ compileDetailedReport m a = InterfaceReport m bodies a
         Nothing -> acc
         Just b -> M.insert f b acc
 
-compileSummaryReport :: Module -> [ModuleSummary] -> InterfaceReport
+compileSummaryReport :: Module -> [ModuleSummary] -> DependencySummary -> InterfaceReport
 compileSummaryReport = InterfaceSummaryReport

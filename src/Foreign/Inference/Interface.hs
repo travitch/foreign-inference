@@ -22,7 +22,7 @@ module Foreign.Inference.Interface (
   ModuleSummary(..),
   -- * Types
   Witness(..),
-  DependencySummary,
+  DependencySummary(libraryAnnotations),
   LibraryInterface(..),
   LibraryAnnotations,
   ForeignFunction(..),
@@ -42,7 +42,10 @@ module Foreign.Inference.Interface (
   saveModule,
   readLibraryInterface,
   addLibraryAnnotations,
-  loadAnnotations
+  loadAnnotations,
+  -- *
+  userFunctionAnnotations,
+  userParameterAnnotations
   ) where
 
 import Prelude hiding ( catch )
@@ -243,9 +246,9 @@ saveInterface summaryDir i = do
 
 -- | A shortcut to convert a 'Module' into a 'LibraryInterface' and
 -- then persist it as in 'saveInterface'.
-saveModule :: FilePath -> String -> [String] -> Module -> [ModuleSummary] -> IO ()
-saveModule summaryDir name deps m summaries = do
-  let i = moduleToLibraryInterface m name deps summaries
+saveModule :: FilePath -> String -> [String] -> Module -> [ModuleSummary] -> DependencySummary -> IO ()
+saveModule summaryDir name deps m summaries ds = do
+  let i = moduleToLibraryInterface m name deps summaries (libraryAnnotations ds)
   saveInterface summaryDir i
 
 -- | Load annotations supplied by the user
@@ -362,8 +365,9 @@ moduleToLibraryInterface :: Module   -- ^ Module to summarize
                             -> String   -- ^ Module name
                             -> [String] -- ^ Module dependencies
                             -> [ModuleSummary] -- ^ Summary information from analyses
+                            -> LibraryAnnotations
                             -> LibraryInterface
-moduleToLibraryInterface m name deps summaries =
+moduleToLibraryInterface m name deps summaries annots =
   LibraryInterface { libraryFunctions = funcs
                    , libraryTypes = types
                    , libraryName = name
@@ -374,68 +378,73 @@ moduleToLibraryInterface m name deps summaries =
     -- replace unsupported types with char[] of the equivalent number
     -- of bytes.
     types = [] -- map typeToCType []
-    funcs = mapMaybe (functionToExternal summaries) (moduleDefinedFunctions m)
+    funcs = mapMaybe (functionToExternal summaries annots) (moduleDefinedFunctions m)
 
 -- | Summarize a single function.  Functions with types in their
 -- signatures that have certain exotic types are not supported in
 -- interfaces.
-functionToExternal :: [ModuleSummary] -> Function -> Maybe ForeignFunction
-functionToExternal summaries f =
+functionToExternal :: [ModuleSummary] -> LibraryAnnotations -> Function -> Maybe ForeignFunction
+functionToExternal summaries annots f =
   case vis of
     VisibilityHidden -> Nothing
     _ -> do
       lnk <- toLinkage (functionLinkage f)
       fretty <- typeToCType fretType
-      params <- mapM (paramToExternal summaries) (functionParameters f)
+      let indexedArgs = zip [0..] (functionParameters f)
+      params <- mapM (paramToExternal summaries annots) indexedArgs
       return ForeignFunction { foreignFunctionName = identifierContent (functionName f)
                              , foreignFunctionLinkage =
                                   if vis == VisibilityProtected then LinkWeak else lnk
                              , foreignFunctionReturnType = fretty
                              , foreignFunctionParameters = params
-                             , foreignFunctionAnnotations = annots
+                             , foreignFunctionAnnotations = fannots
                              }
   where
     vis = functionVisibility f
-    annots = concatMap (summarizeFunction f) summaries
+    fannots = concat [ userFunctionAnnotations annots f
+                    , concatMap (summarizeFunction f) summaries
+                    ]
     fretType = case functionType f of
       TypeFunction rt _ _ -> rt
       t -> t
 
-paramToExternal :: [ModuleSummary] -> Argument -> Maybe Parameter
-paramToExternal summaries arg = do
+paramToExternal :: [ModuleSummary] -> LibraryAnnotations -> (Int, Argument) -> Maybe Parameter
+paramToExternal summaries annots (ix, arg) = do
   ptype <- typeToCType (argumentType arg)
   return Parameter { parameterType = ptype
                    , parameterName = SBS.unpack (identifierContent (argumentName arg))
                    , parameterAnnotations =
-                     -- The map fst here drops witness information -
-                     -- we don't need to expose that in summaries.
-                     concatMap (map fst . summarizeArgument arg) summaries
+                     concat [ userParameterAnnotations annots f ix
+                              -- The map fst here drops witness information -
+                              -- we don't need to expose that in summaries.
+                            , concatMap (map fst . summarizeArgument arg) summaries
+                            ]
                    }
+  where
+    f = argumentFunction arg
 
 isVarArg :: ExternalFunction -> Bool
 isVarArg ef = isVa
   where
     (TypeFunction _ _ isVa) = externalFunctionType ef
 
-userFunctionAnnotations :: DependencySummary -> Function -> [FuncAnnotation]
-userFunctionAnnotations ds f =
+userFunctionAnnotations :: LibraryAnnotations -> Function -> [FuncAnnotation]
+userFunctionAnnotations allAnnots f =
   case fannots of
     Nothing -> []
     Just (fas, _) -> fas
   where
     fname = identifierContent $ functionName f
-    allAnnots = libraryAnnotations ds
     fannots = Map.lookup fname allAnnots
 
-userParameterAnnotations :: DependencySummary -> Function -> Int -> [ParamAnnotation]
-userParameterAnnotations ds f ix =
+userParameterAnnotations :: LibraryAnnotations -> Function -> Int -> [ParamAnnotation]
+userParameterAnnotations allAnnots f ix =
   case fannots of
     Nothing -> []
     Just (_, pmap) -> IM.findWithDefault [] ix pmap
 
   where
     fname = identifierContent $ functionName f
-    allAnnots = libraryAnnotations ds
     fannots = Map.lookup fname allAnnots
 
 
@@ -447,7 +456,7 @@ lookupFunctionSummary :: (IsValue v, SummarizeModule s)
 lookupFunctionSummary ds ms val =
   case valueContent' val of
     FunctionC f ->
-      let fannots = userFunctionAnnotations ds f
+      let fannots = userFunctionAnnotations (libraryAnnotations ds) f
       in return $! fannots ++ summarizeFunction f ms
     ExternalFunctionC ef -> do
       let fname = identifierContent $ externalFunctionName ef
@@ -473,7 +482,7 @@ lookupArgumentSummary ds ms val ix =
         False -> Just []
         True ->
           let annots = summarizeArgument (functionParameters f !! ix) ms
-              uannots = userParameterAnnotations ds f ix
+              uannots = userParameterAnnotations (libraryAnnotations ds) f ix
           in Just $! uannots ++ map fst annots
     ExternalFunctionC ef -> do
       let fname = identifierContent $ externalFunctionName ef

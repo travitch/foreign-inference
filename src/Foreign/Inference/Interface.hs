@@ -465,10 +465,6 @@ lookupFunctionSummary ds ms val =
       return (foreignFunctionAnnotations fsum)
     _ -> return $! []
 
--- FIXME Need to add some kind of hook to incorporate annotations into
--- the interface summaries generated. (saveModule).  Also need to make
--- sure the information appears in generated HTML reports.
-
 lookupArgumentSummary :: (IsValue v, SummarizeModule s)
                          => DependencySummary
                          -> s

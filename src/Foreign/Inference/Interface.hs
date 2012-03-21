@@ -435,7 +435,7 @@ functionReturnMetaUnsigned f =
       case ftype of
         MetaDWCompositeType { metaCompositeTypeMembers = Just ms } ->
           case ms of
-            MetadataList _ (rt : _) ->
+            MetadataList _ (Just rt : _) ->
               case rt of
                 MetaDWDerivedType { metaDerivedTypeParent = Just baseType } ->
                   case baseType of

@@ -1,5 +1,5 @@
 {-# LANGUAGE DeriveGeneric, OverloadedStrings, ExistentialQuantification, DeriveDataTypeable #-}
-{-# LANGUAGE TemplateHaskell, StandaloneDeriving #-}
+{-# LANGUAGE TemplateHaskell, StandaloneDeriving, ViewPatterns #-}
 -- | This module defines an external representation of library
 -- interfaces.  Individual libraries are represented by the
 -- 'LibraryInterface'.  The analysis reads these in and writes these
@@ -59,6 +59,7 @@ import Data.ByteString.Char8 ( ByteString )
 import qualified Data.ByteString.Char8 as SBS
 import qualified Data.ByteString.Lazy as LBS
 import Data.Data
+import Data.Dwarf
 import Data.HashMap.Strict ( HashMap )
 import qualified Data.HashMap.Strict as M
 import Data.Map ( Map )
@@ -78,6 +79,9 @@ import LLVM.Analysis
 import LLVM.Analysis.AccessPath
 
 import Paths_foreign_inference
+
+import Debug.Trace
+debug = flip trace
 
 -- | The extension used for all summaries
 summaryExtension :: String
@@ -389,7 +393,7 @@ functionToExternal summaries annots f =
     VisibilityHidden -> Nothing
     _ -> do
       lnk <- toLinkage (functionLinkage f)
-      fretty <- typeToCType fretType
+      fretty <- typeToCType (functionReturnMetaUnsigned f) fretType
       let indexedArgs = zip [0..] (functionParameters f)
       params <- mapM (paramToExternal summaries annots) indexedArgs
       return ForeignFunction { foreignFunctionName = identifierContent (functionName f)
@@ -408,9 +412,44 @@ functionToExternal summaries annots f =
       TypeFunction rt _ _ -> rt
       t -> t
 
+paramMetaUnsigned :: Argument -> Bool
+paramMetaUnsigned a =
+  case argumentMetadata a of
+    [] -> False
+    [(metaValueContent -> MetaDWLocal { metaLocalType = Just mt })] -> do
+      case metaValueContent mt of
+        MetaDWBaseType { metaBaseTypeEncoding = DW_ATE_unsigned } -> True
+        MetaDWDerivedType { metaDerivedTypeParent = Just baseType } ->
+          case metaValueContent baseType of
+            MetaDWBaseType { metaBaseTypeEncoding = DW_ATE_unsigned } -> True
+            _ -> False
+        _ -> False
+    _ -> False
+
+
+functionReturnMetaUnsigned :: Function -> Bool
+functionReturnMetaUnsigned f =
+  case functionMetadata f of
+    [] -> False
+    [(metaValueContent -> MetaDWSubprogram { metaSubprogramType = Just ftype })] ->
+      case metaValueContent ftype of
+        MetaDWCompositeType { metaCompositeTypeMembers = Just ms } ->
+          case metaValueContent ms of
+            MetadataList (rt : _) ->
+              case metaValueContent rt of
+                MetaDWDerivedType { metaDerivedTypeParent = Just baseType } ->
+                  case metaValueContent baseType of
+                    MetaDWBaseType { metaBaseTypeEncoding = DW_ATE_unsigned } -> True
+                    _ -> False
+                MetaDWBaseType { metaBaseTypeEncoding = DW_ATE_unsigned } -> True
+                _ -> False
+            _ -> False
+        _ -> False
+    _ -> False
+
 paramToExternal :: [ModuleSummary] -> LibraryAnnotations -> (Int, Argument) -> Maybe Parameter
 paramToExternal summaries annots (ix, arg) = do
-  ptype <- typeToCType (argumentType arg)
+  ptype <- typeToCType (paramMetaUnsigned arg) (argumentType arg)
   return Parameter { parameterType = ptype
                    , parameterName = SBS.unpack (identifierContent (argumentName arg))
                    , parameterAnnotations =
@@ -500,25 +539,28 @@ lookupArgumentSummary ds ms val ix =
 -- Convert an LLVM type to an external type.  Note that some types are
 -- not supported in external interfaces (vectors and exotic floating
 -- point types).
-typeToCType :: Type -> Maybe CType
-typeToCType t = case t of
+typeToCType :: Bool -> Type -> Maybe CType
+typeToCType isUnsigned t = case t of
   TypeVoid -> return CVoid
-  TypeInteger i -> return $! CInt i
+  TypeInteger i ->
+    case isUnsigned of
+      False -> return $! CInt i
+      True -> return $! CUInt i
   TypeFloat -> return CFloat
   TypeDouble -> return CDouble
   TypeArray _ t' -> do
-    tt <- typeToCType t'
+    tt <- typeToCType isUnsigned t'
     return $! CPointer tt
   TypeFunction r ts _ -> do
-    rt <- typeToCType r
-    tts <- mapM typeToCType ts
+    rt <- typeToCType False r
+    tts <- mapM (typeToCType False) ts
     return $! CFunction rt tts
   TypePointer t' _ -> do
-    tt <- typeToCType t'
+    tt <- typeToCType False t'
     return $! CPointer tt
   TypeStruct (Just n) _ _ -> return $! CStruct n []
   TypeStruct Nothing ts _ -> do
-    tts <- mapM typeToCType ts
+    tts <- mapM (typeToCType False) ts
     return $! CAnonStruct tts
   TypeFP128 -> Nothing
   TypeX86FP80 -> Nothing

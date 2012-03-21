@@ -47,7 +47,7 @@ library
                  unordered-containers >= 0.1.4.0, hashable, mtl > 2 && < 3,
                  aeson >= 0.4.0.0, loch-th >= 0.2, temporary, process, data-ordlist,
                  llvm-analysis, deepseq, data-lens >= 2, data-lens-template,
-                 failure >= 0.2,
+                 failure >= 0.2, dwarf,
                  -- For the reporting code
                  archive-inspection, directory, attoparsec >= 0.10 && < 1.0, ascii,
                  blaze-html >= 0.4, highlighting-kate >= 0.5, blaze-builder >= 0.3,

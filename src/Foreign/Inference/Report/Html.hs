@@ -143,14 +143,14 @@ drilldownArgumentAnnotations startLine annots = do
           l <- instructionToLine i
           return $! mconcat [ "[", show l, ", '", s, "']" ]
 
-instructionSrcLoc :: Instruction -> Maybe MetadataContent
+instructionSrcLoc :: Instruction -> Maybe Metadata
 instructionSrcLoc i =
   case filter isSrcLoc (instructionMetadata i) of
-    [md] -> Just (metaValueContent md)
+    [md] -> Just md
     _ -> Nothing
   where
     isSrcLoc m =
-      case metaValueContent m of
+      case m of
         MetaSourceLocation {} -> True
         _ -> False
 
@@ -158,7 +158,7 @@ instructionToLine :: Instruction -> Maybe Int
 instructionToLine i =
   case instructionSrcLoc i of
     Nothing -> Nothing
-    Just (MetaSourceLocation r _ _) -> Just (fromIntegral r)
+    Just (MetaSourceLocation _ r _ _) -> Just (fromIntegral r)
     m -> $failure ("Expected source location: " ++ show (instructionMetadata i))
 
 -- | Generate an index page listing all of the functions in a module.

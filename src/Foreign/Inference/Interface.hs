@@ -416,11 +416,11 @@ paramMetaUnsigned :: Argument -> Bool
 paramMetaUnsigned a =
   case argumentMetadata a of
     [] -> False
-    [(metaValueContent -> MetaDWLocal { metaLocalType = Just mt })] -> do
-      case metaValueContent mt of
+    [MetaDWLocal { metaLocalType = Just mt }] -> do
+      case mt of
         MetaDWBaseType { metaBaseTypeEncoding = DW_ATE_unsigned } -> True
         MetaDWDerivedType { metaDerivedTypeParent = Just baseType } ->
-          case metaValueContent baseType of
+          case baseType of
             MetaDWBaseType { metaBaseTypeEncoding = DW_ATE_unsigned } -> True
             _ -> False
         _ -> False
@@ -431,14 +431,14 @@ functionReturnMetaUnsigned :: Function -> Bool
 functionReturnMetaUnsigned f =
   case functionMetadata f of
     [] -> False
-    [(metaValueContent -> MetaDWSubprogram { metaSubprogramType = Just ftype })] ->
-      case metaValueContent ftype of
+    [MetaDWSubprogram { metaSubprogramType = Just ftype }] ->
+      case ftype of
         MetaDWCompositeType { metaCompositeTypeMembers = Just ms } ->
-          case metaValueContent ms of
-            MetadataList (rt : _) ->
-              case metaValueContent rt of
+          case ms of
+            MetadataList _ (rt : _) ->
+              case rt of
                 MetaDWDerivedType { metaDerivedTypeParent = Just baseType } ->
-                  case metaValueContent baseType of
+                  case baseType of
                     MetaDWBaseType { metaBaseTypeEncoding = DW_ATE_unsigned } -> True
                     _ -> False
                 MetaDWBaseType { metaBaseTypeEncoding = DW_ATE_unsigned } -> True

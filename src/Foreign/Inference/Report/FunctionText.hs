@@ -80,7 +80,7 @@ contentAndSubBody = do
                        ]
 
 isSubprogramMetadata :: Metadata -> Bool
-isSubprogramMetadata Metadata { metaValueContent = MetaDWSubprogram {} } = True
+isSubprogramMetadata MetaDWSubprogram {} = True
 isSubprogramMetadata _ = False
 
 -- | Make a best effort to find the implementation of the given
@@ -94,13 +94,11 @@ getFunctionText a func = do
   let mds = filter isSubprogramMetadata $ functionMetadata func
   case mds of
     [md] -> do
-      let md' = metaValueContent md
-          line = metaSubprogramLine md'
-      ctxt <- metaSubprogramContext md'
+      let line = metaSubprogramLine md
+      ctxt <- metaSubprogramContext md
 
-      let ctxt' = metaValueContent ctxt
-          f = metaFileSourceFile ctxt'
-          d = metaFileSourceDir ctxt'
+      let f = metaFileSourceFile ctxt
+          d = metaFileSourceDir ctxt
           absSrcFile = BSC.unpack d </> BSC.unpack f
 
       bs <- entryContentSuffix a absSrcFile

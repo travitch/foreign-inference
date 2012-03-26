@@ -166,7 +166,7 @@ instance ToJSON Parameter
 -- | A description of the interface of a foreign function.  Note that
 -- the function name is a ByteString to match the format it will have
 -- in a shared library.
-data ForeignFunction = ForeignFunction { foreignFunctionName :: ByteString
+data ForeignFunction = ForeignFunction { foreignFunctionName :: String
                                        , foreignFunctionLinkage :: Linkage
                                        , foreignFunctionReturnType :: CType
                                        , foreignFunctionParameters :: [Parameter]
@@ -329,7 +329,7 @@ mergeFunction m f = case M.lookup fn m of
     LinkDefault ->
       $failure ("Functions with overlapping linkage: " ++ show f ++ " and " ++ show f')
   where
-    fn = foreignFunctionName f
+    fn = SBS.pack $ foreignFunctionName f
 
 -- | This is a low-level helper to load a LibraryInterface from a
 -- location on disk.
@@ -396,7 +396,7 @@ functionToExternal summaries annots f =
       fretty <- typeToCType (functionReturnMetaUnsigned f) fretType
       let indexedArgs = zip [0..] (functionParameters f)
       params <- mapM (paramToExternal summaries annots) indexedArgs
-      return ForeignFunction { foreignFunctionName = identifierContent (functionName f)
+      return ForeignFunction { foreignFunctionName = SBS.unpack $ identifierContent (functionName f)
                              , foreignFunctionLinkage =
                                   if vis == VisibilityProtected then LinkWeak else lnk
                              , foreignFunctionReturnType = fretty

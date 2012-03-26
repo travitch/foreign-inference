@@ -10,7 +10,6 @@ module Foreign.Inference.Interface.Diff (
 import Blaze.ByteString.Builder
 import Blaze.ByteString.Builder.Char.Utf8
 import Control.Arrow
-import Data.ByteString.Char8 ( ByteString, unpack )
 import qualified Data.ByteString.Lazy as LBS
 import Data.Monoid
 import Data.Map ( Map )
@@ -78,9 +77,7 @@ computeFuncDiffs :: (ForeignFunction, ForeignFunction)
 computeFuncDiffs (f1, f2) acc =
   case diffFunc f1 f2 of
     Nothing -> acc
-    Just d ->
-      let name = unpack (foreignFunctionName f1)
-      in (name, d) : acc
+    Just d -> (foreignFunctionName f1, d) : acc
 
 paramsDiffer :: (Parameter, Parameter) -> Maybe ParameterDiff
 paramsDiffer (p1, p2) =
@@ -159,7 +156,7 @@ checkInBoth s fname inBoth =
     True -> S.insert fname inBoth
     False -> inBoth
 
-notInBoth :: Set ByteString -> ForeignFunction -> Bool
+notInBoth :: Set String -> ForeignFunction -> Bool
 notInBoth inBoth func =
   not (S.member (foreignFunctionName func) inBoth)
 
@@ -186,7 +183,7 @@ diffAddRem s fs = mconcat $ (fromString s) : map funcToBuilder fs
 
 funcToBuilder :: ForeignFunction -> Builder
 funcToBuilder ff = mconcat [ fromString " * "
-                           , fromByteString name
+                           , fromString name
                            , fromString "\n"
                            ]
   where

@@ -1017,7 +1017,7 @@
         { "foreignFunctionName": "div",
           "foreignFunctionAnnotations": [],
           "foreignFunctionLinkage": { "LinkDefault": [] },
-          "foreignFunctionReturnType": {"CStruct": ["div_t", [{"CInt":32}, {"CInt": 32}]]},
+          "foreignFunctionReturnType": {"CStruct": ["div_t", []]},
           "foreignFunctionParameters": [
               { "parameterAnnotations": [],
                 "parameterName": "number",
@@ -1043,7 +1043,7 @@
         { "foreignFunctionName": "ldiv",
           "foreignFunctionAnnotations": [],
           "foreignFunctionLinkage": { "LinkDefault": [] },
-          "foreignFunctionReturnType": {"CStruct": ["ldiv_t", [{"CInt":64}, {"CInt":64}]]},
+          "foreignFunctionReturnType": {"CStruct": ["ldiv_t", []]},
           "foreignFunctionParameters": [
               { "parameterAnnotations": [],
                 "parameterName": "number",

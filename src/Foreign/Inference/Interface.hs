@@ -381,10 +381,13 @@ moduleToLibraryInterface m name deps summaries annots =
     -- | FIXME: Need a way to get all types from a Module Perhaps
     -- replace unsupported types with char[] of the equivalent number
     -- of bytes.
-
-      -- FIXME Types need to be sorted such that any struct with a
-      -- by-value struct member must come after that member.  There
-      -- cannot be cycles in C here, so we can topsort.
+    --
+    -- FIXME Types need to be sorted such that any struct with a
+    -- by-value struct member must come after that member.  There
+    -- cannot be cycles in C here, so we can topsort.
+    --
+    -- Use unification-fd to merge all of the structurally equal
+    -- types.  Keep only one of each.
     types = S.toList $ S.fromList $ mapMaybe structTypeToCType $ moduleInterfaceStructTypes m
     funcs = mapMaybe (functionToExternal summaries annots) (moduleDefinedFunctions m)
 

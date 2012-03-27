@@ -70,7 +70,7 @@ import Data.Maybe ( mapMaybe )
 import Data.Monoid
 import Data.Set ( Set )
 import qualified Data.Set as S
-import Data.List ( foldl' )
+import Data.List ( foldl', stripPrefix )
 import Debug.Trace.LocationTH
 import System.FilePath
 import System.IO.Error hiding ( catch )
@@ -148,7 +148,7 @@ data CType = CVoid
            | CDouble
            | CFunction CType [CType]
            | CPointer CType
-           | CStruct String [CType]
+           | CStruct String [(String, CType)]
            | CAnonStruct [CType]
            deriving (Eq, Ord, Show, Generic)
 instance FromJSON CType
@@ -381,7 +381,11 @@ moduleToLibraryInterface m name deps summaries annots =
     -- | FIXME: Need a way to get all types from a Module Perhaps
     -- replace unsupported types with char[] of the equivalent number
     -- of bytes.
-    types = [] -- map typeToCType []
+
+      -- FIXME Types need to be sorted such that any struct with a
+      -- by-value struct member must come after that member.  There
+      -- cannot be cycles in C here, so we can topsort.
+    types = S.toList $ S.fromList $ mapMaybe structTypeToCType $ moduleInterfaceStructTypes m
     funcs = mapMaybe (functionToExternal summaries annots) (moduleDefinedFunctions m)
 
 -- | Summarize a single function.  Functions with types in their
@@ -558,7 +562,7 @@ typeToCType isUnsigned t = case t of
   TypePointer t' _ -> do
     tt <- typeToCType False t'
     return $! CPointer tt
-  TypeStruct (Just n) _ _ -> return $! CStruct n []
+  TypeStruct (Just n) _ _ -> return $! CStruct (sanitizeStructName n) []
   TypeStruct Nothing ts _ -> do
     tts <- mapM (typeToCType False) ts
     return $! CAnonStruct tts
@@ -597,3 +601,65 @@ toLinkage l = case l of
   LTCommon -> Just LinkDefault
   LTWeakAny -> Just LinkWeak
   LTWeakODR -> Just LinkWeak
+
+-- | Get all of the StructTypes externally visible in the module
+moduleInterfaceStructTypes :: Module -> [Type]
+moduleInterfaceStructTypes =
+  foldr extractInterfaceTypes [] . moduleDefinedFunctions
+
+extractInterfaceTypes :: Function -> [Type] -> [Type]
+extractInterfaceTypes f acc = mapMaybe isStructType (rt : ats) ++ acc
+  where
+    TypeFunction rt ats _ = functionType f
+
+isStructType :: Type -> Maybe Type
+isStructType t@(TypeStruct _ _ _) = Just t
+isStructType (TypePointer t _) = isStructType t
+isStructType _ = Nothing
+
+sanitizeStructName :: String -> String
+sanitizeStructName name = takeWhile (/= '.') name'
+  where
+    name' = case stripPrefix "struct." name of
+      Nothing -> name
+      Just x -> x
+
+structTypeToCType :: Type -> Maybe CType
+structTypeToCType (TypeStruct (Just name) members _) =
+  let tms = mapMaybe structMemberToCType members
+      name' = sanitizeStructName name
+  in case length tms == length members of
+    False -> Nothing
+    -- FIXME: Need to recover member names from metadata
+    True -> Just $! CStruct name' (zip (repeat "") tms)
+structTypeToCType _ = Nothing
+
+structMemberToCType :: Type -> Maybe CType
+structMemberToCType t = case t of
+  TypeInteger i -> return $! CInt i
+  TypeFloat -> return CFloat
+  TypeDouble -> return CDouble
+  TypeArray _ t' -> do
+    tt <- structMemberToCType t'
+    return $! CPointer tt
+  TypeFunction r ts _ -> do
+    rt <- structMemberToCType r
+    tts <- mapM structMemberToCType ts
+    return $! CFunction rt tts
+  TypePointer t' _ -> do
+    tt <- structMemberToCType t'
+    return $! CPointer tt
+  TypeStruct (Just n) _ _ ->
+    let name' = sanitizeStructName n
+    in return $! CStruct name' []
+  TypeStruct Nothing ts _ -> do
+    tts <- mapM structMemberToCType ts
+    return $! CAnonStruct tts
+  TypeVoid -> Nothing
+  TypeFP128 -> Nothing
+  TypeX86FP80 -> Nothing
+  TypePPCFP128 -> Nothing
+  TypeX86MMX -> Nothing
+  TypeLabel -> Nothing
+  TypeMetadata -> Nothing
+  TypeVector _ _ -> Nothing

@@ -2,13 +2,15 @@ module Main ( main ) where
 
 import Control.Monad ( when )
 import Data.Default
+import Data.HashSet ( HashSet )
+import qualified Data.HashSet as S
 import System.Console.CmdArgs.Explicit
 import System.Console.CmdArgs.Text
 import System.Exit
 import System.FilePath
 
 import Foreign.Inference.Interface
-import Language.Python.Common.Builder
+import Language.Python.Common.Builder hiding ( Parameter )
 import qualified Language.Python.Common.Pretty as PP
 import Language.Python.Common.PrettyAST ()
 
@@ -64,9 +66,12 @@ interfaceToCtypes libName iface = do
       -- Loads the shared library
       dll = assignS [varE dllHandle] dllCall
 
+      typeDecls = map buildTypeDecl (libraryTypes iface)
+      typeDefs = map buildTypeDef (libraryTypes iface)
+
       funcs = map (buildFunction dllHandle) (libraryFunctions iface)
 
-      defs = imp : dll : funcs
+      defs = imp : dll : (typeDecls ++ typeDefs ++ funcs)
 
   moduleM defs
   where
@@ -75,6 +80,34 @@ interfaceToCtypes libName iface = do
       ctypes <- captureName "ctypes"
       let itm = importItemI [ctypes] Nothing
       importS [itm]
+
+-- | Initialize a type, but do not populate its fields yet.  Since
+-- some fields may reference types that are not yet defined, we can't
+-- instantiate them yet.  This is the first of the two-phase process.
+--
+-- > class TypeName(ctypes.Structure): pass
+buildTypeDecl :: CType -> StatementQ ()
+buildTypeDecl (CStruct name _) = do
+  ctypes <- captureName "ctypes"
+  struct <- captureName "Structure"
+  let parentClass = makeDottedName [ ctypes, struct ]
+
+  className <- captureName name
+
+  classS className [argExprA parentClass] [passS]
+buildTypeDecl t = error ("Expected struct type: " ++ show t)
+
+-- | Now define the fields of the struct:
+--
+-- TypeName._fields_ = [...]
+buildTypeDef :: CType -> StatementQ ()
+buildTypeDef (CStruct name members) = do
+  className <- captureName name
+  fields <- captureName "_fields_"
+  let lhs = makeDottedName [ className, fields ]
+--      memberPairs = map toFieldPair members
+  assignS [lhs] (listE []) -- (listE memberPairs)
+buildTypeDef t = error ("Expected struct type: " ++ show t)
 
 -- | Build functions of the form:
 --
@@ -97,9 +130,9 @@ interfaceToCtypes libName iface = do
 -- Eventually, also tag on the docstring in the outer wrapper
 buildFunction :: Ident () -> ForeignFunction -> StatementQ ()
 buildFunction dllHandle f = do
-  paramNames <- mapM (captureName . parameterName) params
+  paramNames <- mapM findParameterName params
   fname <- captureName funcName
-  let ps = map buildParam (foreignFunctionParameters f)
+  let ps = map buildParam paramNames
 
   -- Make the assignment
   --
@@ -145,9 +178,37 @@ buildFunction dllHandle f = do
   where
     funcName = foreignFunctionName f
     params = foreignFunctionParameters f
-    buildParam p = do
-      pname <- captureName (parameterName p)
-      paramP pname Nothing Nothing
+    buildParam pname = paramP pname Nothing Nothing
+
+-- | This may need to be extended if LLVM puts other strange
+-- characters in identifiers
+findParameterName :: Parameter -> Q (Ident ())
+findParameterName p =
+  case '.' `elem` parameterName p of
+    False ->
+      case parameterName p `S.member` pythonKeywords of
+        False -> captureName (parameterName p)
+        True -> newName ('_' : parameterName p)
+    True -> do
+      -- If there was a dot, replacing it with the _ can't produce a
+      -- keyword and this case is fine
+      let name' = map replaceDot (parameterName p)
+      newName name'
+
+pythonKeywords :: HashSet String
+pythonKeywords =
+  S.fromList [ "and" , "as", "assert", "break", "class"
+             , "continue", "def" , "del", "elif", "else"
+             , "except", "exec", "finally", "for", "from"
+             , "global", "if", "import", "in", "is", "lambda"
+             , "not", "or", "pass", "print", "raise", "return"
+             , "try", "while", "with", "yield", "True", "False"
+             ]
+
+replaceDot :: Char -> Char
+replaceDot '.' = '_'
+replaceDot c = c
+
 
 -- | Translate the interface type to the associated ctypes type.
 --
@@ -173,4 +234,5 @@ toCtype ct =
     CPointer innerType -> do
       ptrCon <- captureName "ctypes.POINTER"
       callE (varE ptrCon) [argExprA $ toCtype innerType]
+    CStruct name _ -> captureName name >>= varE
     _ -> captureName "ctypes.c_void_p" >>= varE

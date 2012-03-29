@@ -62,6 +62,7 @@ import Data.Data
 import Data.Dwarf
 import Data.HashMap.Strict ( HashMap )
 import qualified Data.HashMap.Strict as M
+import qualified Data.HashSet as HS
 import Data.Map ( Map )
 import qualified Data.Map as Map
 import Data.IntMap ( IntMap )
@@ -78,10 +79,12 @@ import System.IO.Error hiding ( catch )
 import LLVM.Analysis
 import LLVM.Analysis.AccessPath
 
+import Foreign.Inference.Internal.TypeUnification
+
 import Paths_foreign_inference
 
-import Debug.Trace
-debug = flip trace
+-- import Debug.Trace
+-- debug = flip trace
 
 -- | The extension used for all summaries
 summaryExtension :: String
@@ -148,6 +151,7 @@ data CType = CVoid
            | CDouble
            | CFunction CType [CType]
            | CPointer CType
+           | CArray CType !Int
            | CStruct String [(String, CType)]
            | CAnonStruct [CType]
            deriving (Eq, Ord, Show, Generic)
@@ -373,22 +377,18 @@ moduleToLibraryInterface :: Module   -- ^ Module to summarize
                             -> LibraryInterface
 moduleToLibraryInterface m name deps summaries annots =
   LibraryInterface { libraryFunctions = funcs
-                   , libraryTypes = types
+                   , libraryTypes = opaqueTypes ++ types
                    , libraryName = name
                    , libraryDependencies = deps
                    }
   where
-    -- | FIXME: Need a way to get all types from a Module Perhaps
-    -- replace unsupported types with char[] of the equivalent number
-    -- of bytes.
-    --
     -- FIXME Types need to be sorted such that any struct with a
     -- by-value struct member must come after that member.  There
     -- cannot be cycles in C here, so we can topsort.
-    --
-    -- Use unification-fd to merge all of the structurally equal
-    -- types.  Keep only one of each.
-    types = S.toList $ S.fromList $ mapMaybe structTypeToCType $ moduleInterfaceStructTypes m
+    (unifiedTypes, ununifiedTypes) = unifyTypes $ moduleInterfaceStructTypes m
+    types = mapMaybe structTypeToCType unifiedTypes
+    uniqueOpaqueTypeNames = HS.toList $ HS.fromList $ map structTypeName ununifiedTypes
+    opaqueTypes = map toOpaqueCType uniqueOpaqueTypeNames
     funcs = mapMaybe (functionToExternal summaries annots) (moduleDefinedFunctions m)
 
 -- | Summarize a single function.  Functions with types in their
@@ -624,8 +624,18 @@ sanitizeStructName :: String -> String
 sanitizeStructName name = takeWhile (/= '.') name'
   where
     name' = case stripPrefix "struct." name of
-      Nothing -> name
+      Nothing ->
+        case stripPrefix "union." name of
+          Nothing -> name
+          Just x -> x
       Just x -> x
+
+structTypeName :: Type -> String
+structTypeName (TypeStruct (Just name) _ _) = sanitizeStructName name
+structTypeName t = $failure ("Expected struct type: " ++ show t)
+
+toOpaqueCType :: String -> CType
+toOpaqueCType name = CStruct name []
 
 structTypeToCType :: Type -> Maybe CType
 structTypeToCType (TypeStruct (Just name) members _) =
@@ -642,9 +652,9 @@ structMemberToCType t = case t of
   TypeInteger i -> return $! CInt i
   TypeFloat -> return CFloat
   TypeDouble -> return CDouble
-  TypeArray _ t' -> do
+  TypeArray n t' -> do
     tt <- structMemberToCType t'
-    return $! CPointer tt
+    return $! CArray tt n -- CPointer tt
   TypeFunction r ts _ -> do
     rt <- structMemberToCType r
     tts <- mapM structMemberToCType ts
@@ -659,9 +669,10 @@ structMemberToCType t = case t of
     tts <- mapM structMemberToCType ts
     return $! CAnonStruct tts
   TypeVoid -> Nothing
-  TypeFP128 -> Nothing
-  TypeX86FP80 -> Nothing
-  TypePPCFP128 -> Nothing
+  TypeFP128 -> return $! CArray (CInt 8) 16
+  -- Fake an 80 bit floating point number with an array of 10 bytes
+  TypeX86FP80 -> return $! CArray (CInt 8) 10
+  TypePPCFP128 -> return $! CArray (CInt 8) 16
   TypeX86MMX -> Nothing
   TypeLabel -> Nothing
   TypeMetadata -> Nothing

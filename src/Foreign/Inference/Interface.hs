@@ -688,7 +688,7 @@ metadataStructTypeToCType (TypeStruct (Just name) members _,
                                                }) = do
   let memberTypes = zip members cmembers
   mtys <- mapM trNameAndType memberTypes
-  return (CStruct name mtys)
+  return (CStruct (sanitizeStructName name) mtys)
   where
     trNameAndType (llvmType, Just MetaDWDerivedType { metaDerivedTypeName = memberName
                                                }) = do

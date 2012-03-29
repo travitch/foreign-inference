@@ -52,6 +52,7 @@ import Prelude hiding ( catch )
 
 import GHC.Generics
 
+import Control.Arrow ( (&&&) )
 import Control.DeepSeq
 import Control.Exception
 import Data.Aeson
@@ -59,7 +60,7 @@ import Data.ByteString.Char8 ( ByteString )
 import qualified Data.ByteString.Char8 as SBS
 import qualified Data.ByteString.Lazy as LBS
 import Data.Data
-import Data.Dwarf
+-- import Data.Dwarf
 import Data.HashMap.Strict ( HashMap )
 import qualified Data.HashMap.Strict as M
 import qualified Data.HashSet as HS
@@ -385,11 +386,18 @@ moduleToLibraryInterface m name deps summaries annots =
     -- FIXME Types need to be sorted such that any struct with a
     -- by-value struct member must come after that member.  There
     -- cannot be cycles in C here, so we can topsort.
-    (unifiedTypes, ununifiedTypes) = unifyTypes $ moduleInterfaceStructTypes m
-    types = mapMaybe structTypeToCType unifiedTypes
+    interfaceTypeMap = moduleInterfaceStructTypes m
+    (unifiedTypes, ununifiedTypes) = unifyTypes (M.keys interfaceTypeMap)
+    unifiedMDTypes = map (findTypeMD interfaceTypeMap) unifiedTypes
+    types = mapMaybe metadataStructTypeToCType unifiedMDTypes
     uniqueOpaqueTypeNames = HS.toList $ HS.fromList $ map structTypeName ununifiedTypes
     opaqueTypes = map toOpaqueCType uniqueOpaqueTypeNames
     funcs = mapMaybe (functionToExternal summaries annots) (moduleDefinedFunctions m)
+
+findTypeMD interfaceTypeMap t =
+  case M.lookup t interfaceTypeMap of
+    Nothing -> $failure ("No metadata found for type: " ++ show t)
+    Just md -> (t, md)
 
 -- | Summarize a single function.  Functions with types in their
 -- signatures that have certain exotic types are not supported in
@@ -434,6 +442,13 @@ paramMetaUnsigned a =
     _ -> False
 
 
+paramTypeMetadata :: Argument -> Maybe Metadata
+paramTypeMetadata a =
+  case argumentMetadata a of
+    [] -> Nothing
+    [MetaDWLocal { metaLocalType = mt }] -> mt
+    _ -> Nothing
+
 functionReturnMetaUnsigned :: Function -> Bool
 functionReturnMetaUnsigned f =
   case functionMetadata f of
@@ -453,6 +468,20 @@ functionReturnMetaUnsigned f =
             _ -> False
         _ -> False
     _ -> False
+
+functionReturnTypeMetadata :: Function -> Maybe Metadata
+functionReturnTypeMetadata f =
+  case functionMetadata f of
+    [] -> Nothing
+    [MetaDWSubprogram { metaSubprogramType = Just ftype }] ->
+      case ftype of
+        MetaDWCompositeType { metaCompositeTypeMembers = Just ms } ->
+          case ms of
+            MetadataList _ (rt : _) -> rt
+            _ -> Nothing
+        _ -> Nothing
+    _ -> Nothing
+
 
 paramToExternal :: [ModuleSummary] -> LibraryAnnotations -> (Int, Argument) -> Maybe Parameter
 paramToExternal summaries annots (ix, arg) = do
@@ -577,11 +606,6 @@ typeToCType isUnsigned t = case t of
   TypeMetadata -> Nothing
   TypeVector _ _ -> Nothing
 
--- FIXME: Use a different function to translate types that are going
--- to be used as type definitions at the beginning of a library
--- interface spec.  In that case, actually include the contained
--- types.
-
 -- | Convert an LLVM linkage to a type more suitable for the summary
 -- If this function returns a Linkage, the function is exported in the
 -- shared library interface.  Private (internal linkage) functions are
@@ -605,19 +629,39 @@ toLinkage l = case l of
   LTWeakAny -> Just LinkWeak
   LTWeakODR -> Just LinkWeak
 
--- | Get all of the StructTypes externally visible in the module
-moduleInterfaceStructTypes :: Module -> [Type]
+moduleInterfaceStructTypes :: Module -> HashMap Type Metadata
 moduleInterfaceStructTypes =
-  foldr extractInterfaceTypes [] . moduleDefinedFunctions
+  foldr extractInterfaceTypes M.empty . moduleDefinedFunctions
 
-extractInterfaceTypes :: Function -> [Type] -> [Type]
-extractInterfaceTypes f acc = mapMaybe isStructType (rt : ats) ++ acc
+extractInterfaceTypes :: Function -> HashMap Type Metadata -> HashMap Type Metadata
+extractInterfaceTypes f m =
+  foldr addTypeMdMapping m (mapMaybe isStructType typeMds)
   where
-    TypeFunction rt ats _ = functionType f
+    TypeFunction rt _ _ = functionType f
+    retMd = functionReturnTypeMetadata f
+    argMds = map (argumentType &&& paramTypeMetadata) (functionParameters f)
+    typeMds = (rt, retMd) : argMds
+    addTypeMdMapping (llvmType, mdType) mdMap =
+      case mdType of
+        Nothing -> mdMap
+        Just md -> M.insert llvmType md mdMap
 
-isStructType :: Type -> Maybe Type
-isStructType t@(TypeStruct _ _ _) = Just t
-isStructType (TypePointer t _) = isStructType t
+--isStructType :: (Type, a) -> Maybe (Type, a)
+isStructType (t@(TypeStruct _ _ _),
+              Just MetaDWDerivedType { metaDerivedTypeTag = DW_TAG_typedef
+                                , metaDerivedTypeParent = parent
+                                }) =
+  isStructType (t, parent)
+isStructType (t@(TypeStruct _ _ _), a) = Just (t, a)
+isStructType (TypePointer inner _,
+              Just MetaDWDerivedType { metaDerivedTypeTag = DW_TAG_pointer_type
+                                , metaDerivedTypeParent = parent
+                                }) =
+  isStructType (inner, parent)
+isStructType (t@(TypePointer _ _),
+              Just MetaDWDerivedType { metaDerivedTypeTag = DW_TAG_typedef
+                                , metaDerivedTypeParent = parent}) =
+  isStructType (t, parent)
 isStructType _ = Nothing
 
 sanitizeStructName :: String -> String
@@ -637,15 +681,25 @@ structTypeName t = $failure ("Expected struct type: " ++ show t)
 toOpaqueCType :: String -> CType
 toOpaqueCType name = CStruct name []
 
-structTypeToCType :: Type -> Maybe CType
-structTypeToCType (TypeStruct (Just name) members _) =
-  let tms = mapMaybe structMemberToCType members
-      name' = sanitizeStructName name
-  in case length tms == length members of
-    False -> Nothing
-    -- FIXME: Need to recover member names from metadata
-    True -> Just $! CStruct name' (zip (repeat "") tms)
-structTypeToCType _ = Nothing
+metadataStructTypeToCType :: (Type, Metadata) -> Maybe CType
+metadataStructTypeToCType (TypeStruct (Just name) members _,
+                           MetaDWCompositeType { metaCompositeTypeMembers =
+                                                    Just (MetadataList _ cmembers)
+                                               }) = do
+  let memberTypes = zip members cmembers
+  mtys <- mapM trNameAndType memberTypes
+  return (CStruct name mtys)
+  where
+    trNameAndType (llvmType, Just MetaDWDerivedType { metaDerivedTypeName = memberName
+                                               }) = do
+      realType <- structMemberToCType llvmType
+      return (SBS.unpack memberName, realType)
+    trNameAndType _ = Nothing
+-- If there were no members in the metadata, this is an opaque type
+metadataStructTypeToCType (TypeStruct (Just name) _ _, _) =
+  return $! CStruct name []
+metadataStructTypeToCType t =
+  $failure ("Unexpected non-struct metadata: " ++ show t)
 
 structMemberToCType :: Type -> Maybe CType
 structMemberToCType t = case t of
@@ -654,7 +708,7 @@ structMemberToCType t = case t of
   TypeDouble -> return CDouble
   TypeArray n t' -> do
     tt <- structMemberToCType t'
-    return $! CArray tt n -- CPointer tt
+    return $! CArray tt n
   TypeFunction r ts _ -> do
     rt <- structMemberToCType r
     tts <- mapM structMemberToCType ts
@@ -668,7 +722,7 @@ structMemberToCType t = case t of
   TypeStruct Nothing ts _ -> do
     tts <- mapM structMemberToCType ts
     return $! CAnonStruct tts
-  TypeVoid -> Nothing
+  TypeVoid -> return $! CVoid -- Nothing
   TypeFP128 -> return $! CArray (CInt 8) 16
   -- Fake an 80 bit floating point number with an array of 10 bytes
   TypeX86FP80 -> return $! CArray (CInt 8) 10

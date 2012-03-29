@@ -24,7 +24,7 @@ import Data.HashSet ( HashSet )
 import qualified Data.HashSet as HS
 import Data.HashMap.Strict ( HashMap )
 import qualified Data.HashMap.Strict as HM
-import Data.List ( foldl' )
+import Data.List ( find, foldl' )
 import Debug.Trace.LocationTH
 import Text.Regex.TDFA
 
@@ -59,8 +59,9 @@ typeTerm = (UTerm .) . T
 -- (including types that were already unique).  The second element is
 -- the set of types that could not be unified but share names.
 unifyTypes :: [Type] -> ([Type], [Type])
-unifyTypes ts = foldr (unifyTopLevelType typeGroups) ([], []) (HM.toList typeGroups)
+unifyTypes ts = foldr (unifyTopLevelType inputTypes typeGroups) ([], []) (HM.toList typeGroups)
   where
+    inputTypes = HS.fromList ts
     reachedTypes = retainedTypeSearch ts
     typeGroups = groupByBaseName $ filter isStruct (HS.toList reachedTypes)
 
@@ -68,17 +69,28 @@ unifyTypes ts = foldr (unifyTopLevelType typeGroups) ([], []) (HM.toList typeGro
 -- building terms for all of the types that the input type depends on,
 -- unifying them by their name groups, and then finally unifying the
 -- list of input types from this step.
-unifyTopLevelType :: HashMap String [Type]
+unifyTopLevelType :: HashSet Type
+                     -> HashMap String [Type]
                      -> (String, [Type])
                      -> ([Type], [Type])
                      -> ([Type], [Type])
-unifyTopLevelType _ (_, []) acc = acc
-unifyTopLevelType _ (_, [ty]) (unified, ununified) =
-  (ty : unified, ununified)
-unifyTopLevelType m (_, instances@(i:_)) (unified, ununified) =
+unifyTopLevelType inputTypes _ (_, [ty]) acc@(unified, ununified) =
+  case ty `HS.member` inputTypes of
+    False -> acc
+    True -> (ty : unified, ununified)
+unifyTopLevelType inputTypes m (_, instances) acc@(unified, ununified) =
   case unifyResult of
-    Left _ -> (unified, instances ++ ununified)
-    Right _ -> (i : unified, ununified)
+    Left _ ->
+      -- Only include types that were in the input list
+      let instances' = filter (\i -> HS.member i inputTypes) instances
+      in (unified, instances' ++ ununified)
+    Right _ ->
+      -- Find the first representative type that was in the input list
+      case find (\i -> HS.member i inputTypes) instances of
+        -- The type unified, but none of its representatives was an
+        -- input (i.e., the type is internal only)
+        Nothing -> acc
+        Just repr -> (repr : unified, ununified)
   where
     (unifyResult, _) = runIdentity $ runIntBindingT $ do
       varMap <- assignVars m

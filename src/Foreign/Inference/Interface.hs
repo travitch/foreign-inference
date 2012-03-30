@@ -710,7 +710,7 @@ metadataStructTypeToCType (TypeStruct (Just name) members _,
     trNameAndType _ = Nothing
 -- If there were no members in the metadata, this is an opaque type
 metadataStructTypeToCType (TypeStruct (Just name) _ _, _) =
-  return $! CStruct name []
+  return $! CStruct (sanitizeStructName name) []
 metadataStructTypeToCType t =
   $failure ("Unexpected non-struct metadata: " ++ show t)
 

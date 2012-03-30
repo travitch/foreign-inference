@@ -4,6 +4,7 @@ import Control.Monad ( when )
 import Data.Default
 import Data.HashSet ( HashSet )
 import qualified Data.HashSet as S
+import Data.List ( partition )
 import System.Console.CmdArgs.Explicit
 import System.Console.CmdArgs.Text
 import System.Exit
@@ -114,6 +115,22 @@ toFieldPair :: (String, CType) -> ExprQ ()
 toFieldPair (fieldName, ty) =
   tupleE [ stringE [fieldName], toCtype ty ]
 
+isNotOutParam :: (Parameter, Ident ()) -> Bool
+isNotOutParam (p, _) = not (PAOut `elem` parameterAnnotations p)
+
+makeOutParamStorage :: (Parameter, Ident ()) -> StatementQ ()
+makeOutParamStorage (p, pname) = do
+  let CPointer innerType = parameterType p
+  let conName = toCtype innerType
+      conCall = callE conName []
+  assignS [varE pname] conCall
+
+byrefFunc :: ExprQ ()
+byrefFunc = do
+  ctypes <- captureName "ctypes"
+  byref <- captureName "byref"
+  makeDottedName [ ctypes, byref ]
+
 -- | Build functions of the form:
 --
 -- > def funcName(...):
@@ -136,8 +153,9 @@ toFieldPair (fieldName, ty) =
 buildFunction :: Ident () -> ForeignFunction -> StatementQ ()
 buildFunction dllHandle f = do
   paramNames <- mapM findParameterName params
+  let (nonOutputNames, outputNames) = partition isNotOutParam (zip params paramNames)
   fname <- captureName funcName
-  let ps = map buildParam paramNames
+  let ps = map buildParam nonOutputNames
 
   -- Make the assignment
   --
@@ -158,10 +176,17 @@ buildFunction dllHandle f = do
   -- Now build up the real (inner) function definition that makes the
   -- foreign call.
   realFuncName <- newName funcName
+  let justOutVarNames = map snd outputNames
   let dllFunc = makeDottedName [ dllHandle, fname ]
-      dllCall = callE dllFunc (map (argExprA . varE) paramNames)
-      dllReturn = returnS (Just dllCall)
-  let innerFunc = funS realFuncName ps Nothing [dllReturn]
+      dllCall = callE dllFunc (map (buildActualArg justOutVarNames) paramNames)
+      dllReturn =
+        case null outputNames of
+          True -> returnS (Just dllCall)
+          False -> returnS $ Just $ tupleE (dllCall : map varE justOutVarNames)
+      -- Make statements to allocate storage for output parameters.
+      outParamStorage = map makeOutParamStorage outputNames
+      stmts = concat [ outParamStorage, [dllReturn] ]
+  let innerFunc = funS realFuncName ps Nothing stmts
 
   -- Another assignment:
   --
@@ -183,7 +208,11 @@ buildFunction dllHandle f = do
   where
     funcName = foreignFunctionName f
     params = foreignFunctionParameters f
-    buildParam pname = paramP pname Nothing Nothing
+    buildParam (_, pname) = paramP pname Nothing Nothing
+    buildActualArg outNames name =
+      case name `elem` outNames of
+        False -> argExprA (varE name)
+        True -> argExprA (callE byrefFunc [argExprA (varE name)])
 
 -- | This may need to be extended if LLVM puts other strange
 -- characters in identifiers

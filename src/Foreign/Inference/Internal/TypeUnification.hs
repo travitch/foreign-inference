@@ -74,22 +74,28 @@ unifyTopLevelType :: HashSet Type
                      -> (String, [Type])
                      -> ([Type], [Type])
                      -> ([Type], [Type])
-unifyTopLevelType inputTypes _ (_, [ty]) acc@(unified, ununified) =
+unifyTopLevelType inputTypes _ (_, [ty]) (unified, ununified) =
   case ty `HS.member` inputTypes of
-    False -> acc
+    -- If the type was not an input, treat it as opaque.  Other types
+    -- may reference it so it needs to be available.
+    False -> (unified, ty : ununified)
     True -> (ty : unified, ununified)
 unifyTopLevelType inputTypes m (_, instances) acc@(unified, ununified) =
   case unifyResult of
-    Left _ ->
-      -- Only include types that were in the input list
-      let instances' = filter (\i -> HS.member i inputTypes) instances
-      in (unified, instances' ++ ununified)
+    -- Anything that couldn't be unified can be treated as an opaque
+    -- type.
+    Left _ -> (unified, instances ++ ununified)
     Right _ ->
       -- Find the first representative type that was in the input list
       case find (\i -> HS.member i inputTypes) instances of
         -- The type unified, but none of its representatives was an
         -- input (i.e., the type is internal only)
-        Nothing -> acc
+        Nothing ->
+          -- If there are no representatives from the input type list,
+          -- just choose one and treat it as opaque/ununified.
+          case instances of
+            [] -> acc
+            repr : _ -> (unified, repr : ununified)
         Just repr -> (repr : unified, ununified)
   where
     (unifyResult, _) = runIdentity $ runIntBindingT $ do

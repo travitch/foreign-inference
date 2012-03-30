@@ -60,7 +60,6 @@ import Data.ByteString.Char8 ( ByteString )
 import qualified Data.ByteString.Char8 as SBS
 import qualified Data.ByteString.Lazy as LBS
 import Data.Data
--- import Data.Dwarf
 import Data.HashMap.Strict ( HashMap )
 import qualified Data.HashMap.Strict as M
 import qualified Data.HashSet as HS

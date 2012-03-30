@@ -149,13 +149,17 @@ byrefFunc = do
 -- The _module.funcName() form is efficient enough because the
 -- function pointer is cached in the CDLL object.
 --
--- Eventually, also tag on the docstring in the outer wrapper
+-- Eventually, note that the docstring is specified twice.  The outer
+-- wrapper needs one so that the docstring shows up before the
+-- function is evaluated the first time.  The inner function needs it
+-- so that it is still visible after the outer wrapper disappears.
 buildFunction :: Ident () -> ForeignFunction -> StatementQ ()
 buildFunction dllHandle f = do
   paramNames <- mapM findParameterName params
   let (nonOutputNames, outputNames) = partition isNotOutParam (zip params paramNames)
   fname <- captureName funcName
   let ps = map buildParam nonOutputNames
+      docString = stringE [functionDocstring f]
 
   -- Make the assignment
   --
@@ -185,7 +189,7 @@ buildFunction dllHandle f = do
           False -> returnS $ Just $ tupleE (dllCall : map varE justOutVarNames)
       -- Make statements to allocate storage for output parameters.
       outParamStorage = map makeOutParamStorage outputNames
-      stmts = concat [ outParamStorage, [dllReturn] ]
+      stmts = concat [ [stmtExprS docString], outParamStorage, [dllReturn] ]
   let innerFunc = funS realFuncName ps Nothing stmts
 
   -- Another assignment:
@@ -199,7 +203,13 @@ buildFunction dllHandle f = do
   let callArgs = map (argExprA . varE) paramNames
   let callInner = returnS (Just (callE (varE realFuncName) callArgs))
 
-  funS fname ps Nothing [ argTypeAssign
+  -- FIXME: Add a docstring to the function if it was transformed at
+  -- all.  Perhaps add docstrings to all functions with full type
+  -- signatures.
+
+
+  funS fname ps Nothing [ stmtExprS docString
+                        , argTypeAssign
                         , restypeAssign
                         , innerFunc
                         , overwriteFunc
@@ -213,6 +223,8 @@ buildFunction dllHandle f = do
       case name `elem` outNames of
         False -> argExprA (varE name)
         True -> argExprA (callE byrefFunc [argExprA (varE name)])
+
+functionDocstring f = "foo\nbar"
 
 -- | This may need to be extended if LLVM puts other strange
 -- characters in identifiers

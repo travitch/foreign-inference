@@ -71,10 +71,14 @@ import Data.Maybe ( mapMaybe )
 import Data.Monoid
 import Data.Set ( Set )
 import qualified Data.Set as S
-import Data.List ( foldl', sortBy, stripPrefix )
+import Data.List ( foldl', stripPrefix )
 import Debug.Trace.LocationTH
 import System.FilePath
 import System.IO.Error hiding ( catch )
+
+import Data.Graph.Interface
+import Data.Graph.PatriciaTree
+import Data.Graph.Algorithms.Matching.DFS
 
 import LLVM.Analysis
 import LLVM.Analysis.AccessPath
@@ -385,7 +389,7 @@ moduleToLibraryInterface m name deps summaries annots =
     interfaceTypeMap = moduleInterfaceStructTypes m
     (unifiedTypes, ununifiedTypes) = unifyTypes (M.keys interfaceTypeMap)
     unifiedMDTypes = map (findTypeMD interfaceTypeMap) unifiedTypes
-    sortedUnifiedMDTypes = sortBy typeTopologicalOrder unifiedMDTypes
+    sortedUnifiedMDTypes = typeSort unifiedMDTypes
     types = mapMaybe metadataStructTypeToCType sortedUnifiedMDTypes
 
     uniqueOpaqueTypeNames = HS.toList $ HS.fromList $ map structTypeName ununifiedTypes
@@ -393,17 +397,28 @@ moduleToLibraryInterface m name deps summaries annots =
 
     funcs = mapMaybe (functionToExternal summaries annots) (moduleDefinedFunctions m)
 
+type TypeGraph = Gr (Type, Metadata) ()
+
 -- | All of the components of a type that are stored by-value must be
 -- defined before that type can be defined.  This is a topological
--- ordering captured by this comparison function.
-typeTopologicalOrder :: (Type, a) -> (Type, a) -> Ordering
-typeTopologicalOrder (t1@(TypeStruct _ members1 _), _) (t2@(TypeStruct _ members2 _), _) =
-  case t1 `elem` members2 of
-    True -> LT
-    False -> case t2 `elem` members1 of
-      True -> GT
-      False -> compare t1 t2
-typeTopologicalOrder (t1, _) (t2, _) = compare t1 t2
+-- ordering captured by this graph-based sort.
+typeSort :: [(Type, Metadata)] -> [(Type, Metadata)]
+typeSort ts = reverse $ topsort' g
+  where
+    g :: TypeGraph
+    g = mkGraph ns es
+
+    toNodeMap = M.fromList (zip (map fst ts) [0..])
+    ns = map (\(ix, t) -> LNode ix t) (zip [0..] ts)
+    es = concatMap toEdges ts
+    toEdges (t@(TypeStruct _ members _), _) =
+      case M.lookup t toNodeMap of
+        Nothing -> $failure ("Expected node id for type: " ++ show t)
+        Just srcid -> mapMaybe (toEdge srcid) members
+    toEdges _ = []
+    toEdge srcid t = do
+      dstid <- M.lookup t toNodeMap
+      return $! LEdge (Edge srcid dstid) ()
 
 -- | Match up a type with its metadata
 findTypeMD :: HashMap Type Metadata -> Type -> (Type, Metadata)

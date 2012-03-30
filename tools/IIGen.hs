@@ -105,9 +105,14 @@ buildTypeDef (CStruct name members) = do
   className <- captureName name
   fields <- captureName "_fields_"
   let lhs = makeDottedName [ className, fields ]
---      memberPairs = map toFieldPair members
-  assignS [lhs] (listE []) -- (listE memberPairs)
+      memberPairs = map toFieldPair members
+  assignS [lhs] (listE memberPairs)
 buildTypeDef t = error ("Expected struct type: " ++ show t)
+
+-- | (fieldName, type)
+toFieldPair :: (String, CType) -> ExprQ ()
+toFieldPair (fieldName, ty) =
+  tupleE [ stringE [fieldName], toCtype ty ]
 
 -- | Build functions of the form:
 --
@@ -211,8 +216,6 @@ replaceDot c = c
 
 
 -- | Translate the interface type to the associated ctypes type.
---
--- FIXME: Does not handle structs yet
 toCtype :: CType -> ExprQ ()
 toCtype ct =
   case ct of

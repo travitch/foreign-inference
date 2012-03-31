@@ -71,10 +71,11 @@ import Data.Maybe ( mapMaybe )
 import Data.Monoid
 import Data.Set ( Set )
 import qualified Data.Set as S
-import Data.List ( foldl', stripPrefix )
+import Data.List ( foldl', intercalate, stripPrefix )
 import Debug.Trace.LocationTH
 import System.FilePath
 import System.IO.Error hiding ( catch )
+import Text.Printf
 
 import Data.Graph.Interface
 import Data.Graph.PatriciaTree
@@ -158,9 +159,23 @@ data CType = CVoid
            | CArray CType !Int
            | CStruct String [(String, CType)]
            | CAnonStruct [CType]
-           deriving (Eq, Ord, Show, Generic)
+           deriving (Eq, Ord, Generic)
 instance FromJSON CType
 instance ToJSON CType
+
+instance Show CType where
+  show CVoid = "void"
+  show (CInt i) = "int" ++ show i
+  show (CUInt i) = "uint" ++ show i
+  show CFloat = "float"
+  show CDouble = "double"
+  show (CPointer (CInt 8)) = "string"
+  show (CPointer (CUInt 8)) = "string"
+  show (CPointer t) = show t ++"*"
+  show (CArray t x) = printf "%s[%d]" (show t) x
+  show (CStruct n _) = n
+  show (CAnonStruct _) = "<anon>"
+  show (CFunction rt ts) = printf "%s(%s)" (show rt) (intercalate ", " (map show ts))
 
 -- | Descriptions of 'ForeignFunction' parameters
 data Parameter = Parameter { parameterType :: CType

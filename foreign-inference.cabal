@@ -106,7 +106,7 @@ executable IIGen
   hs-source-dirs: tools
   build-depends: base > 3 && < 5, cmdargs >= 0.9, data-default, filepath,
                  foreign-inference, language-python >= 0.3.3,
-                 unordered-containers
+                 unordered-containers, loch-th >= 0.2
   main-is: IIGen.hs
   ghc-options: -Wall -rtsopts -threaded
 

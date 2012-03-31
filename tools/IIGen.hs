@@ -1,14 +1,18 @@
+{-# LANGUAGE TemplateHaskell #-}
 module Main ( main ) where
 
 import Control.Monad ( when )
 import Data.Default
 import Data.HashSet ( HashSet )
 import qualified Data.HashSet as S
-import Data.List ( partition )
+import Data.List ( find, intercalate, partition )
+import Data.Maybe ( mapMaybe )
+import Debug.Trace.LocationTH
 import System.Console.CmdArgs.Explicit
 import System.Console.CmdArgs.Text
 import System.Exit
 import System.FilePath
+import Text.Printf
 
 import Foreign.Inference.Interface
 import Language.Python.Common.Builder hiding ( Parameter )
@@ -180,16 +184,25 @@ buildFunction dllHandle f = do
   -- Now build up the real (inner) function definition that makes the
   -- foreign call.
   realFuncName <- newName funcName
+  resultName <- newName "result"
   let justOutVarNames = map snd outputNames
-  let dllFunc = makeDottedName [ dllHandle, fname ]
+      arrayConversions = mapMaybe makeArrayConversion nonOutputNames
+      dllFunc = makeDottedName [ dllHandle, fname ]
       dllCall = callE dllFunc (map (buildActualArg justOutVarNames) paramNames)
+      dllCallResult = assignS [varE resultName] dllCall
       dllReturn =
-        case null outputNames of
-          True -> returnS (Just dllCall)
-          False -> returnS $ Just $ tupleE (dllCall : map varE justOutVarNames)
+        case (foreignFunctionReturnType f, null outputNames) of
+          (CVoid, True) -> returnS Nothing
+          (CVoid, False) -> returnS $ Just $ tupleE (map varE justOutVarNames)
+          (_, True) -> returnS (Just (varE resultName))
+          (_, False) -> returnS $ Just $ tupleE (varE resultName : map varE justOutVarNames)
       -- Make statements to allocate storage for output parameters.
       outParamStorage = map makeOutParamStorage outputNames
-      stmts = concat [ [stmtExprS docString], outParamStorage, [dllReturn] ]
+      stmts = concat [ [stmtExprS docString] -- outer docstring
+                     , outParamStorage -- Allocations for out params
+                     , arrayConversions
+                     , [dllCallResult, dllReturn] -- Call and return
+                     ]
   let innerFunc = funS realFuncName ps Nothing stmts
 
   -- Another assignment:
@@ -202,11 +215,6 @@ buildFunction dllHandle f = do
   -- > return _funcName(...)
   let callArgs = map (argExprA . varE) paramNames
   let callInner = returnS (Just (callE (varE realFuncName) callArgs))
-
-  -- FIXME: Add a docstring to the function if it was transformed at
-  -- all.  Perhaps add docstrings to all functions with full type
-  -- signatures.
-
 
   funS fname ps Nothing [ stmtExprS docString
                         , argTypeAssign
@@ -224,7 +232,76 @@ buildFunction dllHandle f = do
         False -> argExprA (varE name)
         True -> argExprA (callE byrefFunc [argExprA (varE name)])
 
-functionDocstring f = "foo\nbar"
+-- | Generate a docstring for the given foreign function
+functionDocstring :: ForeignFunction -> String
+functionDocstring f = unlines $ filter (/="") [ts, arrParams]
+  where
+    ts :: String
+    ts = printf "Type signature: %s(%s) -> %s" (foreignFunctionName f) paramTypes rtype
+    paramTypes = intercalate ", " $ map (show . parameterType) normalParams
+    rtype = case (foreignFunctionReturnType f, null outParams) of
+      (CVoid, True) -> show (foreignFunctionReturnType f)
+      (CVoid, False) -> printf "(%s)" (intercalate ", " (map (show . stripPointerType) outParamTypes))
+      (_, True) -> show (foreignFunctionReturnType f)
+      (_, False) -> printf "(%s)" (intercalate ", " (map show (foreignFunctionReturnType f : outParamTypes)))
+    (normalParams, outParams) = partition notOutParam (foreignFunctionParameters f)
+    outParamTypes = map parameterType outParams
+    notOutParam p = not (PAOut `elem` parameterAnnotations p)
+    arrayParams = filter isArrayTy (foreignFunctionParameters f)
+    isArrayTy = any isPAArray . parameterAnnotations
+    isPAArray (PAArray _) = True
+    isPAArray _ = False
+
+    arrParams = case null arrayParams of
+      True -> ""
+      False -> printf "Parameters %s can be C arrays or Python lists.  Modifications will not be written back to lists." (intercalate ", " (map parameterName arrayParams))
+
+stripPointerType :: CType -> CType
+stripPointerType (CPointer t) = t
+stripPointerType t = $failure ("Expected pointer type: " ++ show t)
+
+-- | If the parameter is an array parameter, construct a check to see
+-- if the user's input is actually a list.  If it is, convert it to an
+-- array.
+--
+-- Note: Only supports 1 dimensional arrays for now.
+--
+-- > if type(p) == type([]):
+-- >   _arrTy = EltType * len(p)
+-- >   p = _arrTy(p)
+makeArrayConversion :: (Parameter, Ident ()) -> Maybe (StatementQ ())
+makeArrayConversion (p, ident) = do
+  -- Fails with Nothing if this is not an array parameter
+  _ <- find isArray (parameterAnnotations p)
+  let (itemType, knownLen) = case parameterType p of
+        CPointer it -> (it, Nothing)
+        CArray it n -> (it, Just n)
+        _ -> $failure ("Unexpected non-array type: " ++ show (parameterType p))
+      pyItemType = toCtype itemType
+  return $ do
+    lenName <- captureName "len"
+    typeName <- captureName "type"
+    arrayTypeName <- newName "arrayType"
+    let paramType = callE (varE typeName) [argExprA (varE ident)]
+        listType = callE (varE typeName) [argExprA (listE [])]
+        typeTest = binaryOpE equalityO paramType listType
+
+        arrTyLen = case knownLen of
+          Nothing -> callE (varE lenName) [argExprA (varE ident)]
+          Just n -> intE n
+        arrTyEx = binaryOpE multiplyO pyItemType arrTyLen
+
+        arrayTypeStmt = assignS [varE arrayTypeName] arrTyEx
+
+        arrayConstructor = callE (varE arrayTypeName) [argExprA (varE ident)]
+        arrayTypeOverwrite = assignS [varE arrayTypeName] arrayConstructor
+
+        conversionBody = [ arrayTypeStmt, arrayTypeOverwrite ]
+
+    conditionalS [(typeTest, conversionBody)] []
+  where
+    isArray (PAArray 1) = True
+    isArray _ = False
 
 -- | This may need to be extended if LLVM puts other strange
 -- characters in identifiers

@@ -61,15 +61,27 @@ main = do
   let pyMod = interfaceToCtypes libname iface
   putStrLn $ PP.prettyText $ runQ pyMod
 
+dependencyImport :: String -> StatementQ ()
+dependencyImport lib = do
+  ctypes <- captureName "ctypes"
+  dllConstructor <- captureName "CDLL"
+  modeKwd <- captureName "mode"
+  modeName <- captureName "RTLD_GLOBAL"
+  let conRef = makeDottedName [ ctypes, dllConstructor ]
+      modeRef = makeDottedName [ ctypes, modeName ]
+      call = callE conRef [ argExprA (stringE [lib]), argKeywordA modeKwd modeRef]
+  stmtExprS call
+
 interfaceToCtypes :: FilePath -> LibraryInterface -> ModuleQ ()
 interfaceToCtypes libName iface = do
   dllHandle <- newName "_module"
   ctypes <- captureName "ctypes"
   dllConstructor <- captureName "CDLL"
   let dllCon = makeDottedName [ ctypes, dllConstructor ]
-  let dllCall = callE dllCon [(argExprA (stringE [libName]))]
+  let dllCall = callE dllCon [argExprA (stringE [libName])]
       -- Loads the shared library
       dll = assignS [varE dllHandle] dllCall
+      deps = map dependencyImport (libraryDependencies iface)
 
       typeDecls = map buildTypeDecl (libraryTypes iface)
       typeDefs = map buildTypeDef (libraryTypes iface)
@@ -77,6 +89,7 @@ interfaceToCtypes libName iface = do
       funcs = map (buildFunction dllHandle) (libraryFunctions iface)
 
       defs = concat [ [importStatements]
+                    , deps
                     , [dll]
                     , typeDecls
                     , typeDefs

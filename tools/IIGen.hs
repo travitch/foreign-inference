@@ -76,15 +76,22 @@ interfaceToCtypes libName iface = do
 
       funcs = map (buildFunction dllHandle) (libraryFunctions iface)
 
-      defs = imp : dll : (typeDecls ++ typeDefs ++ funcs)
+      defs = concat [ [importStatements]
+                    , [dll]
+                    , typeDecls
+                    , typeDefs
+                    , funcs
+                    ]
 
   moduleM defs
   where
     -- | Import the ctypes module
-    imp = do
+    importStatements = do
       ctypes <- captureName "ctypes"
-      let itm = importItemI [ctypes] Nothing
-      importS [itm]
+      builtins <- captureName "__builtin__"
+      let ctypesImport = importItemI [ctypes] Nothing
+          builtinImport = importItemI [builtins] Nothing
+      importS [ctypesImport, builtinImport]
 
 -- | Initialize a type, but do not populate its fields yet.  Since
 -- some fields may reference types that are not yet defined, we can't
@@ -266,8 +273,8 @@ stripPointerType t = $failure ("Expected pointer type: " ++ show t)
 --
 -- Note: Only supports 1 dimensional arrays for now.
 --
--- > if type(p) == type([]):
--- >   _arrTy = EltType * len(p)
+-- > if __builtin__.type(p) is __builtin__.list:
+-- >   _arrTy = EltType * __builtin__.len(p)
 -- >   p = _arrTy(p)
 makeArrayConversion :: (Parameter, Ident ()) -> Maybe (StatementQ ())
 makeArrayConversion (p, ident) = do
@@ -279,15 +286,19 @@ makeArrayConversion (p, ident) = do
         _ -> $failure ("Unexpected non-array type: " ++ show (parameterType p))
       pyItemType = toCtype itemType
   return $ do
+    builtin <- captureName "__builtin__"
     lenName <- captureName "len"
     typeName <- captureName "type"
+    listName <- captureName "list"
     arrayTypeName <- newName "arrayType"
-    let paramType = callE (varE typeName) [argExprA (varE ident)]
-        listType = callE (varE typeName) [argExprA (listE [])]
-        typeTest = binaryOpE equalityO paramType listType
+    let typeRef = makeDottedName [builtin, typeName]
+        lenRef = makeDottedName [builtin, lenName]
+        listRef = makeDottedName [builtin, listName]
+    let paramType = callE typeRef [argExprA (varE ident)]
+        typeTest = binaryOpE isO paramType listRef
 
         arrTyLen = case knownLen of
-          Nothing -> callE (varE lenName) [argExprA (varE ident)]
+          Nothing -> callE lenRef [argExprA (varE ident)]
           Just n -> intE n
         arrTyEx = binaryOpE multiplyO pyItemType arrTyLen
 

@@ -38,6 +38,8 @@ import Data.Lens.Common
 import Data.Lens.Template
 import Data.Map ( Map )
 import qualified Data.Map as M
+import Data.HashSet ( HashSet )
+import qualified Data.HashSet as HS
 
 import LLVM.Analysis
 import LLVM.Analysis.CallGraphSCCTraversal
@@ -53,28 +55,25 @@ import Foreign.Inference.Internal.FlattenValue
 -- import Debug.Trace
 -- debug = flip trace
 
-type SummaryType = Map Function (Maybe String)
+type SummaryType = HashSet Function
 data AllocatorSummary =
   AllocatorSummary { _allocatorSummary :: SummaryType
                    , _allocatorDiagnostics :: Diagnostics
+                   , _finalizerSummary :: FinalizerSummary
                    }
 
 $(makeLens ''AllocatorSummary)
 
 instance Eq AllocatorSummary where
-  (AllocatorSummary s1 _) == (AllocatorSummary s2 _) = s1 == s2
+  (AllocatorSummary s1 _ _) == (AllocatorSummary s2 _ _) = s1 == s2
 
 instance Monoid AllocatorSummary where
-  mempty = AllocatorSummary mempty mempty
-  mappend (AllocatorSummary s1 d1) (AllocatorSummary s2 d2) =
-    AllocatorSummary (M.unionWith merge s1 s2) (mappend d1 d2)
-    where
-      merge Nothing Nothing = Nothing
-      merge v@(Just _) _ = v
-      merge _ v = v
+  mempty = AllocatorSummary mempty mempty mempty
+  mappend (AllocatorSummary s1 d1 f1) (AllocatorSummary s2 d2 f2) =
+    AllocatorSummary (HS.union s1 s2) (mappend d1 d2) (mappend f1 f2)
 
 instance NFData AllocatorSummary where
-  rnf a@(AllocatorSummary s d) = s `deepseq` d `deepseq` a `seq` ()
+  rnf a@(AllocatorSummary s d f) = s `deepseq` d `deepseq` f `deepseq` a `seq` ()
 
 instance HasDiagnostics AllocatorSummary where
   diagnosticLens = allocatorDiagnostics
@@ -88,11 +87,22 @@ type Analysis = AnalysisMonad AllocatorData ()
 
 instance SummarizeModule AllocatorSummary where
   summarizeArgument _ _ = []
-  summarizeFunction f (AllocatorSummary summ _) =
-    case M.lookup f summ of
-      Nothing -> []
-      Just (Just fin) -> [FAAllocator fin]
-      Just Nothing -> [FAAllocator ""]
+  summarizeFunction f (AllocatorSummary summ _ finSumm) =
+    case HS.member f summ of
+      False -> []
+      True ->
+        case automaticFinalizersForType finSumm (functionReturnType f) of
+          -- If there is no allocator, assume we just free it...  this
+          -- isn't necessarily safe.
+          [] -> [FAAllocator "free"]
+          [fin] -> [FAAllocator (identifierAsString (functionName fin))]
+          -- There was more than one, can't guess
+          _ -> [FAAllocator ""]
+
+functionReturnType :: Function -> Type
+functionReturnType f = ty
+  where
+    TypeFunction ty _ _ = functionType f
 
 identifyAllocators :: (FuncLike funcLike, HasFunction funcLike)
                       => DependencySummary
@@ -121,11 +131,13 @@ allocatorAnalysis (esumm, fsumm) funcLike s =
     RetInst { retInstValue = Just rv } ->
       case valueType rv of
         -- The function always returns a pointer
-        TypePointer _ _ -> checkReturn esumm f rv s
+        TypePointer _ _ -> do
+          s' <- checkReturn esumm f rv s
+          return $! s' { _finalizerSummary = fsumm }
         -- Non-pointer return, ignore
-        _ -> return s
+        _ -> return s { _finalizerSummary = fsumm }
     -- Returns void
-    _ -> return s
+    _ -> return s { _finalizerSummary = fsumm }
   where
     f = getFunction funcLike
     exitInst = functionExitInstruction f
@@ -148,7 +160,7 @@ checkReturn esumm f rv summ =
       case and valid of
         False -> return summ
         True ->
-          let summ' = M.insert f Nothing (summ ^. allocatorSummary)
+          let summ' = HS.insert f (summ ^. allocatorSummary)
           in return $! (allocatorSummary ^= summ') summ
   where
     rvs = flattenValue rv
@@ -230,5 +242,5 @@ isNotPhi v =
 -- | Convert an Allocator summary to a format more suitable for
 -- testing
 allocatorSummaryToTestFormat :: AllocatorSummary -> Map String (Maybe String)
-allocatorSummaryToTestFormat (AllocatorSummary s _) =
-  M.mapKeys (show . functionName) s
+allocatorSummaryToTestFormat (AllocatorSummary s _ _) =
+  M.fromList $ map ((show . functionName) &&& (const Nothing)) $ HS.toList s

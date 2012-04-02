@@ -17,6 +17,7 @@ import Foreign.Inference.Interface
 import Foreign.Inference.Preprocessing
 import Foreign.Inference.Analysis.Allocator
 import Foreign.Inference.Analysis.Escape
+import Foreign.Inference.Analysis.Finalize
 import Foreign.Inference.Analysis.SingleInitializer
 import Foreign.Inference.Analysis.Util.CompositeSummary
 
@@ -47,7 +48,8 @@ analyzeAllocator ds m =
     cg = mkCallGraph m pta []
     analyses :: [ComposableAnalysis AnalysisSummary FunctionMetadata]
     analyses = [ identifyEscapes ds escapeSummary
-               , identifyAllocators ds sis allocatorSummary escapeSummary
+               , identifyFinalizers ds sis finalizerSummary
+               , identifyAllocators ds sis allocatorSummary escapeSummary finalizerSummary
                ]
     analysisFunc = callGraphComposeAnalysis analyses
     res = callGraphSCCTraversal cg analysisFunc mempty

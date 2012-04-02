@@ -14,6 +14,7 @@
 module Foreign.Inference.Analysis.Finalize (
   FinalizerSummary,
   identifyFinalizers,
+  automaticFinalizersForType,
   -- * Testing
   finalizerSummaryToTestFormat
   ) where
@@ -99,6 +100,15 @@ identifyFinalizers ds sis lns =
   where
     runner a = runAnalysis a constData ()
     constData = FinalizerData mempty ds sis
+
+-- | Find all functions of one parameter that finalize the given type.
+automaticFinalizersForType :: FinalizerSummary -> Type -> [Function]
+automaticFinalizersForType (FinalizerSummary s _) t =
+  filter ((==1) . length . functionParameters) funcs
+  where
+    args = HM.keys s
+    compatibleArgs = filter ((t==) . argumentType) args
+    funcs = map argumentFunction compatibleArgs
 
 data FinalizerInfo =
   FinalizerInfo { notFinalizedOrNull :: HashSet Argument

@@ -32,6 +32,7 @@ module Foreign.Inference.Analysis.Allocator (
   allocatorSummaryToTestFormat
   ) where
 
+import Control.Arrow ( (&&&) )
 import Control.DeepSeq
 import Data.Lens.Common
 import Data.Lens.Template
@@ -45,7 +46,7 @@ import Foreign.Inference.AnalysisMonad
 import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
 import Foreign.Inference.Analysis.Escape
--- import Foreign.Inference.Analysis.Finalize
+import Foreign.Inference.Analysis.Finalize
 import Foreign.Inference.Analysis.SingleInitializer
 import Foreign.Inference.Internal.FlattenValue
 
@@ -98,22 +99,24 @@ identifyAllocators :: (FuncLike funcLike, HasFunction funcLike)
                       -> SingleInitializerSummary
                       -> Lens compositeSummary AllocatorSummary
                       -> Lens compositeSummary EscapeSummary
+                      -> Lens compositeSummary FinalizerSummary
                       -> ComposableAnalysis compositeSummary funcLike
-identifyAllocators ds sis lns depLens =
+identifyAllocators ds sis lns escLens finLens =
   composableDependencyAnalysisM runner allocatorAnalysis lns depLens
   where
     runner a = runAnalysis a readOnlyData ()
     readOnlyData = AllocatorData ds sis
+    depLens = lens (getL escLens &&& getL finLens) (\(e, f) -> setL escLens e . setL finLens f)
 
 -- | If the function returns a pointer, it is a candidate for an
 -- allocator.  We do not concern ourselves with functions that may
 -- unwind or call exit on error - these can also be allocators.
 allocatorAnalysis :: (FuncLike funcLike, HasFunction funcLike)
-                     => EscapeSummary
+                     => (EscapeSummary, FinalizerSummary)
                      -> funcLike
                      -> AllocatorSummary
                      -> Analysis AllocatorSummary
-allocatorAnalysis esumm funcLike s =
+allocatorAnalysis (esumm, fsumm) funcLike s =
   case exitInst of
     RetInst { retInstValue = Just rv } ->
       case valueType rv of

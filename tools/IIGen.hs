@@ -374,6 +374,7 @@ buildFunction dllHandle f = do
       dllCallResult = assignS [varE resultName] dllCall
       attachFinalizer = maybe [] ((:[]) . assignFinalizer dllHandle resultName) (find allocatorAnnotation (foreignFunctionAnnotations f))
       removeFinalizer = maybe [] clearFinalizer (find isFinalized nonOutputNames)
+      nullGuards = mapMaybe buildNullGuard nonOutputNames
       dllReturn =
         case (foreignFunctionReturnType f, null outputNames) of
           (CVoid, True) -> returnS Nothing
@@ -385,6 +386,7 @@ buildFunction dllHandle f = do
       stmts = concat [ [stmtExprS docString] -- outer docstring
                      , outParamStorage -- Allocations for out params
                      , arrayConversions
+                     , nullGuards -- Checks for NULL params
                      , [dllCallResult] -- Call and save result
                      , attachFinalizer -- Attach finalizer if this is an allocator
                      , removeFinalizer -- Remove the finalizer if this is a finalizer (to avoid double frees)
@@ -453,6 +455,31 @@ clearFinalizer (_, pident) = [clear, zero]
                                   , argExprA sizeof
                                   ]
 
+-- | If the parameter is not nullable, return the check:
+--
+-- > if p.value == None or p.value == 0:
+-- >   raise ValueError("Null pointer for argument p")
+buildNullGuard :: (Parameter, Ident ()) -> Maybe (StatementQ ())
+buildNullGuard (p, pident) =
+  case any (==PANotNull) (parameterAnnotations p) of
+    False -> Nothing
+    True -> Just $ do
+      builtinName <- captureName "__builtin__"
+      valueErrorName <- captureName "ValueError"
+      valueFieldName <- captureName "value"
+      noneName <- captureName "None"
+
+      let paramRef = makeDottedName [ pident, valueFieldName ]
+          valErrRef = makeDottedName [ builtinName, valueErrorName ]
+      let lhs = binaryOpE equalityO paramRef (varE noneName)
+          rhs = binaryOpE equalityO paramRef (intE (0 :: Int))
+          ptrTest = binaryOpE orO lhs rhs
+          noneOp = binaryOpE isO (varE pident) (varE noneName)
+          test = binaryOpE orO noneOp ptrTest
+          ex = callE valErrRef [ argExprA (stringE ["Null pointer for argument " ++ parameterName p]) ]
+          exVal = raiseExprV2C (Just (ex, Nothing))
+          exStmt = raiseS exVal
+      conditionalS [(test, [exStmt])] []
 
 
 -- | Meant for use from the function builder for constructors.  This

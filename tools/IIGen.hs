@@ -363,15 +363,15 @@ toCtype ct =
   case ct of
     CVoid -> captureName "None" >>= varE
     CInt 1 -> captureName "ctypes.c_bool" >>= varE
-    CInt 8 -> captureName "ctypes.c_char" >>= varE
-    CInt 16 -> captureName "ctypes.c_short" >>= varE
-    CInt 32 -> captureName "ctypes.c_int" >>= varE
-    CInt 64 -> captureName "ctypes.c_longlong" >>= varE
+    CInt 8 -> captureName "ctypes.c_int8" >>= varE
+    CInt 16 -> captureName "ctypes.c_int16" >>= varE
+    CInt 32 -> captureName "ctypes.c_int32" >>= varE
+    CInt 64 -> captureName "ctypes.c_int64" >>= varE
     CInt _ -> error $ "Unexpected bit size: " ++ show ct
-    CUInt 8 -> captureName "ctypes.c_uchar" >>= varE
-    CUInt 16 -> captureName "ctypes.c_ushort" >>= varE
-    CUInt 32 -> captureName "ctypes.c_uint" >>= varE
-    CUInt 64 -> captureName "ctypes.c_ulonglong" >>= varE
+    CUInt 8 -> captureName "ctypes.c_uint8" >>= varE
+    CUInt 16 -> captureName "ctypes.c_uint16" >>= varE
+    CUInt 32 -> captureName "ctypes.c_uint32" >>= varE
+    CUInt 64 -> captureName "ctypes.c_uint64" >>= varE
     CUInt _ -> error $ "Unexpected bit size: " ++ show ct
     CFloat -> captureName "ctypes.c_float" >>= varE
     CDouble -> captureName "ctypes.c_double" >>= varE

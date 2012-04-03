@@ -372,7 +372,8 @@ buildFunction dllHandle f = do
       dllFunc = makeDottedName [ dllHandle, fname ]
       dllCall = callE dllFunc (map (buildActualArg justOutVarNames) paramNames)
       dllCallResult = assignS [varE resultName] dllCall
-      attachFinalizer = maybe [] ((:[]) . assignFinalizer resultName) (find allocatorAnnotation (foreignFunctionAnnotations f))
+      attachFinalizer = maybe [] ((:[]) . assignFinalizer dllHandle resultName) (find allocatorAnnotation (foreignFunctionAnnotations f))
+      removeFinalizer = maybe [] clearFinalizer (find isFinalized nonOutputNames)
       dllReturn =
         case (foreignFunctionReturnType f, null outputNames) of
           (CVoid, True) -> returnS Nothing
@@ -386,6 +387,7 @@ buildFunction dllHandle f = do
                      , arrayConversions
                      , [dllCallResult] -- Call and save result
                      , attachFinalizer -- Attach finalizer if this is an allocator
+                     , removeFinalizer -- Remove the finalizer if this is a finalizer (to avoid double frees)
                      , [dllReturn] -- Return result
                      ]
   let innerFunc = funS realFuncName ps Nothing stmts
@@ -417,15 +419,59 @@ buildFunction dllHandle f = do
         False -> argExprA (varE name)
         True -> argExprA (callE byrefFunc [argExprA (varE name)])
 
-assignFinalizer :: Ident () -> FuncAnnotation -> StatementQ ()
-assignFinalizer _ (FAAllocator "") =
+isFinalized :: (Parameter, Ident ()) -> Bool
+isFinalized = any (==PAFinalize) . parameterAnnotations . fst
+
+-- | Remove the finalizer from a value and then zero out its pointer.
+--
+-- > p._finalizer = None
+-- > ctypes.memset(ctypes.addressof(p), 0, ctypes.sizeof(b))
+--
+-- The zeroing out prevents it from being used later accidentally, or
+-- at least makes it easier to spot.
+clearFinalizer :: (Parameter, Ident ()) -> [StatementQ ()]
+clearFinalizer (_, pident) = [clear, zero]
+  where
+    clear = do
+      finFieldName <- captureName "_finalizer"
+      noneName <- captureName "None"
+      let finFieldRef = makeDottedName [ pident, finFieldName ]
+      assignS [finFieldRef] (varE noneName)
+    zero = do
+      ctypes <- captureName "ctypes"
+      sizeofName <- captureName "sizeof"
+      memsetName <- captureName "memset"
+      addrOfName <- captureName "addressof"
+      let pref = varE pident
+          addrRef = makeDottedName [ ctypes, addrOfName ]
+          sizeofRef = makeDottedName [ ctypes, sizeofName ]
+          memsetRef = makeDottedName [ ctypes, memsetName]
+          addrOf = callE addrRef [argExprA pref]
+          sizeof = callE sizeofRef [argExprA pref]
+      stmtExprS $ callE memsetRef [ argExprA addrOf
+                                  , argExprA (intE (0 :: Int))
+                                  , argExprA sizeof
+                                  ]
+
+
+
+-- | Meant for use from the function builder for constructors.  This
+-- assigns the correct finalizer to the @resultName@ of a low-level
+-- allocator call.
+--
+-- Note that the assigned finalizer is the direct reference to
+-- _module.finalizer; this is necessary to avoid some of the fancy
+-- bookkeeping code present in the wrapped finalizer.
+assignFinalizer :: Ident () -> Ident () -> FuncAnnotation -> StatementQ ()
+assignFinalizer _ _ (FAAllocator "") =
   $failure "Unexpected empty allocator annotation"
-assignFinalizer resultName (FAAllocator fin) = do
+assignFinalizer dllHandle resultName (FAAllocator fin) = do
   fieldName <- captureName "_finalizer"
-  let fieldRef = makeDottedName [ resultName, fieldName ]
   finalizerName <- captureName fin
-  assignS [fieldRef] (varE finalizerName)
-assignFinalizer _ _ = $failure "Unexpected annotation"
+  let fieldRef = makeDottedName [ resultName, fieldName ]
+      finRef = makeDottedName [ dllHandle, finalizerName ]
+  assignS [fieldRef] finRef
+assignFinalizer _ _ _ = $failure "Unexpected annotation"
 
 -- | Return True if this annotation provides the name of a finalizer.
 allocatorAnnotation :: FuncAnnotation -> Bool

@@ -95,7 +95,7 @@ interfaceToCtypes libName iface = do
 
       ptrCacheInit = assignS [varE ptrTypeCacheName] (dictionaryE [])
       resPtrFunc = buildResPtrFunc resPtrName ptrTypeCacheName
-      defs = concat [ [importStatements]
+      defs = concat [ importStatements
                     , deps
                     , [dll]
                     , [ptrCacheInit, resPtrFunc]
@@ -105,14 +105,26 @@ interfaceToCtypes libName iface = do
                     ]
 
   moduleM defs
+
+-- | Import the ctypes module
+importStatements :: [StatementQ ()]
+importStatements = [ ctypesImp, builtinImp ]
   where
-    -- | Import the ctypes module
-    importStatements = do
+    ctypesImp = do
       ctypes <- captureName "ctypes"
-      builtins <- captureName "__builtin__"
       let ctypesImport = importItemI [ctypes] Nothing
-          builtinImport = importItemI [builtins] Nothing
-      importS [ctypesImport, builtinImport]
+      importS [ctypesImport]
+    builtinImp = do
+      v2builtins <- captureName "__builtin__"
+      v3builtins <- captureName "builtins"
+      commonName <- captureName "_builtinModule"
+      impErrorName <- captureName "ImportError"
+      let v2impitem = importItemI [v2builtins] (Just commonName)
+          v3impitem = importItemI [v3builtins] (Just commonName)
+          imperr = varE impErrorName
+          importClause = exceptClauseC (Just (imperr, Nothing))
+          handleImpErr = handlerH importClause [importS [v3impitem]]
+      tryS [importS [v2impitem]] [handleImpErr] [] []
 
 resourceTypes :: LibraryInterface -> Set CType
 resourceTypes = foldr checkFunction S.empty . libraryFunctions
@@ -204,7 +216,7 @@ buildResPtrFunc :: Ident () -> Ident () -> StatementQ ()
 buildResPtrFunc resPtrName cacheName = do
   clsParam <- newName "klass"
 
-  builtinName <- captureName "__builtin__"
+  builtinName <- captureName "_builtinModule"
   keyErrorName <- captureName "KeyError"
 
   -- > try:
@@ -288,7 +300,7 @@ buildResPtrClass className strName = do
   memsetName <- captureName "memset"
   addrOfName <- captureName "addressof"
   attrErrName <- captureName "AttributeError"
-  builtinName <- captureName "__builtin__"
+  builtinName <- captureName "_builtinModule"
   let finRef = makeDottedName [ selfName, finalizerFieldName ]
       addrRef = makeDottedName [ ctypes, addrOfName ]
       sizeofRef = makeDottedName [ ctypes, sizeofName ]
@@ -464,7 +476,7 @@ buildNullGuard (p, pident) =
   case any (==PANotNull) (parameterAnnotations p) of
     False -> Nothing
     True -> Just $ do
-      builtinName <- captureName "__builtin__"
+      builtinName <- captureName "_builtinModule"
       valueErrorName <- captureName "ValueError"
       valueFieldName <- captureName "value"
       noneName <- captureName "None"
@@ -553,7 +565,7 @@ makeArrayConversion (p, ident) = do
         _ -> $failure ("Unexpected non-array type: " ++ show (parameterType p))
       pyItemType = toCtype itemType
   return $ do
-    builtin <- captureName "__builtin__"
+    builtin <- captureName "_builtinModule"
     lenName <- captureName "len"
     typeName <- captureName "type"
     listName <- captureName "list"

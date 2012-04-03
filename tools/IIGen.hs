@@ -4,9 +4,11 @@ module Main ( main ) where
 import Control.Monad ( when )
 import Data.Default
 import Data.HashSet ( HashSet )
-import qualified Data.HashSet as S
+import qualified Data.HashSet as HS
 import Data.List ( find, intercalate, partition )
 import Data.Maybe ( mapMaybe )
+import Data.Set ( Set )
+import qualified Data.Set as S
 import Debug.Trace.LocationTH
 import System.Console.CmdArgs.Explicit
 import System.Console.CmdArgs.Text
@@ -77,8 +79,11 @@ interfaceToCtypes libName iface = do
   dllHandle <- newName "_module"
   ctypes <- captureName "ctypes"
   dllConstructor <- captureName "CDLL"
+  ptrTypeCacheName <- newName "_pointer_type_cache"
+  resPtrName <- captureName "_RESOURCEPOINTER"
+
   let dllCon = makeDottedName [ ctypes, dllConstructor ]
-  let dllCall = callE dllCon [argExprA (stringE [libName])]
+      dllCall = callE dllCon [argExprA (stringE [libName])]
       -- Loads the shared library
       dll = assignS [varE dllHandle] dllCall
       deps = map dependencyImport (libraryDependencies iface)
@@ -88,9 +93,12 @@ interfaceToCtypes libName iface = do
 
       funcs = map (buildFunction dllHandle) (libraryFunctions iface)
 
+      ptrCacheInit = assignS [varE ptrTypeCacheName] (dictionaryE [])
+      resPtrFunc = buildResPtrFunc resPtrName ptrTypeCacheName
       defs = concat [ [importStatements]
                     , deps
                     , [dll]
+                    , [ptrCacheInit, resPtrFunc]
                     , typeDecls
                     , typeDefs
                     , funcs
@@ -106,18 +114,33 @@ interfaceToCtypes libName iface = do
           builtinImport = importItemI [builtins] Nothing
       importS [ctypesImport, builtinImport]
 
+resourceTypes :: LibraryInterface -> Set CType
+resourceTypes = foldr checkFunction S.empty . libraryFunctions
+  where
+    checkFunction f s =
+      case any allocatorAnnotation (foreignFunctionAnnotations f) of
+        False -> s
+        True -> S.insert (foreignFunctionReturnType f) s
+
 -- | Initialize a type, but do not populate its fields yet.  Since
 -- some fields may reference types that are not yet defined, we can't
 -- instantiate them yet.  This is the first of the two-phase process.
+-- This includes the __del__ method; the referenced _finalizer
+-- attribute is only set within constructor functions.
 --
--- > class TypeName(ctypes.Structure): pass
+-- > class TypeName(ctypes.Structure):
+-- >   pass
+--
+-- It returns the name chosen for the struct, which may be mangled for
+-- uniquenss.
 buildTypeDecl :: CType -> StatementQ ()
 buildTypeDecl (CStruct name _) = do
+  className <- captureName name
+
   ctypes <- captureName "ctypes"
   struct <- captureName "Structure"
-  let parentClass = makeDottedName [ ctypes, struct ]
 
-  className <- captureName name
+  let parentClass = makeDottedName [ ctypes, struct ]
 
   classS className [argExprA parentClass] [passS]
 buildTypeDecl t = error ("Expected struct type: " ++ show t)
@@ -148,6 +171,145 @@ makeOutParamStorage (p, pname) = do
   let conName = toCtype innerType
       conCall = callE conName []
   assignS [varE pname] conCall
+
+-- | Build the RESOURCEPOINTER function
+--
+-- > def RESOURCEPOINTER(cls):
+-- >     try:
+-- >        return _pointer_type_cache[cls]
+-- >     except KeyError:
+-- >         pass
+-- >
+-- >     strname = cls
+-- >     if not __builtin__.type(strname) is __builtin__.str:
+-- >         strname = cls.__name__
+-- >
+-- >     class _ResourcePointer(ctypes.c_void_p):
+-- >         __name__ = "LP_%s" % strname
+-- >
+-- >         def __init__(self, ptr):
+-- >             ctypes.c_void_p.__init__(self, ptr)
+-- >
+-- >         def __del__(self):
+-- >             try:
+-- >                 if self._finalizer:
+-- >                     self._finalizer(self)
+-- >                     ctypes.memset(ctypes.addressof(self), 0, ctypes.sizeof(self))
+-- >             except AttributeError:
+-- >                 pass
+-- >
+-- >     _pointer_type_cache[cls] = _ResourcePointer
+-- >     return _ResourcePointer
+buildResPtrFunc :: Ident () -> Ident () -> StatementQ ()
+buildResPtrFunc resPtrName cacheName = do
+  clsParam <- newName "klass"
+
+  builtinName <- captureName "__builtin__"
+  keyErrorName <- captureName "KeyError"
+
+  -- > try:
+  -- >   return _pointer_type_cache[klass]
+  -- > except KeyError: pass
+  let keyErrRef = makeDottedName [ builtinName, keyErrorName ]
+      cacheRef = subscriptE (varE cacheName) (varE clsParam)
+      tryAccess = returnS $ Just cacheRef
+      accessClause = exceptClauseC $ Just (keyErrRef, Nothing)
+      ignoreKeyError = handlerH accessClause [passS]
+      cacheHit = tryS [tryAccess] [ignoreKeyError] [] []
+
+  strName <- newName "strname"
+  typeFuncName <- captureName "type"
+  strFuncName <- captureName "str"
+  nameName <- captureName "__name__"
+
+  -- > strname = klass
+  -- > if __builtin__.type(strname) is not __builtin__.str:
+  -- >   strname = klass.__name__
+  let typeRef = makeDottedName [ builtinName, typeFuncName ]
+      strRef = makeDottedName [ builtinName, strFuncName ]
+      klassNameRef = makeDottedName [ clsParam, nameName ]
+      saveClass = assignS [varE strName] (varE clsParam)
+      strnameType = callE typeRef [argExprA (varE clsParam)]
+      notStrTest = binaryOpE isNotO strnameType strRef
+      stringAssign = assignS [varE strName] klassNameRef
+      ensureString = conditionalS [(notStrTest, [stringAssign])] []
+
+  resPtrClassName <- newName "_ResourcePointer"
+
+  -- > _pointer_type_cache[klass] = _ResourcePointer
+  -- > return _ResourcePointer
+  let resPtrClass = buildResPtrClass resPtrClassName strName
+      cache = assignS [cacheRef] (varE resPtrClassName)
+      ret = returnS $ Just (varE resPtrClassName)
+      stmts = [cacheHit, saveClass, ensureString, resPtrClass, cache, ret]
+  funS resPtrName [paramP clsParam Nothing Nothing] Nothing stmts
+
+-- | Definition of the internal resource pointer class
+--
+-- >     class _ResourcePointer(ctypes.c_void_p):
+-- >         __name__ = "LP_%s" % strname
+-- >
+-- >         def __init__(self, ptr):
+-- >             ctypes.c_void_p.__init__(self, ptr)
+-- >
+-- >         def __del__(self):
+-- >             try:
+-- >                 if self._finalizer:
+-- >                     self._finalizer(self)
+-- >                     ctypes.memset(ctypes.addressof(self), 0, ctypes.sizeof(self))
+-- >             except AttributeError:
+-- >                 pass
+buildResPtrClass :: Ident () -> Ident () -> StatementQ ()
+buildResPtrClass className strName = do
+  ctypes <- captureName "ctypes"
+  voidName <- captureName "c_void_p"
+  nameFieldName <- captureName "__name__"
+  initName <- captureName "__init__"
+  delName <- captureName "__del__"
+  selfName <- captureName "self"
+  finalizerFieldName <- captureName "_finalizer"
+
+  let self = varE selfName
+
+  -- > __name__ = "LP_%s" % strname
+  let parentRef = makeDottedName [ ctypes, voidName ]
+      nameAttr = binaryOpE moduloO (stringE ["LP_%s"]) (varE strName)
+      nameInit = assignS [varE nameFieldName] nameAttr
+
+  -- > def __init__(self, ptr):
+  -- >   ctypes.c_void_p.__init__(self, ptr)
+  ptrName <- newName "ptr"
+  let parentInitRef = makeDottedName [ ctypes, voidName, initName ]
+      parentInit = callE parentInitRef [argExprA self, argExprA (varE ptrName)]
+      initFunc = funS initName [ paramP selfName Nothing Nothing
+                               , paramP ptrName Nothing Nothing ] Nothing [stmtExprS parentInit]
+
+  sizeofName <- captureName "sizeof"
+  memsetName <- captureName "memset"
+  addrOfName <- captureName "addressof"
+  attrErrName <- captureName "AttributeError"
+  builtinName <- captureName "__builtin__"
+  let finRef = makeDottedName [ selfName, finalizerFieldName ]
+      addrRef = makeDottedName [ ctypes, addrOfName ]
+      sizeofRef = makeDottedName [ ctypes, sizeofName ]
+      memsetRef = makeDottedName [ ctypes, memsetName]
+      attrRef = makeDottedName [ builtinName, attrErrName ]
+  let finalizeSelf = stmtExprS $ callE finRef [argExprA self]
+      addrOf = callE addrRef [argExprA self]
+      sizeof = callE sizeofRef [argExprA self]
+      zeroSelf = stmtExprS $ callE memsetRef [ argExprA addrOf
+                                             , argExprA (intE (0 :: Int))
+                                             , argExprA sizeof
+                                             ]
+      finalize = conditionalS [(finRef, [finalizeSelf, zeroSelf])] []
+      attrErrClause = exceptClauseC $ Just (attrRef, Nothing)
+      handleAttrErr = handlerH attrErrClause [passS]
+      tryFinalize = tryS [finalize] [handleAttrErr] [] []
+      delFunc = funS delName [paramP selfName Nothing Nothing] Nothing [tryFinalize]
+
+  let body = [nameInit, initFunc, delFunc]
+  classS className [argExprA parentRef] body
+
 
 byrefFunc :: ExprQ ()
 byrefFunc = do
@@ -210,6 +372,7 @@ buildFunction dllHandle f = do
       dllFunc = makeDottedName [ dllHandle, fname ]
       dllCall = callE dllFunc (map (buildActualArg justOutVarNames) paramNames)
       dllCallResult = assignS [varE resultName] dllCall
+      attachFinalizer = maybe [] ((:[]) . assignFinalizer resultName) (find allocatorAnnotation (foreignFunctionAnnotations f))
       dllReturn =
         case (foreignFunctionReturnType f, null outputNames) of
           (CVoid, True) -> returnS Nothing
@@ -221,7 +384,9 @@ buildFunction dllHandle f = do
       stmts = concat [ [stmtExprS docString] -- outer docstring
                      , outParamStorage -- Allocations for out params
                      , arrayConversions
-                     , [dllCallResult, dllReturn] -- Call and return
+                     , [dllCallResult] -- Call and save result
+                     , attachFinalizer -- Attach finalizer if this is an allocator
+                     , [dllReturn] -- Return result
                      ]
   let innerFunc = funS realFuncName ps Nothing stmts
 
@@ -251,6 +416,22 @@ buildFunction dllHandle f = do
       case name `elem` outNames of
         False -> argExprA (varE name)
         True -> argExprA (callE byrefFunc [argExprA (varE name)])
+
+assignFinalizer :: Ident () -> FuncAnnotation -> StatementQ ()
+assignFinalizer _ (FAAllocator "") =
+  $failure "Unexpected empty allocator annotation"
+assignFinalizer resultName (FAAllocator fin) = do
+  fieldName <- captureName "_finalizer"
+  let fieldRef = makeDottedName [ resultName, fieldName ]
+  finalizerName <- captureName fin
+  assignS [fieldRef] (varE finalizerName)
+assignFinalizer _ _ = $failure "Unexpected annotation"
+
+-- | Return True if this annotation provides the name of a finalizer.
+allocatorAnnotation :: FuncAnnotation -> Bool
+allocatorAnnotation (FAAllocator "") = False
+allocatorAnnotation (FAAllocator _) = True
+allocatorAnnotation _ = False
 
 -- | Generate a docstring for the given foreign function
 functionDocstring :: ForeignFunction -> String
@@ -333,7 +514,7 @@ findParameterName :: Parameter -> Q (Ident ())
 findParameterName p =
   case '.' `elem` parameterName p of
     False ->
-      case parameterName p `S.member` pythonKeywords of
+      case parameterName p `HS.member` pythonKeywords of
         False -> captureName (parameterName p)
         True -> newName ('_' : parameterName p)
     True -> do
@@ -344,13 +525,14 @@ findParameterName p =
 
 pythonKeywords :: HashSet String
 pythonKeywords =
-  S.fromList [ "and" , "as", "assert", "break", "class"
-             , "continue", "def" , "del", "elif", "else"
-             , "except", "exec", "finally", "for", "from"
-             , "global", "if", "import", "in", "is", "lambda"
-             , "not", "or", "pass", "print", "raise", "return"
-             , "try", "while", "with", "yield", "True", "False"
-             ]
+  HS.fromList [ "and" , "as", "assert", "break", "class"
+              , "continue", "def" , "del", "elif", "else"
+              , "except", "exec", "finally", "for", "from"
+              , "global", "if", "import", "in", "is", "lambda"
+              , "not", "or", "pass", "print", "raise", "return"
+              , "try", "while", "with", "yield", "True", "False"
+              , "None"
+              ]
 
 replaceDot :: Char -> Char
 replaceDot '.' = '_'
@@ -358,6 +540,11 @@ replaceDot c = c
 
 
 -- | Translate the interface type to the associated ctypes type.
+-- Note, the capture of _RESOURCEPOINTER here isn't exactly hygienic.
+-- It is technically possible (though unlikely) to cause a problem.
+-- To really be safe, function names and parameters would need to
+-- avoid this identifier.  It could be added as a keyword, but
+-- function names are not currently checked against that list.
 toCtype :: CType -> ExprQ ()
 toCtype ct =
   case ct of
@@ -377,7 +564,7 @@ toCtype ct =
     CDouble -> captureName "ctypes.c_double" >>= varE
     CPointer (CInt 8) -> captureName "ctypes.c_char_p" >>= varE
     CPointer innerType -> do
-      ptrCon <- captureName "ctypes.POINTER"
+      ptrCon <- captureName "_RESOURCEPOINTER"
       callE (varE ptrCon) [argExprA $ toCtype innerType]
     CStruct name _ -> captureName name >>= varE
     _ -> captureName "ctypes.c_void_p" >>= varE

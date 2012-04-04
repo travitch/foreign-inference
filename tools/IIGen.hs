@@ -80,6 +80,7 @@ interfaceToCtypes libName iface = do
   ptrTypeCacheName <- newName "_pointer_type_cache"
   resPtrName <- captureName "_RESOURCEPOINTER"
 
+  enumDecls <- mapM buildEnum (libraryEnums iface)
   let dllCon = makeDottedName [ ctypes, dllConstructor ]
       dllCall = callE dllCon [argExprA (stringE [libName])]
       -- Loads the shared library
@@ -91,12 +92,14 @@ interfaceToCtypes libName iface = do
 
       funcs = map (buildFunction dllHandle) (libraryFunctions iface)
 
+
       ptrCacheInit = assignS [varE ptrTypeCacheName] (dictionaryE [])
       resPtrFunc = buildResPtrFunc resPtrName ptrTypeCacheName
       defs = concat [ importStatements
                     , deps
                     , [dll]
                     , [ptrCacheInit, resPtrFunc]
+                    , concat enumDecls
                     , typeDecls
                     , typeDefs
                     , funcs
@@ -126,6 +129,23 @@ importStatements = [ ctypesImp, builtinImp ]
           importClause = exceptClauseC (Just (imperr, Nothing))
           handleImpErr = handlerH importClause [importS [v3impitem]]
       tryS [importS [v2impitem]] [handleImpErr] [] []
+
+buildEnum :: CEnum -> Q [StatementQ ()]
+buildEnum e = do
+  className <- case null (enumName e) of
+    True -> newName "AnonEnum"
+    False -> captureName (enumName e)
+  ctypes <- captureName "ctypes"
+  cintName <- captureName "c_int"
+  let parentName = makeDottedName [ ctypes, cintName ]
+      classDecl = classS className [argExprA parentName] [passS]
+      enumerationValues = map (buildEnumValue className) (enumValues e)
+  return $! classDecl : enumerationValues
+  where
+    buildEnumValue className (valName, valValue) = do
+      vName <- captureName valName
+      let conCall = callE (varE className) [argExprA (intE valValue)]
+      assignS [varE vName] conCall
 
 -- | Initialize a type, but do not populate its fields yet.  Since
 -- some fields may reference types that are not yet defined, we can't

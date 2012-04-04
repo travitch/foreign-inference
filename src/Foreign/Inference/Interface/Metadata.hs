@@ -13,6 +13,7 @@ import qualified Data.ByteString.Char8 as SBS
 import Data.HashMap.Strict ( HashMap )
 import qualified Data.HashMap.Strict as M
 import qualified Data.HashSet as HS
+import qualified Data.Set as S
 import Data.List ( stripPrefix )
 import Data.Maybe ( catMaybes, mapMaybe )
 import Debug.Trace.LocationTH
@@ -30,7 +31,7 @@ import Foreign.Inference.Interface.Types
 -- a Module by inspecting metadata.
 moduleInterfaceEnumerations :: Module -> [CEnum]
 moduleInterfaceEnumerations =
-  foldr extractInterfaceEnumTypes [] . moduleDefinedFunctions
+  S.toList . S.fromList . foldr extractInterfaceEnumTypes [] . moduleDefinedFunctions
 
 moduleInterfaceStructTypes :: Module -> [CType]
 moduleInterfaceStructTypes m = opaqueTypes ++ concreteTypes

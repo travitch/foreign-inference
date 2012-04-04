@@ -7,8 +7,6 @@ import Data.HashSet ( HashSet )
 import qualified Data.HashSet as HS
 import Data.List ( find, intercalate, partition )
 import Data.Maybe ( mapMaybe )
-import Data.Set ( Set )
-import qualified Data.Set as S
 import Debug.Trace.LocationTH
 import System.Console.CmdArgs.Explicit
 import System.Console.CmdArgs.Text
@@ -125,14 +123,6 @@ importStatements = [ ctypesImp, builtinImp ]
           importClause = exceptClauseC (Just (imperr, Nothing))
           handleImpErr = handlerH importClause [importS [v3impitem]]
       tryS [importS [v2impitem]] [handleImpErr] [] []
-
-resourceTypes :: LibraryInterface -> Set CType
-resourceTypes = foldr checkFunction S.empty . libraryFunctions
-  where
-    checkFunction f s =
-      case any allocatorAnnotation (foreignFunctionAnnotations f) of
-        False -> s
-        True -> S.insert (foreignFunctionReturnType f) s
 
 -- | Initialize a type, but do not populate its fields yet.  Since
 -- some fields may reference types that are not yet defined, we can't

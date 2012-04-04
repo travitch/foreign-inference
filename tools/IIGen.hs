@@ -104,6 +104,9 @@ interfaceToCtypes libName iface = do
 
   moduleM defs
 
+commonBuiltinName :: String
+commonBuiltinName = "_builtinModule"
+
 -- | Import the ctypes module
 importStatements :: [StatementQ ()]
 importStatements = [ ctypesImp, builtinImp ]
@@ -115,7 +118,7 @@ importStatements = [ ctypesImp, builtinImp ]
     builtinImp = do
       v2builtins <- captureName "__builtin__"
       v3builtins <- captureName "builtins"
-      commonName <- captureName "_builtinModule"
+      commonName <- captureName commonBuiltinName
       impErrorName <- captureName "ImportError"
       let v2impitem = importItemI [v2builtins] (Just commonName)
           v3impitem = importItemI [v3builtins] (Just commonName)
@@ -206,7 +209,7 @@ buildResPtrFunc :: Ident () -> Ident () -> StatementQ ()
 buildResPtrFunc resPtrName cacheName = do
   clsParam <- newName "klass"
 
-  builtinName <- captureName "_builtinModule"
+  builtinName <- captureName commonBuiltinName
   keyErrorName <- captureName "KeyError"
 
   -- > try:
@@ -290,7 +293,7 @@ buildResPtrClass className strName = do
   memsetName <- captureName "memset"
   addrOfName <- captureName "addressof"
   attrErrName <- captureName "AttributeError"
-  builtinName <- captureName "_builtinModule"
+  builtinName <- captureName commonBuiltinName
   let finRef = makeDottedName [ selfName, finalizerFieldName ]
       addrRef = makeDottedName [ ctypes, addrOfName ]
       sizeofRef = makeDottedName [ ctypes, sizeofName ]
@@ -466,7 +469,7 @@ buildNullGuard (p, pident) =
   case any (==PANotNull) (parameterAnnotations p) of
     False -> Nothing
     True -> Just $ do
-      builtinName <- captureName "_builtinModule"
+      builtinName <- captureName commonBuiltinName
       valueErrorName <- captureName "ValueError"
       valueFieldName <- captureName "value"
       noneName <- captureName "None"
@@ -555,7 +558,7 @@ makeArrayConversion (p, ident) = do
         _ -> $failure ("Unexpected non-array type: " ++ show (parameterType p))
       pyItemType = toCtype itemType
   return $ do
-    builtin <- captureName "_builtinModule"
+    builtin <- captureName commonBuiltinName
     lenName <- captureName "len"
     typeName <- captureName "type"
     listName <- captureName "list"

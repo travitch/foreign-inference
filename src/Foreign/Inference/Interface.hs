@@ -1,4 +1,4 @@
-{-# LANGUAGE DeriveGeneric, OverloadedStrings, ExistentialQuantification, DeriveDataTypeable #-}
+{-# LANGUAGE OverloadedStrings, ExistentialQuantification, DeriveDataTypeable #-}
 {-# LANGUAGE TemplateHaskell, StandaloneDeriving, ViewPatterns #-}
 -- | This module defines an external representation of library
 -- interfaces.  Individual libraries are represented by the
@@ -50,9 +50,6 @@ module Foreign.Inference.Interface (
 
 import Prelude hiding ( catch )
 
-import GHC.Generics
-
-import Control.Arrow ( (&&&) )
 import Control.DeepSeq
 import Control.Exception
 import Data.Aeson
@@ -62,29 +59,24 @@ import qualified Data.ByteString.Lazy as LBS
 import Data.Data
 import Data.HashMap.Strict ( HashMap )
 import qualified Data.HashMap.Strict as M
-import qualified Data.HashSet as HS
 import Data.Map ( Map )
 import qualified Data.Map as Map
 import Data.IntMap ( IntMap )
 import qualified Data.IntMap as IM
-import Data.Maybe ( catMaybes, mapMaybe )
+import Data.Maybe ( mapMaybe )
 import Data.Monoid
 import Data.Set ( Set )
 import qualified Data.Set as S
-import Data.List ( foldl', intercalate, stripPrefix )
+import Data.List ( foldl' )
 import Debug.Trace.LocationTH
 import System.FilePath
 import System.IO.Error hiding ( catch )
-import Text.Printf
 
-import Data.Graph.Interface
-import Data.Graph.PatriciaTree
-import Data.Graph.Algorithms.Matching.DFS
 
 import LLVM.Analysis
-import LLVM.Analysis.AccessPath
 
-import Foreign.Inference.Internal.TypeUnification
+import Foreign.Inference.Interface.Metadata
+import Foreign.Inference.Interface.Types
 
 import Paths_foreign_inference
 
@@ -100,124 +92,6 @@ data InterfaceException = DependencyMissing FilePath
                         deriving (Show, Typeable)
 instance Exception InterfaceException
 
--- | The annotations that are specific to individual parameters.
---
--- Other annotations:
-data ParamAnnotation = PAArray !Int
-                     | PAOut
-                     | PAInOut
-                     | PANotNull
-                     | PAString
-                     | PAConst
-                     | PAFinalize
-                     | PAUnref
-                     | PAEscape
-                     | PAWillEscape
-                     | PAScalarEffectAddOne String [AccessType]
-                     | PAScalarEffectSubOne String [AccessType]
-                     deriving (Show, Generic, Eq, Ord)
-instance FromJSON ParamAnnotation
-instance ToJSON ParamAnnotation
-
-deriving instance Generic AccessType
-instance FromJSON AccessType
-instance ToJSON AccessType
-
--- | The annotations that can apply at the 'ForeignFunction' level.
--- The FAVarArg annotation is not inferred but is still necessary.
---
--- Other annotations:
---
--- * FAReentrant (use to halt at runtime if called from different threads).
-data FuncAnnotation = FAAllocator String -- ^ Record the associated finalizer
-                    | FANoRet -- ^ The function does not return to the caller
-                    | FAVarArg
-                    | FACondFinalizer
-                    deriving (Show, Generic, Eq, Ord)
-instance FromJSON FuncAnnotation
-instance ToJSON FuncAnnotation
-
--- | Define linkage types so that modules with overlapping symbol
--- definitions have a chance at being linked together.
-data Linkage = LinkDefault
-             | LinkWeak
-             deriving (Eq, Ord, Show, Generic)
-instance FromJSON Linkage
-instance ToJSON Linkage
-
--- | A simple external representation of C/C++ types.  Note that C++
--- templates are not (and will not) be represented.
---
--- Opaque types are represented by a struct with an empty body.
-data CType = CVoid
-           | CInt !Int
-           | CUInt !Int
-           | CFloat
-           | CDouble
-           | CFunction CType [CType]
-           | CPointer CType
-           | CArray CType !Int
-           | CStruct String [(String, CType)]
-           | CAnonStruct [CType]
-           deriving (Eq, Ord, Generic)
-instance FromJSON CType
-instance ToJSON CType
-
-instance Show CType where
-  show CVoid = "void"
-  show (CInt i) = "int" ++ show i
-  show (CUInt i) = "uint" ++ show i
-  show CFloat = "float"
-  show CDouble = "double"
-  show (CPointer (CInt 8)) = "string"
-  show (CPointer (CUInt 8)) = "string"
-  show (CPointer t) = show t ++"*"
-  show (CArray t x) = printf "%s[%d]" (show t) x
-  show (CStruct n _) = n
-  show (CAnonStruct _) = "<anon>"
-  show (CFunction rt ts) = printf "%s(%s)" (show rt) (intercalate ", " (map show ts))
-
--- | Descriptions of 'ForeignFunction' parameters
-data Parameter = Parameter { parameterType :: CType
-                           , parameterName :: String
-                           , parameterAnnotations :: [ParamAnnotation]
-                           }
-               deriving (Eq, Ord, Show, Generic)
-instance FromJSON Parameter
-instance ToJSON Parameter
-
--- | A description of the interface of a foreign function.  Note that
--- the function name is a ByteString to match the format it will have
--- in a shared library.
-data ForeignFunction = ForeignFunction { foreignFunctionName :: String
-                                       , foreignFunctionLinkage :: Linkage
-                                       , foreignFunctionReturnType :: CType
-                                       , foreignFunctionParameters :: [Parameter]
-                                       , foreignFunctionAnnotations :: [FuncAnnotation]
-                                       }
-                     deriving (Eq, Ord, Show, Generic)
-instance FromJSON ForeignFunction
-instance ToJSON ForeignFunction
-
-data CEnum = CEnum { enumName :: String
-                   , enumValues :: [(String, Int)]
-                   }
-           deriving (Eq, Ord, Show, Generic)
-instance FromJSON CEnum
-instance ToJSON CEnum
-
--- | A description of a foreign library.  This is just a collection of
--- ForeignFunctions that also tracks its name and dependencies.
-data LibraryInterface = LibraryInterface { libraryFunctions :: [ForeignFunction]
-                                         , libraryName :: String
-                                         , libraryDependencies :: [String]
-                                         , libraryTypes :: [CType]
-                                         , libraryEnums :: [CEnum]
-                                         }
-                      deriving (Show, Generic)
-
-instance FromJSON LibraryInterface
-instance ToJSON LibraryInterface
 
 type LibraryAnnotations = Map ByteString ([FuncAnnotation], IntMap [ParamAnnotation])
 type DepMap = HashMap ByteString ForeignFunction
@@ -403,52 +277,14 @@ moduleToLibraryInterface :: Module   -- ^ Module to summarize
                             -> LibraryInterface
 moduleToLibraryInterface m name deps summaries annots =
   LibraryInterface { libraryFunctions = funcs
-                   , libraryTypes = opaqueTypes ++ types
+                   , libraryTypes = moduleInterfaceStructTypes m
                    , libraryName = name
                    , libraryDependencies = deps
                    , libraryEnums = moduleInterfaceEnumerations m
                    }
   where
-    interfaceTypeMap = moduleInterfaceStructTypes m
-    (unifiedTypes, ununifiedTypes) = unifyTypes (M.keys interfaceTypeMap)
-    unifiedMDTypes = map (findTypeMD interfaceTypeMap) unifiedTypes
-    sortedUnifiedMDTypes = typeSort unifiedMDTypes
-    types = mapMaybe metadataStructTypeToCType sortedUnifiedMDTypes
-
-    uniqueOpaqueTypeNames = HS.toList $ HS.fromList $ map structTypeName ununifiedTypes
-    opaqueTypes = map toOpaqueCType uniqueOpaqueTypeNames
-
     funcs = mapMaybe (functionToExternal summaries annots) (moduleDefinedFunctions m)
 
-type TypeGraph = Gr (Type, Metadata) ()
-
--- | All of the components of a type that are stored by-value must be
--- defined before that type can be defined.  This is a topological
--- ordering captured by this graph-based sort.
-typeSort :: [(Type, Metadata)] -> [(Type, Metadata)]
-typeSort ts = reverse $ topsort' g
-  where
-    g :: TypeGraph
-    g = mkGraph ns es
-
-    toNodeMap = M.fromList (zip (map fst ts) [0..])
-    ns = map (\(ix, t) -> LNode ix t) (zip [0..] ts)
-    es = concatMap toEdges ts
-    toEdges (t@(TypeStruct _ members _), _) =
-      case M.lookup t toNodeMap of
-        Nothing -> $failure ("Expected node id for type: " ++ show t)
-        Just srcid -> mapMaybe (toEdge srcid) members
-    toEdges _ = []
-    toEdge srcid t = do
-      dstid <- M.lookup t toNodeMap
-      return $! LEdge (Edge srcid dstid) ()
-
--- | Match up a type with its metadata
-findTypeMD :: HashMap Type Metadata -> Type -> (Type, Metadata)
-findTypeMD interfaceTypeMap t =
-  case M.lookup t interfaceTypeMap of
-    Nothing -> $failure ("No metadata found for type: " ++ show t)
-    Just md -> (t, md)
 
 -- | Summarize a single function.  Functions with types in their
 -- signatures that have certain exotic types are not supported in
@@ -477,62 +313,6 @@ functionToExternal summaries annots f =
     fretType = case functionType f of
       TypeFunction rt _ _ -> rt
       t -> t
-
-paramMetaUnsigned :: Argument -> Bool
-paramMetaUnsigned a =
-  case argumentMetadata a of
-    [] -> False
-    [MetaDWLocal { metaLocalType = Just mt }] -> do
-      case mt of
-        MetaDWBaseType { metaBaseTypeEncoding = DW_ATE_unsigned } -> True
-        MetaDWDerivedType { metaDerivedTypeParent = Just baseType } ->
-          case baseType of
-            MetaDWBaseType { metaBaseTypeEncoding = DW_ATE_unsigned } -> True
-            _ -> False
-        _ -> False
-    _ -> False
-
-
-paramTypeMetadata :: Argument -> Maybe Metadata
-paramTypeMetadata a =
-  case argumentMetadata a of
-    [] -> Nothing
-    [MetaDWLocal { metaLocalType = mt }] -> mt
-    _ -> Nothing
-
-functionReturnMetaUnsigned :: Function -> Bool
-functionReturnMetaUnsigned f =
-  case functionMetadata f of
-    [] -> False
-    [MetaDWSubprogram { metaSubprogramType = Just ftype }] ->
-      case ftype of
-        MetaDWCompositeType { metaCompositeTypeMembers = Just ms } ->
-          case ms of
-            MetadataList _ (Just rt : _) ->
-              case rt of
-                MetaDWDerivedType { metaDerivedTypeParent = Just baseType } ->
-                  case baseType of
-                    MetaDWBaseType { metaBaseTypeEncoding = DW_ATE_unsigned } -> True
-                    _ -> False
-                MetaDWBaseType { metaBaseTypeEncoding = DW_ATE_unsigned } -> True
-                _ -> False
-            _ -> False
-        _ -> False
-    _ -> False
-
-functionReturnTypeMetadata :: Function -> Maybe Metadata
-functionReturnTypeMetadata f =
-  case functionMetadata f of
-    [] -> Nothing
-    [MetaDWSubprogram { metaSubprogramType = Just ftype }] ->
-      case ftype of
-        MetaDWCompositeType { metaCompositeTypeMembers = Just ms } ->
-          case ms of
-            MetadataList _ (rt : _) -> rt
-            _ -> Nothing
-        _ -> Nothing
-    _ -> Nothing
-
 
 paramToExternal :: [ModuleSummary] -> LibraryAnnotations -> (Int, Argument) -> Maybe Parameter
 paramToExternal summaries annots (ix, arg) = do
@@ -679,142 +459,3 @@ toLinkage l = case l of
   LTCommon -> Just LinkDefault
   LTWeakAny -> Just LinkWeak
   LTWeakODR -> Just LinkWeak
-
--- | Collect all of the enumerations used in the external interface of
--- a Module by inspecting metadata.
-moduleInterfaceEnumerations :: Module -> [CEnum]
-moduleInterfaceEnumerations =
-  foldr extractInterfaceEnumTypes [] . moduleDefinedFunctions
-
--- | Collect all of the struct types (along with their metadata) used
--- in the external interface of a Module.
-moduleInterfaceStructTypes :: Module -> HashMap Type Metadata
-moduleInterfaceStructTypes =
-  foldr extractInterfaceStructTypes M.empty . moduleDefinedFunctions
-
-extractInterfaceEnumTypes :: Function -> [CEnum] -> [CEnum]
-extractInterfaceEnumTypes f acc =
-  foldr collectEnums acc typeMds
-  where
-    retMd = functionReturnTypeMetadata f
-    argMds = map paramTypeMetadata (functionParameters f)
-    typeMds = catMaybes $ retMd : argMds
-
-collectEnums :: Metadata -> [CEnum] -> [CEnum]
-collectEnums MetaDWDerivedType { metaDerivedTypeParent = Just parent
-                               } acc =
-  collectEnums parent acc
-collectEnums MetaDWCompositeType { metaCompositeTypeTag = DW_TAG_enumeration_type
-                                 , metaCompositeTypeName = bsname
-                                 , metaCompositeTypeMembers = Just (MetadataList _ enums)
-                                 } acc =
-  CEnum { enumName = SBS.unpack bsname
-        , enumValues = mapMaybe toEnumeratorValue enums
-        } : acc
-collectEnums _ acc = acc
-
-toEnumeratorValue :: Maybe Metadata -> Maybe (String, Int)
-toEnumeratorValue (Just MetaDWEnumerator { metaEnumeratorName = ename
-                                         , metaEnumeratorValue = eval
-                                         }) =
-  Just (SBS.unpack ename, fromIntegral eval)
-toEnumeratorValue _ = Nothing
-
-extractInterfaceStructTypes :: Function -> HashMap Type Metadata -> HashMap Type Metadata
-extractInterfaceStructTypes f m =
-  foldr addTypeMdMapping m (mapMaybe isStructType typeMds)
-  where
-    TypeFunction rt _ _ = functionType f
-    retMd = functionReturnTypeMetadata f
-    argMds = map (argumentType &&& paramTypeMetadata) (functionParameters f)
-    typeMds = (rt, retMd) : argMds
-    addTypeMdMapping (llvmType, mdType) mdMap =
-      case mdType of
-        Nothing -> mdMap
-        Just md -> M.insert llvmType md mdMap
-
-isStructType :: (Type, Maybe Metadata) -> Maybe (Type, Maybe Metadata)
-isStructType (t@(TypeStruct _ _ _),
-              Just MetaDWDerivedType { metaDerivedTypeTag = DW_TAG_typedef
-                                , metaDerivedTypeParent = parent
-                                }) =
-  isStructType (t, parent)
-isStructType (t@(TypeStruct _ _ _), a) = Just (t, a)
-isStructType (TypePointer inner _,
-              Just MetaDWDerivedType { metaDerivedTypeTag = DW_TAG_pointer_type
-                                , metaDerivedTypeParent = parent
-                                }) =
-  isStructType (inner, parent)
-isStructType (t@(TypePointer _ _),
-              Just MetaDWDerivedType { metaDerivedTypeTag = DW_TAG_typedef
-                                , metaDerivedTypeParent = parent}) =
-  isStructType (t, parent)
-isStructType _ = Nothing
-
-sanitizeStructName :: String -> String
-sanitizeStructName name = takeWhile (/= '.') name'
-  where
-    name' = case stripPrefix "struct." name of
-      Nothing ->
-        case stripPrefix "union." name of
-          Nothing -> name
-          Just x -> x
-      Just x -> x
-
-structTypeName :: Type -> String
-structTypeName (TypeStruct (Just name) _ _) = sanitizeStructName name
-structTypeName t = $failure ("Expected struct type: " ++ show t)
-
-toOpaqueCType :: String -> CType
-toOpaqueCType name = CStruct name []
-
-metadataStructTypeToCType :: (Type, Metadata) -> Maybe CType
-metadataStructTypeToCType (TypeStruct (Just name) members _,
-                           MetaDWCompositeType { metaCompositeTypeMembers =
-                                                    Just (MetadataList _ cmembers)
-                                               }) = do
-  let memberTypes = zip members cmembers
-  mtys <- mapM trNameAndType memberTypes
-  return (CStruct (sanitizeStructName name) mtys)
-  where
-    trNameAndType (llvmType, Just MetaDWDerivedType { metaDerivedTypeName = memberName
-                                               }) = do
-      realType <- structMemberToCType llvmType
-      return (SBS.unpack memberName, realType)
-    trNameAndType _ = Nothing
--- If there were no members in the metadata, this is an opaque type
-metadataStructTypeToCType (TypeStruct (Just name) _ _, _) =
-  return $! CStruct (sanitizeStructName name) []
-metadataStructTypeToCType t =
-  $failure ("Unexpected non-struct metadata: " ++ show t)
-
-structMemberToCType :: Type -> Maybe CType
-structMemberToCType t = case t of
-  TypeInteger i -> return $! CInt i
-  TypeFloat -> return CFloat
-  TypeDouble -> return CDouble
-  TypeArray n t' -> do
-    tt <- structMemberToCType t'
-    return $! CArray tt n
-  TypeFunction r ts _ -> do
-    rt <- structMemberToCType r
-    tts <- mapM structMemberToCType ts
-    return $! CFunction rt tts
-  TypePointer t' _ -> do
-    tt <- structMemberToCType t'
-    return $! CPointer tt
-  TypeStruct (Just n) _ _ ->
-    let name' = sanitizeStructName n
-    in return $! CStruct name' []
-  TypeStruct Nothing ts _ -> do
-    tts <- mapM structMemberToCType ts
-    return $! CAnonStruct tts
-  TypeVoid -> return $! CVoid -- Nothing
-  TypeFP128 -> return $! CArray (CInt 8) 16
-  -- Fake an 80 bit floating point number with an array of 10 bytes
-  TypeX86FP80 -> return $! CArray (CInt 8) 10
-  TypePPCFP128 -> return $! CArray (CInt 8) 16
-  TypeX86MMX -> Nothing
-  TypeLabel -> Nothing
-  TypeMetadata -> Nothing
-  TypeVector _ _ -> Nothing

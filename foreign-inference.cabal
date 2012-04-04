@@ -41,6 +41,8 @@ library
   other-modules: Foreign.Inference.Report.FunctionText,
                  Foreign.Inference.Report.Html,
                  Foreign.Inference.Report.Types,
+                 Foreign.Inference.Interface.Metadata,
+                 Foreign.Inference.Interface.Types,
                  Foreign.Inference.Internal.FlattenValue,
                  Foreign.Inference.Internal.TypeUnification,
                  Paths_foreign_inference

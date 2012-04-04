@@ -27,6 +27,7 @@ module Foreign.Inference.Interface (
   LibraryAnnotations,
   ForeignFunction(..),
   Parameter(..),
+  CEnum(..),
   CType(..),
   Linkage(..),
   ParamAnnotation(..),

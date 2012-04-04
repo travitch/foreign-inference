@@ -2,6 +2,7 @@
     "libraryDependencies": [],
     "libraryName": "c",
     "libraryTypes": [],
+    "libraryEnums": [],
     "libraryFunctions": [
         { "foreignFunctionName": "clearerr",
           "foreignFunctionAnnotations": [],

@@ -2,6 +2,7 @@
     "libraryDependencies": [],
     "libraryName": "m",
     "libraryTypes": [],
+    "libraryEnums": [],
     "libraryFunctions": [
         { "foreignFunctionName": "acos",
           "foreignFunctionAnnotations": [],

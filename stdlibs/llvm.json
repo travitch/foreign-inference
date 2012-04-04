@@ -2,6 +2,7 @@
     "libraryDependencies": [],
     "libraryName": "llvm",
     "libraryTypes": [],
+    "libraryEnums": [],
     "libraryFunctions": [
         { "foreignFunctionName": "llvm.memcpy.p0i8.p0i8.i64",
           "foreignFunctionAnnotations": [],

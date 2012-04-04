@@ -67,7 +67,7 @@ import Data.Map ( Map )
 import qualified Data.Map as Map
 import Data.IntMap ( IntMap )
 import qualified Data.IntMap as IM
-import Data.Maybe ( mapMaybe )
+import Data.Maybe ( catMaybes, mapMaybe )
 import Data.Monoid
 import Data.Set ( Set )
 import qualified Data.Set as S
@@ -199,6 +199,12 @@ data ForeignFunction = ForeignFunction { foreignFunctionName :: String
 instance FromJSON ForeignFunction
 instance ToJSON ForeignFunction
 
+data CEnum = CEnum { enumName :: String
+                   , enumValues :: [(String, Int)]
+                   }
+           deriving (Eq, Ord, Show, Generic)
+instance FromJSON CEnum
+instance ToJSON CEnum
 
 -- | A description of a foreign library.  This is just a collection of
 -- ForeignFunctions that also tracks its name and dependencies.
@@ -206,6 +212,7 @@ data LibraryInterface = LibraryInterface { libraryFunctions :: [ForeignFunction]
                                          , libraryName :: String
                                          , libraryDependencies :: [String]
                                          , libraryTypes :: [CType]
+                                         , libraryEnums :: [CEnum]
                                          }
                       deriving (Show, Generic)
 
@@ -399,6 +406,7 @@ moduleToLibraryInterface m name deps summaries annots =
                    , libraryTypes = opaqueTypes ++ types
                    , libraryName = name
                    , libraryDependencies = deps
+                   , libraryEnums = moduleInterfaceEnumerations m
                    }
   where
     interfaceTypeMap = moduleInterfaceStructTypes m
@@ -672,12 +680,48 @@ toLinkage l = case l of
   LTWeakAny -> Just LinkWeak
   LTWeakODR -> Just LinkWeak
 
+-- | Collect all of the enumerations used in the external interface of
+-- a Module by inspecting metadata.
+moduleInterfaceEnumerations :: Module -> [CEnum]
+moduleInterfaceEnumerations =
+  foldr extractInterfaceEnumTypes [] . moduleDefinedFunctions
+
+-- | Collect all of the struct types (along with their metadata) used
+-- in the external interface of a Module.
 moduleInterfaceStructTypes :: Module -> HashMap Type Metadata
 moduleInterfaceStructTypes =
-  foldr extractInterfaceTypes M.empty . moduleDefinedFunctions
+  foldr extractInterfaceStructTypes M.empty . moduleDefinedFunctions
 
-extractInterfaceTypes :: Function -> HashMap Type Metadata -> HashMap Type Metadata
-extractInterfaceTypes f m =
+extractInterfaceEnumTypes :: Function -> [CEnum] -> [CEnum]
+extractInterfaceEnumTypes f acc =
+  foldr collectEnums acc typeMds
+  where
+    retMd = functionReturnTypeMetadata f
+    argMds = map paramTypeMetadata (functionParameters f)
+    typeMds = catMaybes $ retMd : argMds
+
+collectEnums :: Metadata -> [CEnum] -> [CEnum]
+collectEnums MetaDWDerivedType { metaDerivedTypeParent = Just parent
+                               } acc =
+  collectEnums parent acc
+collectEnums MetaDWCompositeType { metaCompositeTypeTag = DW_TAG_enumeration_type
+                                 , metaCompositeTypeName = bsname
+                                 , metaCompositeTypeMembers = Just (MetadataList _ enums)
+                                 } acc =
+  CEnum { enumName = SBS.unpack bsname
+        , enumValues = mapMaybe toEnumeratorValue enums
+        } : acc
+collectEnums _ acc = acc
+
+toEnumeratorValue :: Maybe Metadata -> Maybe (String, Int)
+toEnumeratorValue (Just MetaDWEnumerator { metaEnumeratorName = ename
+                                         , metaEnumeratorValue = eval
+                                         }) =
+  Just (SBS.unpack ename, fromIntegral eval)
+toEnumeratorValue _ = Nothing
+
+extractInterfaceStructTypes :: Function -> HashMap Type Metadata -> HashMap Type Metadata
+extractInterfaceStructTypes f m =
   foldr addTypeMdMapping m (mapMaybe isStructType typeMds)
   where
     TypeFunction rt _ _ = functionType f

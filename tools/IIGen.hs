@@ -1,12 +1,15 @@
 {-# LANGUAGE TemplateHaskell #-}
 module Main ( main ) where
 
+import Blaze.ByteString.Builder
 import Control.Monad ( when )
+import qualified Data.ByteString.Lazy.Char8 as LBS
 import Data.Default
 import Data.HashSet ( HashSet )
 import qualified Data.HashSet as HS
 import Data.List ( find, intercalate, partition )
 import Data.Maybe ( mapMaybe )
+import Data.Monoid
 import Debug.Trace.LocationTH
 import System.Console.CmdArgs.Explicit
 import System.Console.CmdArgs.Text
@@ -58,8 +61,9 @@ main = do
   let [ inFile ] = interfaceFile opts
       libname = takeBaseName inFile
   iface <- readLibraryInterface inFile
-  let pyMod = interfaceToCtypes libname iface
-  putStrLn $ PP.prettyText $ runQ pyMod
+  let pyMod = {-# SCC "pyMod" #-} interfaceToCtypes libname iface
+--      ppDoc = {-# SCC "ppDoc" #-} runQ pyMod
+  LBS.putStrLn $ toLazyByteString pyMod
 
 dependencyImport :: String -> StatementQ ()
 dependencyImport lib = do
@@ -72,40 +76,43 @@ dependencyImport lib = do
       call = callE conRef [ argExprA (stringE [lib]), argKeywordA modeKwd modeRef]
   stmtExprS call
 
-interfaceToCtypes :: FilePath -> LibraryInterface -> ModuleQ ()
-interfaceToCtypes libName iface = do
-  dllHandle <- newName "_module"
-  ctypes <- captureName "ctypes"
-  dllConstructor <- captureName "CDLL"
-  ptrTypeCacheName <- newName "_pointer_type_cache"
-  resPtrName <- captureName "_RESOURCEPOINTER"
+interfaceToCtypes :: FilePath -> LibraryInterface -> Builder
+interfaceToCtypes libName iface =
+  mconcat [ PP.prettyTextBuilder $ runQ header
+          , mconcat typeDecls
+          , mconcat typeDefs
+          , mconcat funcs
+          ]
+  where
+    header = do
+      dllHandle <- captureName "_module"
+      ctypes <- captureName "ctypes"
+      dllConstructor <- captureName "CDLL"
+      ptrTypeCacheName <- newName "_pointer_type_cache"
+      resPtrName <- captureName "_RESOURCEPOINTER"
 
-  enumDecls <- mapM buildEnum (libraryEnums iface)
-  let dllCon = makeDottedName [ ctypes, dllConstructor ]
-      dllCall = callE dllCon [argExprA (stringE [libName])]
-      -- Loads the shared library
-      dll = assignS [varE dllHandle] dllCall
-      deps = map dependencyImport (libraryDependencies iface)
+      let dllCon = makeDottedName [ ctypes, dllConstructor ]
+          dllCall = callE dllCon [argExprA (stringE [libName])]
+          -- Loads the shared library
+          dll = assignS [varE dllHandle] dllCall
+          deps = map dependencyImport (libraryDependencies iface)
 
-      typeDecls = map buildTypeDecl (libraryTypes iface)
-      typeDefs = map buildTypeDef (libraryTypes iface)
+          ptrCacheInit = assignS [varE ptrTypeCacheName] (dictionaryE [])
+          resPtrFunc = buildResPtrFunc resPtrName ptrTypeCacheName
 
-      funcs = map (buildFunction dllHandle) (libraryFunctions iface)
+      enumDecls <- mapM buildEnum (libraryEnums iface)
+      moduleM $ concat [ importStatements
+                       , deps
+                       , [dll, ptrCacheInit, resPtrFunc]
+                       , concat enumDecls
+                       ]
 
+    typeDecls = map (runQ' . buildTypeDecl) (libraryTypes iface)
+    typeDefs = map (runQ' . buildTypeDef) (libraryTypes iface)
 
-      ptrCacheInit = assignS [varE ptrTypeCacheName] (dictionaryE [])
-      resPtrFunc = buildResPtrFunc resPtrName ptrTypeCacheName
-      defs = concat [ importStatements
-                    , deps
-                    , [dll]
-                    , [ptrCacheInit, resPtrFunc]
-                    , concat enumDecls
-                    , typeDecls
-                    , typeDefs
-                    , funcs
-                    ]
+    funcs = map (runQ' . buildFunction) (libraryFunctions iface)
+    runQ' = PP.prettyTextBuilder . runQ
 
-  moduleM defs
 
 commonBuiltinName :: String
 commonBuiltinName = "_builtinModule"
@@ -364,8 +371,9 @@ byrefFunc = do
 -- wrapper needs one so that the docstring shows up before the
 -- function is evaluated the first time.  The inner function needs it
 -- so that it is still visible after the outer wrapper disappears.
-buildFunction :: Ident () -> ForeignFunction -> StatementQ ()
-buildFunction dllHandle f = do
+buildFunction :: ForeignFunction -> StatementQ ()
+buildFunction f = do
+  dllHandle <- captureName "_module"
   paramNames <- mapM findParameterName params
   let (nonOutputNames, outputNames) = partition isNotOutParam (zip params paramNames)
   fname <- captureName funcName
@@ -621,6 +629,9 @@ findParameterName p =
       let name' = map replaceDot (parameterName p)
       newName name'
 
+-- | Python keywords, augmented with some special functions required
+-- for this library.  No param identifiers with these names will be
+-- chosen.
 pythonKeywords :: HashSet String
 pythonKeywords =
   HS.fromList [ "and" , "as", "assert", "break", "class"
@@ -630,6 +641,8 @@ pythonKeywords =
               , "not", "or", "pass", "print", "raise", "return"
               , "try", "while", "with", "yield", "True", "False"
               , "None"
+                -- Functions/values
+              , "_module", "_RESOURCEPOINTER", "ctypes", commonBuiltinName
               ]
 
 replaceDot :: Char -> Char

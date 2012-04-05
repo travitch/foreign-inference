@@ -27,11 +27,14 @@ import Data.Graph.Algorithms.Matching.DFS
 import Foreign.Inference.Internal.TypeUnification
 import Foreign.Inference.Interface.Types
 
+import Debug.Trace
+debug = flip trace
+
 -- | Collect all of the enumerations used in the external interface of
 -- a Module by inspecting metadata.
 moduleInterfaceEnumerations :: Module -> [CEnum]
 moduleInterfaceEnumerations =
-  S.toList . S.fromList . foldr extractInterfaceEnumTypes [] . moduleDefinedFunctions
+  S.toList . S.fromList . foldr collectEnums [] . moduleEnumMetadata
 
 moduleInterfaceStructTypes :: Module -> [CType]
 moduleInterfaceStructTypes m = opaqueTypes ++ concreteTypes
@@ -77,17 +80,29 @@ extractInterfaceEnumTypes f acc =
     typeMds = catMaybes $ retMd : argMds
 
 collectEnums :: Metadata -> [CEnum] -> [CEnum]
-collectEnums MetaDWDerivedType { metaDerivedTypeParent = Just parent
-                               } acc =
-  collectEnums parent acc
-collectEnums MetaDWCompositeType { metaCompositeTypeTag = DW_TAG_enumeration_type
-                                 , metaCompositeTypeName = bsname
-                                 , metaCompositeTypeMembers = Just (MetadataList _ enums)
-                                 } acc =
-  CEnum { enumName = SBS.unpack bsname
-        , enumValues = mapMaybe toEnumeratorValue enums
-        } : acc
-collectEnums _ acc = acc
+collectEnums m = go Nothing m `debug` show m
+  where
+    go _ MetaDWDerivedType { metaDerivedTypeName = bsname
+                           , metaDerivedTypeTag = DW_TAG_typedef
+                           , metaDerivedTypeParent = Just parent
+                           } acc =
+      go (Just (SBS.unpack bsname)) parent acc
+    go name MetaDWDerivedType { metaDerivedTypeParent = Just parent } acc =
+      go name parent acc
+    go name MetaDWCompositeType { metaCompositeTypeTag = DW_TAG_enumeration_type
+                                , metaCompositeTypeName = bsname
+                                , metaCompositeTypeMembers = Just (MetadataList _ enums)
+                                } acc =
+      case SBS.null bsname of
+        True ->
+          CEnum { enumName = maybe "" id name
+                , enumValues = mapMaybe toEnumeratorValue enums
+                } : acc
+        False ->
+          CEnum { enumName = SBS.unpack bsname
+                , enumValues = mapMaybe toEnumeratorValue enums
+                } : acc
+    go _ _ acc = acc
 
 toEnumeratorValue :: Maybe Metadata -> Maybe (String, Int)
 toEnumeratorValue (Just MetaDWEnumerator { metaEnumeratorName = ename

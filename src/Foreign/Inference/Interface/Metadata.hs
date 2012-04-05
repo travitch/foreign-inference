@@ -27,8 +27,8 @@ import Data.Graph.Algorithms.Matching.DFS
 import Foreign.Inference.Internal.TypeUnification
 import Foreign.Inference.Interface.Types
 
-import Debug.Trace
-debug = flip trace
+-- import Debug.Trace
+-- debug = flip trace
 
 -- | Collect all of the enumerations used in the external interface of
 -- a Module by inspecting metadata.
@@ -80,7 +80,7 @@ extractInterfaceEnumTypes f acc =
     typeMds = catMaybes $ retMd : argMds
 
 collectEnums :: Metadata -> [CEnum] -> [CEnum]
-collectEnums m = go Nothing m `debug` show m
+collectEnums = go Nothing
   where
     go _ MetaDWDerivedType { metaDerivedTypeName = bsname
                            , metaDerivedTypeTag = DW_TAG_typedef

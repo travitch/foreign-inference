@@ -1,4 +1,4 @@
-{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TemplateHaskell, NoMonomorphismRestriction #-}
 module Main ( main ) where
 
 import Blaze.ByteString.Builder
@@ -81,7 +81,7 @@ mconcatLines = mconcat . intersperse (fromChar '\n')
 
 interfaceToCtypes :: FilePath -> LibraryInterface -> Builder
 interfaceToCtypes libName iface =
-  mconcatLines [ PP.prettyTextBuilder $ runQ header
+  mconcatLines [ runQ' header
                , mconcatLines typeDecls
                , mconcatLines typeDefs
                , mconcatLines funcs

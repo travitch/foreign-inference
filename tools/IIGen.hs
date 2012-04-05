@@ -2,12 +2,13 @@
 module Main ( main ) where
 
 import Blaze.ByteString.Builder
+import Blaze.ByteString.Builder.Char8
 import Control.Monad ( when )
 import qualified Data.ByteString.Lazy.Char8 as LBS
 import Data.Default
 import Data.HashSet ( HashSet )
 import qualified Data.HashSet as HS
-import Data.List ( find, intercalate, partition )
+import Data.List ( find, intercalate, intersperse, partition )
 import Data.Maybe ( mapMaybe )
 import Data.Monoid
 import Debug.Trace.LocationTH
@@ -62,7 +63,6 @@ main = do
       libname = takeBaseName inFile
   iface <- readLibraryInterface inFile
   let pyMod = {-# SCC "pyMod" #-} interfaceToCtypes libname iface
---      ppDoc = {-# SCC "ppDoc" #-} runQ pyMod
   LBS.putStrLn $ toLazyByteString pyMod
 
 dependencyImport :: String -> StatementQ ()
@@ -76,13 +76,16 @@ dependencyImport lib = do
       call = callE conRef [ argExprA (stringE [lib]), argKeywordA modeKwd modeRef]
   stmtExprS call
 
+mconcatLines :: [Builder] -> Builder
+mconcatLines = mconcat . intersperse (fromChar '\n')
+
 interfaceToCtypes :: FilePath -> LibraryInterface -> Builder
 interfaceToCtypes libName iface =
-  mconcat [ PP.prettyTextBuilder $ runQ header
-          , mconcat typeDecls
-          , mconcat typeDefs
-          , mconcat funcs
-          ]
+  mconcatLines [ PP.prettyTextBuilder $ runQ header
+               , mconcatLines typeDecls
+               , mconcatLines typeDefs
+               , mconcatLines funcs
+               ]
   where
     header = do
       dllHandle <- captureName "_module"

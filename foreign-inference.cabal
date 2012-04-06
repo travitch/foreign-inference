@@ -52,6 +52,7 @@ library
                  llvm-analysis, deepseq, data-lens >= 2, data-lens-template,
                  failure >= 0.2, unification-fd >= 0.7 && < 0.8,
                  regex-tdfa, transformers >= 0.2 && < 0.4, hbgl,
+                 file-embed,
                  -- For the reporting code
                  archive-inspection, directory, attoparsec >= 0.10 && < 1.0, ascii,
                  blaze-html >= 0.4, highlighting-kate >= 0.5, blaze-builder >= 0.3,

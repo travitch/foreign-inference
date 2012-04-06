@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings, TemplateHaskell #-}
 -- | This module provides some functions to generate HTML reports for
 -- a Module and its inferred annotations.  This module handles the
 -- extraction of source code (from tarballs/zip files) and mapping
@@ -23,8 +23,9 @@ import Control.Concurrent.ParallelIO.Local
 import Data.ByteString.Lazy.Char8 ( ByteString )
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Lazy as LBS
+import Data.FileEmbed
 import qualified Data.Map as M
-import System.Directory ( copyFile, createDirectoryIfMissing )
+import System.Directory ( createDirectoryIfMissing )
 import System.FilePath
 import Text.Blaze.Renderer.Utf8 ( renderHtml )
 
@@ -35,7 +36,17 @@ import Foreign.Inference.Report.FunctionText
 import Foreign.Inference.Report.Html
 import Foreign.Inference.Report.Types
 
-import Paths_foreign_inference
+highlightJs :: (FilePath, BS8.ByteString)
+highlightJs = ("highlight.js", $(embedFile "static/highlight.js"))
+codeCss :: (FilePath, BS8.ByteString)
+codeCss = ("hk-tango.css", $(embedFile "static/hk-tango.css"))
+jqueryJs :: (FilePath, BS8.ByteString)
+jqueryJs = ("jquery-1.7.1.js", $(embedFile "static/jquery-1.7.1.js"))
+styleCss :: (FilePath, BS8.ByteString)
+styleCss = ("style.css", $(embedFile "static/style.css"))
+
+staticFiles :: [(FilePath, BS8.ByteString)]
+staticFiles = [ codeCss, styleCss, highlightJs, jqueryJs ]
 
 
 -- | Write the given report into the given directory.  An index.html file
@@ -65,14 +76,8 @@ writeHTMLReport r dir = do
   withPool caps $ \p -> parallel_ p actions
 
   -- Copy over static resources (like css and js)
-  mapM_ (installStaticFile dir) [ "style.css"
-                                , "hk-espresso.css"
-                                , "hk-pyg.css"
-                                , "hk-tango.css"
-                                , "hk-kate.css"
-                                , "jquery-1.7.1.js"
-                                , "highlight.js"
-                                ]
+  mapM_ (installStaticFile dir) staticFiles
+
 
 -- | This is like 'writeHTMLReport', except it only writes out the
 -- top-level overview HTML page.  The per-function breakdowns are not
@@ -89,21 +94,13 @@ writeHTMLSummary r dir = do
   LBS.writeFile indexFile (renderHtml indexPage)
 
   -- Copy over static resources (like css and js)
-  mapM_ (installStaticFile dir) [ "style.css"
-                                , "hk-espresso.css"
-                                , "hk-pyg.css"
-                                , "hk-tango.css"
-                                , "hk-kate.css"
-                                , "jquery-1.7.1.js"
-                                , "highlight.js"
-                                ]
+  mapM_ (installStaticFile dir) staticFiles
 
 -- | Install a file from the project share directory to the target
 -- report directory (top-level).
-installStaticFile :: FilePath -> FilePath -> IO ()
-installStaticFile dir name = do
-  file <- getDataFileName ("static" </> name)
-  copyFile file (dir </> name)
+installStaticFile :: FilePath -> (FilePath, BS8.ByteString) -> IO ()
+installStaticFile dir (name, content) =
+  BS8.writeFile (dir </> name) content
 
 writeFunctionBodyPage :: InterfaceReport
                          -> FilePath

@@ -58,6 +58,7 @@ import Data.ByteString.Char8 ( ByteString )
 import qualified Data.ByteString.Char8 as SBS
 import qualified Data.ByteString.Lazy as LBS
 import Data.Data
+import Data.FileEmbed
 import Data.HashMap.Strict ( HashMap )
 import qualified Data.HashMap.Strict as M
 import Data.Map ( Map )
@@ -87,6 +88,10 @@ import Paths_foreign_inference
 -- | The extension used for all summaries
 summaryExtension :: String
 summaryExtension = "json"
+
+libc = $(embedFile "stdlibs/c.json")
+libm = $(embedFile "stdlibs/m.json")
+llvmIntrinsics = $(embedFile "stdlibs/llvm.json")
 
 data InterfaceException = DependencyMissing FilePath
                         | DependencyDecodeError FilePath
@@ -189,14 +194,24 @@ loadDependencies = loadDependencies' [CStdLib, LLVMLib]
 -- automatically loading standard library summaries.
 loadDependencies' :: [StdLib] -> [FilePath] -> [String] -> IO DependencySummary
 loadDependencies' includeStd summaryDirs deps = do
-  let deps' = foldl' addStdlibDeps deps includeStd
-  predefinedSummaries <- getDataFileName "stdlibs"
-  m <- loadTransDeps (predefinedSummaries : summaryDirs) deps' S.empty M.empty
+  let baseDeps = foldl' addStdlibDeps M.empty includeStd
+--  let deps' = foldl' addStdlibDeps deps includeStd
+--  predefinedSummaries <- getDataFileName "stdlibs"
+  m <- loadTransDeps summaryDirs deps S.empty baseDeps -- M.empty
   return (DS m mempty)
   where
-    addStdlibDeps ds CStdLib = "c" : "m" : ds
-    addStdlibDeps ds CxxStdLib = "stdc++" : ds
-    addStdlibDeps ds LLVMLib = "llvm" : ds
+    addStdlibDeps m CStdLib =
+      let lc = decodeInterface libc
+          lm = decodeInterface libm
+          fs = libraryFunctions lc ++ libraryFunctions lm
+      in foldl' mergeFunction m fs
+    addStdlibDeps m LLVMLib =
+      let ll = decodeInterface llvmIntrinsics
+      in foldl' mergeFunction m (libraryFunctions ll)
+    --   "c" : "m" : ds
+    -- addStdlibDeps ds CxxStdLib = "stdc++" : ds
+    -- addStdlibDeps ds LLVMLib = "llvm" : ds
+
 
 -- | Load all of the dependencies requested (transitively).  This just
 -- iterates loading interfaces and recording all of the new
@@ -259,6 +274,12 @@ parseInterface summaryDirs p = do
   case mval of
     Nothing -> throw (DependencyDecodeError p)
     Just li -> return li
+
+decodeInterface :: SBS.ByteString -> LibraryInterface
+decodeInterface bs =
+  case decode' (LBS.fromChunks [bs]) of
+    Nothing -> throw (DependencyDecodeError "builtin")
+    Just li -> li
 
 loadFromSources :: [FilePath] -> FilePath -> IO LBS.ByteString
 loadFromSources (src:rest) p = catch (LBS.readFile fname) handleMissingSrc

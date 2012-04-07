@@ -74,13 +74,10 @@ import Debug.Trace.LocationTH
 import System.FilePath
 import System.IO.Error hiding ( catch )
 
-
 import LLVM.Analysis
 
 import Foreign.Inference.Interface.Metadata
 import Foreign.Inference.Interface.Types
-
-import Paths_foreign_inference
 
 -- import Debug.Trace
 -- debug = flip trace
@@ -89,8 +86,11 @@ import Paths_foreign_inference
 summaryExtension :: String
 summaryExtension = "json"
 
+libc :: SBS.ByteString
 libc = $(embedFile "stdlibs/c.json")
+libm :: SBS.ByteString
 libm = $(embedFile "stdlibs/m.json")
+llvmIntrinsics :: SBS.ByteString
 llvmIntrinsics = $(embedFile "stdlibs/llvm.json")
 
 data InterfaceException = DependencyMissing FilePath
@@ -195,9 +195,7 @@ loadDependencies = loadDependencies' [CStdLib, LLVMLib]
 loadDependencies' :: [StdLib] -> [FilePath] -> [String] -> IO DependencySummary
 loadDependencies' includeStd summaryDirs deps = do
   let baseDeps = foldl' addStdlibDeps M.empty includeStd
---  let deps' = foldl' addStdlibDeps deps includeStd
---  predefinedSummaries <- getDataFileName "stdlibs"
-  m <- loadTransDeps summaryDirs deps S.empty baseDeps -- M.empty
+  m <- loadTransDeps summaryDirs deps S.empty baseDeps
   return (DS m mempty)
   where
     addStdlibDeps m CStdLib =
@@ -208,9 +206,6 @@ loadDependencies' includeStd summaryDirs deps = do
     addStdlibDeps m LLVMLib =
       let ll = decodeInterface llvmIntrinsics
       in foldl' mergeFunction m (libraryFunctions ll)
-    --   "c" : "m" : ds
-    -- addStdlibDeps ds CxxStdLib = "stdc++" : ds
-    -- addStdlibDeps ds LLVMLib = "llvm" : ds
 
 
 -- | Load all of the dependencies requested (transitively).  This just

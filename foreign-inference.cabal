@@ -44,8 +44,7 @@ library
                  Foreign.Inference.Interface.Metadata,
                  Foreign.Inference.Interface.Types,
                  Foreign.Inference.Internal.FlattenValue,
-                 Foreign.Inference.Internal.TypeUnification,
-                 Paths_foreign_inference
+                 Foreign.Inference.Internal.TypeUnification
   build-depends: base > 3 && < 5, containers, filepath, text, bytestring, ghc-prim,
                  unordered-containers >= 0.2.1.0, hashable, mtl > 2 && < 3,
                  aeson >= 0.4.0.0, loch-th >= 0.2, temporary, process, data-ordlist,

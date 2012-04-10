@@ -438,7 +438,7 @@ buildFunction f = do
   -- Finally, call the function with the arguments provided
   --
   -- > return _funcName(...)
-  let callArgs = map (argExprA . varE) paramNames
+  let callArgs = map (argExprA . varE) (map snd nonOutputNames) -- paramNames
   let callInner = returnS (Just (callE (varE realFuncName) callArgs))
 
   funS fname ps Nothing [ stmtExprS docString
@@ -578,7 +578,10 @@ stripPointerType t = $failure ("Expected pointer type: " ++ show t)
 --
 -- > if __builtin__.type(p) is __builtin__.list:
 -- >   _arrTy = EltType * __builtin__.len(p)
--- >   p = _arrTy(p)
+-- >   p = _arrTy(*p)
+--
+-- Note the *p in the final line; the list has to be expanded since
+-- the array constructor does not take a list - it takes varargs.
 makeArrayConversion :: (Parameter, Ident ()) -> Maybe (StatementQ ())
 makeArrayConversion (p, ident) = do
   -- Fails with Nothing if this is not an array parameter
@@ -607,10 +610,10 @@ makeArrayConversion (p, ident) = do
 
         arrayTypeStmt = assignS [varE arrayTypeName] arrTyEx
 
-        arrayConstructor = callE (varE arrayTypeName) [argExprA (varE ident)]
-        arrayTypeOverwrite = assignS [varE arrayTypeName] arrayConstructor
+        arrayConstructor = callE (varE arrayTypeName) [argExprA (starredE (varE ident))]
+        arrayOverwrite = assignS [varE ident] arrayConstructor
 
-        conversionBody = [ arrayTypeStmt, arrayTypeOverwrite ]
+        conversionBody = [ arrayTypeStmt, arrayOverwrite ]
 
     conditionalS [(typeTest, conversionBody)] []
   where

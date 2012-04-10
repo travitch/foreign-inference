@@ -74,7 +74,7 @@ summarizeOutArgument a (OutputSummary s _) =
     Just (ArgOut, ws) -> [(PAOut, ws)]
     Just (ArgBoth, ws) -> [(PAInOut, ws)]
 
-data OutData = OD { moduleSummary :: SummaryType
+data OutData = OD { moduleSummary :: OutputSummary
                   , dependencySummary :: DependencySummary
                   }
 
@@ -124,7 +124,7 @@ type Analysis = AnalysisMonad OutData ()
 outAnalysis :: (FuncLike funcLike, HasFunction funcLike, HasCFG funcLike)
                => funcLike -> OutputSummary -> Analysis OutputSummary
 outAnalysis funcLike s@(OutputSummary summ _) = do
-  let envMod e = e { moduleSummary = summ }
+  let envMod e = e { moduleSummary = s }
   funcInfo <- local envMod (forwardDataflow top funcLike)
   let exitInfo = map (dataflowResult funcInfo) (functionExitInstructions f)
       OI exitInfo' aggArgs = meets exitInfo
@@ -165,7 +165,34 @@ outTransfer info i =
     GetElementPtrInst { getElementPtrValue = (valueContent' -> ArgumentC ptr) } ->
       return $! info { aggregates = HS.insert ptr (aggregates info) }
 
+    CallInst { callFunction = f, callArguments = args } ->
+      callTransfer info i f (map fst args)
+    InvokeInst { invokeFunction = f, invokeArguments = args }->
+      callTransfer info i f (map fst args)
+
     _ -> return info
+
+callTransfer :: OutInfo -> Instruction -> Value -> [Value] -> Analysis OutInfo
+callTransfer info i f args = do
+  let indexedArgs = zip [0..] args
+  modSumm <- asks moduleSummary
+  depSumm <- asks dependencySummary
+
+  foldM (checkArg depSumm modSumm) info indexedArgs
+  where
+    checkArg ds ms acc (ix, arg) =
+      case valueContent' arg of
+        ArgumentC a ->
+          case lookupArgumentSummary ds ms f ix of
+            Nothing -> do
+              let errMsg = "No summary for " ++ show (valueName f)
+              emitWarning Nothing "OutputAnalysis" errMsg
+              return acc
+            Just attrs ->
+              case PAOut `elem` attrs of
+                True -> return $! merge i a ArgOut acc
+                False -> return $! merge i a ArgIn acc
+        _ -> return acc
 
 merge :: Instruction -> Argument -> ArgumentDirection -> OutInfo -> OutInfo
 merge i arg ArgBoth (OI oi a) =

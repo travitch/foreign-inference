@@ -85,7 +85,7 @@ Installation would look something like:
     export PATH=$PATH:`pwd`/whole-program-llvm
 
 This will put the `IIGlue` and `IIGen` binaries in `~/.cabal/bin`.
-Binaries for i386 and x86_64 are available on my
+Binaries for i386 and x86_64 Linux are available on my
 [research page](http://pages.cs.wisc.edu/~travitch/pldi-2009/).
 
 
@@ -116,7 +116,8 @@ into a normal binary and once into bitcode (obtained with
 Next, the bitcode is analyzed with `IIGlue`.  The `--repository` flag
 tells the tool both where to put the summary for the input module,
 along with where to find dependency modules.  The output is a summary
-of the input module (in this case, `libgsl.so.0.16.0.json`).
+of the input module (in this case, `libgsl.so.0.16.0.json`).  Note
+that `IIGlue` requires the LLVM `opt` executable to be in your `PATH`.
 
 Finally, the summary is fed to `IIGen` to produce a Python module that
 defines wrappers to call library functions.

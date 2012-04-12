@@ -116,7 +116,6 @@ interfaceToCtypes libName iface =
     funcs = map (runQ' . buildFunction) (libraryFunctions iface)
     runQ' = PP.prettyTextBuilder . runQ
 
-
 commonBuiltinName :: String
 commonBuiltinName = "_builtinModule"
 
@@ -209,38 +208,30 @@ makeOutParamStorage (p, pname) = do
 
 -- | Build the RESOURCEPOINTER function
 --
--- > def RESOURCEPOINTER(cls):
+-- > def _RESOURCEPOINTER(cls):
 -- >     try:
 -- >        return _pointer_type_cache[cls]
 -- >     except KeyError:
 -- >         pass
 -- >
--- >     strname = cls
--- >     if not __builtin__.type(strname) is __builtin__.str:
--- >         strname = cls.__name__
+-- >     klass = ctypes.POINTER(cls)
+-- >     def doFinalize(self):
+-- >       try:
+-- >         if self._finalizer:
+-- >           self._finalizer(self)
+-- >       except AttributeError: pass
 -- >
--- >     class _ResourcePointer(ctypes.c_void_p):
--- >         __name__ = "LP_%s" % strname
+-- >     setattr(klass, "__del__", doFinalize)
 -- >
--- >         def __init__(self, ptr):
--- >             ctypes.c_void_p.__init__(self, ptr)
--- >
--- >         def __del__(self):
--- >             try:
--- >                 if self._finalizer:
--- >                     self._finalizer(self)
--- >                     ctypes.memset(ctypes.addressof(self), 0, ctypes.sizeof(self))
--- >             except AttributeError:
--- >                 pass
--- >
--- >     _pointer_type_cache[cls] = _ResourcePointer
--- >     return _ResourcePointer
+-- >     _pointer_type_cache[cls] = klass
+-- >     return klass
 buildResPtrFunc :: Ident () -> Ident () -> StatementQ ()
 buildResPtrFunc resPtrName cacheName = do
   clsParam <- newName "klass"
 
   builtinName <- captureName commonBuiltinName
   keyErrorName <- captureName "KeyError"
+  attrErrorName <- captureName "AttributeError"
 
   -- > try:
   -- >   return _pointer_type_cache[klass]
@@ -252,99 +243,45 @@ buildResPtrFunc resPtrName cacheName = do
       ignoreKeyError = handlerH accessClause [passS]
       cacheHit = tryS [tryAccess] [ignoreKeyError] [] []
 
-  strName <- newName "strname"
-  typeFuncName <- captureName "type"
-  strFuncName <- captureName "str"
-  nameName <- captureName "__name__"
-
-  -- > strname = klass
-  -- > if __builtin__.type(strname) is not __builtin__.str:
-  -- >   strname = klass.__name__
-  let typeRef = makeDottedName [ builtinName, typeFuncName ]
-      strRef = makeDottedName [ builtinName, strFuncName ]
-      klassNameRef = makeDottedName [ clsParam, nameName ]
-      saveClass = assignS [varE strName] (varE clsParam)
-      strnameType = callE typeRef [argExprA (varE clsParam)]
-      notStrTest = binaryOpE isNotO strnameType strRef
-      stringAssign = assignS [varE strName] klassNameRef
-      ensureString = conditionalS [(notStrTest, [stringAssign])] []
-
-  resPtrClassName <- newName "_ResourcePointer"
-
-  -- > _pointer_type_cache[klass] = _ResourcePointer
-  -- > return _ResourcePointer
-  let resPtrClass = buildResPtrClass resPtrClassName strName
-      cache = assignS [cacheRef] (varE resPtrClassName)
-      ret = returnS $ Just (varE resPtrClassName)
-      stmts = [cacheHit, saveClass, ensureString, resPtrClass, cache, ret]
-  funS resPtrName [paramP clsParam Nothing Nothing] Nothing stmts
-
--- | Definition of the internal resource pointer class
---
--- >     class _ResourcePointer(ctypes.c_void_p):
--- >         __name__ = "LP_%s" % strname
--- >
--- >         def __init__(self, ptr):
--- >             ctypes.c_void_p.__init__(self, ptr)
--- >
--- >         def __del__(self):
--- >             try:
--- >                 if self._finalizer:
--- >                     self._finalizer(self)
--- >                     ctypes.memset(ctypes.addressof(self), 0, ctypes.sizeof(self))
--- >             except AttributeError:
--- >                 pass
-buildResPtrClass :: Ident () -> Ident () -> StatementQ ()
-buildResPtrClass className strName = do
+  -- > cls = ctypes.POINTER(klass)
+  resName <- newName "cls"
   ctypes <- captureName "ctypes"
-  voidName <- captureName "c_void_p"
-  nameFieldName <- captureName "__name__"
-  initName <- captureName "__init__"
-  delName <- captureName "__del__"
-  selfName <- captureName "self"
-  finalizerFieldName <- captureName "_finalizer"
+  ptrName <- captureName "POINTER"
+  let ptrCon = makeDottedName [ ctypes, ptrName ]
+      ptrConCall = callE ptrCon [argExprA (varE clsParam)]
+      resAssign = assignS [varE resName] ptrConCall
 
-  let self = varE selfName
+  -- > def doFinalize(self):
+  -- >   try:
+  -- >     if self._finalizer:
+  -- >       self._finalizer(self)
+  -- >   except AttributeError: pass
+  finName <- newName "doFinalize"
+  selfName <- newName "self"
+  finFieldName <- captureName "_finalizer"
+  let finFieldRef = makeDottedName [ selfName, finFieldName ]
+      attrRef = makeDottedName [ builtinName, attrErrorName ]
+      finCall = callE finFieldRef [argExprA (varE selfName)]
+      condCall = conditionalS [(finFieldRef, [stmtExprS finCall])] []
+      attrClause = exceptClauseC (Just (attrRef, Nothing))
+      ignoreAttrError = handlerH attrClause [passS]
+      tryFin = tryS [condCall] [ignoreAttrError] [] []
+      finFunc = funS finName [paramP selfName Nothing Nothing] Nothing [tryFin]
 
-  -- > __name__ = "LP_%s" % strname
-  let parentRef = makeDottedName [ ctypes, voidName ]
-      nameAttr = binaryOpE moduloO (stringE ["LP_%s"]) (varE strName)
-      nameInit = assignS [varE nameFieldName] nameAttr
+  -- > setattr(cls, "__del__", doFinalize)
+  setAttrName <- captureName "setattr"
+  let attrCall = callE (varE setAttrName) [ argExprA (varE resName)
+                                          , argExprA (stringE ["__del__"])
+                                          , argExprA (varE finName)
+                                          ]
+      setAttr = stmtExprS attrCall
 
-  -- > def __init__(self, ptr):
-  -- >   ctypes.c_void_p.__init__(self, ptr)
-  ptrName <- newName "ptr"
-  let parentInitRef = makeDottedName [ ctypes, voidName, initName ]
-      parentInit = callE parentInitRef [argExprA self, argExprA (varE ptrName)]
-      initFunc = funS initName [ paramP selfName Nothing Nothing
-                               , paramP ptrName Nothing Nothing ] Nothing [stmtExprS parentInit]
-
-  sizeofName <- captureName "sizeof"
-  memsetName <- captureName "memset"
-  addrOfName <- captureName "addressof"
-  attrErrName <- captureName "AttributeError"
-  builtinName <- captureName commonBuiltinName
-  let finRef = makeDottedName [ selfName, finalizerFieldName ]
-      addrRef = makeDottedName [ ctypes, addrOfName ]
-      sizeofRef = makeDottedName [ ctypes, sizeofName ]
-      memsetRef = makeDottedName [ ctypes, memsetName]
-      attrRef = makeDottedName [ builtinName, attrErrName ]
-  let finalizeSelf = stmtExprS $ callE finRef [argExprA self]
-      addrOf = callE addrRef [argExprA self]
-      sizeof = callE sizeofRef [argExprA self]
-      zeroSelf = stmtExprS $ callE memsetRef [ argExprA addrOf
-                                             , argExprA (intE (0 :: Int))
-                                             , argExprA sizeof
-                                             ]
-      finalize = conditionalS [(finRef, [finalizeSelf, zeroSelf])] []
-      attrErrClause = exceptClauseC $ Just (attrRef, Nothing)
-      handleAttrErr = handlerH attrErrClause [passS]
-      tryFinalize = tryS [finalize] [handleAttrErr] [] []
-      delFunc = funS delName [paramP selfName Nothing Nothing] Nothing [tryFinalize]
-
-  let body = [nameInit, initFunc, delFunc]
-  classS className [argExprA parentRef] body
-
+  -- > _pointer_type_cache[klass] = cls
+  -- > return cls
+  let cache = assignS [cacheRef] (varE resName)
+      ret = returnS $ Just (varE resName)
+      stmts = [cacheHit, resAssign, finFunc, setAttr, cache, ret]
+  funS resPtrName [paramP clsParam Nothing Nothing] Nothing stmts
 
 byrefFunc :: ExprQ ()
 byrefFunc = do
@@ -502,16 +439,9 @@ buildNullGuard (p, pident) =
     True -> Just $ do
       builtinName <- captureName commonBuiltinName
       valueErrorName <- captureName "ValueError"
-      valueFieldName <- captureName "value"
-      noneName <- captureName "None"
 
-      let paramRef = makeDottedName [ pident, valueFieldName ]
-          valErrRef = makeDottedName [ builtinName, valueErrorName ]
-      let lhs = binaryOpE equalityO paramRef (varE noneName)
-          rhs = binaryOpE equalityO paramRef (intE (0 :: Int))
-          ptrTest = binaryOpE orO lhs rhs
-          noneOp = binaryOpE isO (varE pident) (varE noneName)
-          test = binaryOpE orO noneOp ptrTest
+      let valErrRef = makeDottedName [ builtinName, valueErrorName ]
+          test = unaryOpE notO (varE pident)
           ex = callE valErrRef [ argExprA (stringE ["Null pointer for argument " ++ parameterName p]) ]
           exVal = raiseExprV2C (Just (ex, Nothing))
           exStmt = raiseS exVal

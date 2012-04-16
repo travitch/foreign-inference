@@ -9,6 +9,7 @@ import Control.DeepSeq
 import Control.Monad.Writer
 import Data.Lens.Common
 import Data.Lens.Template
+import Debug.Trace.LocationTH
 
 import LLVM.Analysis
 import LLVM.Analysis.CallGraphSCCTraversal
@@ -46,9 +47,15 @@ instance SummarizeModule EscapeSummary where
 summarizeEscapeArgument :: Argument -> EscapeSummary -> [(ParamAnnotation, [Witness])]
 summarizeEscapeArgument a (EscapeSummary er _) =
   case argumentEscapes er a of
-    Nothing -> []
+    Nothing ->
+      case argumentFptrEscapes er a of
+        Nothing -> []
+        Just w@CallInst {} -> [(PAFptrEscape, [Witness w "call"])]
+        Just w@InvokeInst {} -> [(PAFptrEscape, [Witness w "call"])]
+        Just w -> $failure ("Expected call instruction " ++ show w)
     Just w@RetInst {} -> [(PAWillEscape, [Witness w "ret"])]
     Just w@CallInst {} -> [(PAEscape, [Witness w "call"])]
+    Just w@InvokeInst {} -> [(PAEscape, [Witness w "call"])]
     Just w -> [(PAEscape, [Witness w "store"])]
 
 identifyEscapes :: (FuncLike funcLike, HasFunction funcLike)

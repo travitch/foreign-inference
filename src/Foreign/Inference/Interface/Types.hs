@@ -31,6 +31,7 @@ data ParamAnnotation = PAArray !Int
                      | PAFinalize
                      | PAUnref
                      | PAEscape
+                     | PAFptrEscape
                      | PAWillEscape
                      | PAScalarEffectAddOne String [AccessType]
                      | PAScalarEffectSubOne String [AccessType]

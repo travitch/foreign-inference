@@ -65,19 +65,52 @@ main = do
   let pyMod = {-# SCC "pyMod" #-} interfaceToCtypes libname iface
   LBS.putStrLn $ toLazyByteString pyMod
 
-dependencyImport :: String -> StatementQ ()
-dependencyImport lib = do
+mconcatLines :: [Builder] -> Builder
+mconcatLines = mconcat . intersperse (fromChar '\n')
+
+-- | Load a library using ctypes.CDLL.  If an identifier is provided,
+-- the resulting module object will be bound to it.
+--
+-- It first attempts to load the library.  If that fails, it strips
+-- off a level of soname versioning and tries the less specific
+-- version number.  This process is repeated recursively until the
+-- only extension is .so.  At that point, the failing exception is
+-- allowed to propagate up.
+--
+-- > try:
+-- >   ctypes.CDLL('libfoo.so.0.1')
+-- > except OSError:
+-- >   try:
+-- >     ctypes.CDLL('libfoo.so.0')
+-- >   except OSError:
+-- >     ctypes.CDLL('libfoo.so')
+makeLibraryLoad :: Maybe (Ident ()) -> FilePath -> StatementQ ()
+makeLibraryLoad ident fp = do
   ctypes <- captureName "ctypes"
   dllConstructor <- captureName "CDLL"
   modeKwd <- captureName "mode"
   modeName <- captureName "RTLD_GLOBAL"
+  builtinName <- captureName commonBuiltinName
+  osErrorName <- captureName "OSError"
+
   let conRef = makeDottedName [ ctypes, dllConstructor ]
       modeRef = makeDottedName [ ctypes, modeName ]
-      call = callE conRef [ argExprA (stringE [lib]), argKeywordA modeKwd modeRef]
-  stmtExprS call
+      errRef = makeDottedName [ builtinName, osErrorName ]
+      call = callE conRef [ argExprA (stringE [fp]), argKeywordA modeKwd modeRef ]
+      loadStmt = case ident of
+        Nothing -> stmtExprS call
+        Just i -> assignS [varE i] call
+      catchClause = exceptClauseC (Just (errRef, Nothing))
+      handler = handlerH catchClause [makeLibraryLoad ident base]
 
-mconcatLines :: [Builder] -> Builder
-mconcatLines = mconcat . intersperse (fromChar '\n')
+  -- If we are down to the very base soname (no more version
+  -- extensions to strip off), let a failed load error out.
+  -- Otherwise, try to load the next less-specific library.
+  case ext == ".so" of
+    True -> loadStmt
+    False -> tryS [loadStmt] [handler] [] []
+  where
+    (base, ext) = splitExtension fp
 
 interfaceToCtypes :: FilePath -> LibraryInterface -> Builder
 interfaceToCtypes libName iface =
@@ -89,16 +122,11 @@ interfaceToCtypes libName iface =
   where
     header = do
       dllHandle <- captureName "_module"
-      ctypes <- captureName "ctypes"
-      dllConstructor <- captureName "CDLL"
       ptrTypeCacheName <- newName "_pointer_type_cache"
       resPtrName <- captureName "_RESOURCEPOINTER"
 
-      let dllCon = makeDottedName [ ctypes, dllConstructor ]
-          dllCall = callE dllCon [argExprA (stringE [libName])]
-          -- Loads the shared library
-          dll = assignS [varE dllHandle] dllCall
-          deps = map dependencyImport (libraryDependencies iface)
+      let dll = makeLibraryLoad (Just dllHandle) libName
+          deps = map (makeLibraryLoad Nothing) (libraryDependencies iface)
 
           ptrCacheInit = assignS [varE ptrTypeCacheName] (dictionaryE [])
           resPtrFunc = buildResPtrFunc resPtrName ptrTypeCacheName

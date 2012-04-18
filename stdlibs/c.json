@@ -446,6 +446,40 @@
               }
           ]
         },
+        { "foreignFunctionName": "vasprintf",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PAArray": 1}, {"PAString": []}],
+                "parameterName": "str",
+                "parameterType": {"CPointer": {"CPointer": {"CInt": 8}}}
+              },
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAArray": 1}, {"PAString": []}, {"PAConst":[]}],
+                "parameterName": "format",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "ap",
+                "parameterType": {"CStruct": ["va_list", []]}
+              }
+          ]
+        },
+        { "foreignFunctionName": "asprintf",
+          "foreignFunctionAnnotations": [{"FAVarArg": []}],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PAArray": 1}, {"PAString": []}],
+                "parameterName": "str",
+                "parameterType": {"CPointer": {"CPointer": {"CInt": 8}}}
+              },
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAArray": 1}, {"PAString": []}, {"PAConst":[]}],
+                "parameterName": "format",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              }
+          ]
+        },
         { "foreignFunctionName": "scanf",
           "foreignFunctionAnnotations": [{"FAVarArg":[]}],
           "foreignFunctionLinkage": { "LinkDefault": [] },
@@ -1561,6 +1595,36 @@
           "foreignFunctionReturnType": {"CStruct": ["clock_t", []]},
           "foreignFunctionParameters": []
         },
+        { "foreignFunctionName": "clock_getres",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "which_clock",
+                "parameterType": {"CStruct": ["clockid_t", []]}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "tp",
+                "parameterType": {"CPointer": {"CStruct": ["timespec", []]}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "clock_gettime",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "which_clock",
+                "parameterType": {"CStruct": ["clockid_t", []]}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "tp",
+                "parameterType": {"CPointer": {"CStruct": ["timespec", []]}}
+              }
+          ]
+        },
         { "foreignFunctionName": "ctime",
           "foreignFunctionAnnotations": [],
           "foreignFunctionLinkage": { "LinkDefault": [] },
@@ -1919,6 +1983,32 @@
               }
           ]
         },
+        { "foreignFunctionName": "rmdir",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAConst":[]}, {"PAArray": 1}],
+                "parameterName": "pathname",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "mkdir",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAConst":[]}, {"PAArray": 1}],
+                "parameterName": "pathname",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "mode",
+                "parameterType": {"CStruct": ["mode_t", []]}
+              }
+          ]
+        },
         { "foreignFunctionName": "stat",
           "foreignFunctionAnnotations": [],
           "foreignFunctionLinkage": { "LinkDefault": [] },
@@ -2028,6 +2118,29 @@
               { "parameterAnnotations": [],
                 "parameterName": "gid",
                 "parameterType": {"CStruct": ["gid_t", []]}
+              }
+          ]
+        },
+        { "foreignFunctionName": "getgrouplist",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CPointer": {"CStruct": ["group", []]}},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PAConst":[]}, {"PAString":[]}, {"PAArray": 1}],
+                "parameterName": "user",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "group",
+                "parameterType": {"CStruct": ["gid_t", []]}
+              },
+              { "parameterAnnotations": [{"PAArray": 1}],
+                "parameterName": "groups",
+                "parameterType": {"CPointer": {"CStruct": ["gid_t", []]}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "ngroups",
+                "parameterType": {"CPointer": {"CInt": 32}}
               }
           ]
         },
@@ -2274,6 +2387,47 @@
               }
           ]
         },
+        { "foreignFunctionName": "pipe",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAArray":1}],
+                "parameterName": "pipefd",
+                "parameterType": {"CArray": [{"CInt": 32}, 2]}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "flags",
+                "parameterType": {"CInt": 32}
+              }
+          ]
+        },
+        { "foreignFunctionName": "dup",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "oldfd",
+                "parameterType": {"CInt": 32}
+              }
+          ]
+        },
+        { "foreignFunctionName": "dup2",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "oldfd",
+                "parameterType": {"CInt": 32}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "newfd",
+                "parameterType": {"CInt": 32}
+              }
+          ]
+        },
         { "foreignFunctionName": "access",
           "foreignFunctionAnnotations": [],
           "foreignFunctionLinkage": { "LinkDefault": [] },
@@ -2439,6 +2593,959 @@
               { "parameterAnnotations": [],
                 "parameterName": "seconds",
                 "parameterType": {"CUInt": 32}
+              }
+          ]
+        },
+        { "foreignFunctionName": "nanosleep",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CUInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PAConst": []}],
+                "parameterName": "req",
+                "parameterType": {"CPointer": {"CStruct": ["timespec", []]}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "rem",
+                "parameterType": {"CPointer": {"CStruct": ["timespec", []]}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "mmap64",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CPointer": {"CVoid": []}},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "addr",
+                "parameterType": {"CPointer": {"CVoid": []}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "length",
+                "parameterType": {"CStruct":["size_t", []]}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "prot",
+                "parameterType": {"CInt": 32}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "flags",
+                "parameterType": {"CInt": 32}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "fd",
+                "parameterType": {"CInt": 32}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "offset",
+                "parameterType": {"CStruct": ["off64_t", []]}
+              }
+          ]
+        },
+        { "foreignFunctionName": "mmap",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CPointer": {"CVoid": []}},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "addr",
+                "parameterType": {"CPointer": {"CVoid": []}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "length",
+                "parameterType": {"CStruct":["size_t", []]}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "prot",
+                "parameterType": {"CInt": 32}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "flags",
+                "parameterType": {"CInt": 32}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "fd",
+                "parameterType": {"CInt": 32}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "offset",
+                "parameterType": {"CStruct": ["off_t", []]}
+              }
+          ]
+        },
+        { "foreignFunctionName": "munmap",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "addr",
+                "parameterType": {"CPointer": {"CVoid": []}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "length",
+                "parameterType": {"CStruct":["size_t", []]}
+              }
+          ]
+        },
+        { "foreignFunctionName": "readv",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CStruct": ["ssize_t", []]},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "fd",
+                "parameterType": {"CInt": 32}
+              },
+              { "parameterAnnotations": [{"PAArray": 1}, {"PAConst": []}],
+                "parameterName": "iov",
+                "parameterType": {"CPointer": {"CStruct":["iovec", []]}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "iovcnt",
+                "parameterType": {"CInt": 32}
+              }
+          ]
+        },
+        { "foreignFunctionName": "writev",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CStruct": ["ssize_t", []]},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "fd",
+                "parameterType": {"CInt": 32}
+              },
+              { "parameterAnnotations": [{"PAArray": 1}, {"PAConst": []}],
+                "parameterName": "iov",
+                "parameterType": {"CPointer": {"CStruct":["iovec", []]}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "iovcnt",
+                "parameterType": {"CInt": 32}
+              }
+          ]
+        },
+        { "foreignFunctionName": "preadv",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CStruct": ["ssize_t", []]},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "fd",
+                "parameterType": {"CInt": 32}
+              },
+              { "parameterAnnotations": [{"PAArray": 1}, {"PAConst": []}],
+                "parameterName": "iov",
+                "parameterType": {"CPointer": {"CStruct":["iovec", []]}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "iovcnt",
+                "parameterType": {"CInt": 32}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "offset",
+                "parameterType": {"CStruct": ["off_t", []]}
+              }
+          ]
+        },
+        { "foreignFunctionName": "pwritev",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CStruct": ["ssize_t", []]},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "fd",
+                "parameterType": {"CInt": 32}
+              },
+              { "parameterAnnotations": [{"PAArray": 1}, {"PAConst": []}],
+                "parameterName": "iov",
+                "parameterType": {"CPointer": {"CStruct":["iovec", []]}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "iovcnt",
+                "parameterType": {"CInt": 32}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "offset",
+                "parameterType": {"CStruct": ["off_t", []]}
+              }
+          ]
+        },
+        { "foreignFunctionName": "listen",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "sockfd",
+                "parameterType": {"CInt": 32}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "backlog",
+                "parameterType": {"CInt":32}
+              }
+          ]
+        },
+        { "foreignFunctionName": "connect",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "sockfd",
+                "parameterType": {"CInt": 32}
+              },
+              { "parameterAnnotations": [{"PAConst": []}],
+                "parameterName": "addr",
+                "parameterType": {"CPointer": {"CStruct": ["sockaddr", []]}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "addrlen",
+                "parameterType": {"CStruct": ["socklen_t", []]}
+              }
+          ]
+        },
+        { "foreignFunctionName": "bind",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "sockfd",
+                "parameterType": {"CInt": 32}
+              },
+              { "parameterAnnotations": [{"PAConst": []}],
+                "parameterName": "addr",
+                "parameterType": {"CPointer": {"CStruct": ["sockaddr", []]}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "addrlen",
+                "parameterType": {"CStruct": ["socklen_t", []]}
+              }
+          ]
+        },
+        { "foreignFunctionName": "getnameinfo",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PAConst":[]}],
+                "parameterName": "sa",
+                "parameterType": {"CPointer": {"CStruct": ["sockaddr", []]}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "salen",
+                "parameterType": {"CStruct": ["socklen_t", []]}
+              },
+              { "parameterAnnotations": [{"PAArray": 1}, {"PAString":[]}],
+                "parameterName": "host",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "hostlen",
+                "parameterType": {"CStruct": ["size_t", []]}
+              },
+              { "parameterAnnotations": [{"PAArray": 1}, {"PAString":[]}],
+                "parameterName": "serv",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "servlen",
+                "parameterType": {"CStruct": ["size_t", []]}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "flags",
+                "parameterType": {"CInt": 32}
+              }
+          ]
+        },
+        { "foreignFunctionName": "socket",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "domain",
+                "parameterType": {"CInt": 32}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "type",
+                "parameterType": {"CInt":32}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "protocol",
+                "parameterType": {"CInt": 32}
+              }
+          ]
+        },
+        { "foreignFunctionName": "socketpair",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "domain",
+                "parameterType": {"CInt": 32}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "type",
+                "parameterType": {"CInt":32}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "protocol",
+                "parameterType": {"CInt": 32}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "sv",
+                "parameterType": {"CArray": [{"CInt": 32}, 2]}
+              }
+          ]
+        },
+        { "foreignFunctionName": "getsockname",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "sockfd",
+                "parameterType": {"CInt": 32}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "addr",
+                "parameterType": {"CPointer": {"CStruct": ["sockaddr", []]}}
+              },
+              { "parameterAnnotations": [{"PAOut": []}],
+                "parameterName": "addrlen",
+                "parameterType": {"CPointer": {"CStruct": ["socklen_t", []]}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "send",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CStruct": ["ssize_t", []]},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "sockfd",
+                "parameterType": {"CInt": 32}
+              },
+              { "parameterAnnotations": [{"PAConst": []}],
+                "parameterName": "buf",
+                "parameterType": {"CPointer": {"CVoid":[]}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "len",
+                "parameterType": {"CStruct": ["size_t", []]}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "flags",
+                "parameterType": {"CInt": 32}
+              }
+          ]
+        },
+        { "foreignFunctionName": "sendto",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CStruct": ["ssize_t", []]},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "sockfd",
+                "parameterType": {"CInt": 32}
+              },
+              { "parameterAnnotations": [{"PAConst": []}],
+                "parameterName": "buf",
+                "parameterType": {"CPointer": {"CVoid":[]}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "len",
+                "parameterType": {"CStruct": ["size_t", []]}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "flags",
+                "parameterType": {"CInt": 32}
+              },
+              { "parameterAnnotations": [{"PAConst":[]}],
+                "parameterName": "dest_addr",
+                "parameterType": {"CPointer": {"CStruct": ["sockaddr", []]}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "addrlen",
+                "parameterType": {"CStruct": ["socklen_t", []]}
+              }
+          ]
+        },
+        { "foreignFunctionName": "sendmsg",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CStruct": ["ssize_t", []]},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "sockfd",
+                "parameterType": {"CInt": 32}
+              },
+              { "parameterAnnotations": [{"PAConst": []}],
+                "parameterName": "msg",
+                "parameterType": {"CPointer": {"CStruct": ["msghdr", []]}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "flags",
+                "parameterType": {"CInt": 32}
+              }
+          ]
+        },
+        { "foreignFunctionName": "recv",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CStruct": ["ssize_t", []]},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "sockfd",
+                "parameterType": {"CInt": 32}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "buf",
+                "parameterType": {"CPointer": {"CVoid":[]}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "len",
+                "parameterType": {"CStruct": ["size_t", []]}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "flags",
+                "parameterType": {"CInt": 32}
+              }
+          ]
+        },
+        { "foreignFunctionName": "recvfrom",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CStruct": ["ssize_t", []]},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "sockfd",
+                "parameterType": {"CInt": 32}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "buf",
+                "parameterType": {"CPointer": {"CVoid":[]}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "len",
+                "parameterType": {"CStruct": ["size_t", []]}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "flags",
+                "parameterType": {"CInt": 32}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "src_addr",
+                "parameterType": {"CPointer": {"CStruct": ["sockaddr", []]}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "addrlen",
+                "parameterType": {"CStruct": ["socklen_t", []]}
+              }
+          ]
+        },
+        { "foreignFunctionName": "recvmsg",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CStruct": ["ssize_t", []]},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "sockfd",
+                "parameterType": {"CInt": 32}
+              },
+              { "parameterAnnotations": [{"PAConst": []}],
+                "parameterName": "msg",
+                "parameterType": {"CPointer": {"CStruct": ["msghdr", []]}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "flags",
+                "parameterType": {"CInt": 32}
+              }
+          ]
+        },
+        { "foreignFunctionName": "poll",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PAArray": 1}],
+                "parameterName": "fds",
+                "parameterType": {"CPointer": {"CStruct": ["pollfd", []]}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "nfds",
+                "parameterType": {"CStruct": ["nfds_t", []]}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "timeout",
+                "parameterType": {"CInt": 32}
+              }
+          ]
+        },
+        { "foreignFunctionName": "ppoll",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PAArray": 1}],
+                "parameterName": "fds",
+                "parameterType": {"CPointer": {"CStruct": ["pollfd", []]}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "nfds",
+                "parameterType": {"CStruct": ["nfds_t", []]}
+              },
+              { "parameterAnnotations": [{"PAConst": []}],
+                "parameterName": "timeout",
+                "parameterType": {"CPointer": {"CStruct": ["timespec", []]}}
+              },
+              { "parameterAnnotations": [{"PAConst": []}],
+                "parameterName": "sigmask",
+                "parameterType": {"CPointer": {"CStruct": ["sigset_t", []]}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "htonl",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CUInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "hostlong",
+                "parameterType": {"CUInt": 32}
+              }
+          ]
+        },
+        { "foreignFunctionName": "ntohl",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CUInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "netlong",
+                "parameterType": {"CUInt": 32}
+              }
+          ]
+        },
+        { "foreignFunctionName": "htons",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CUInt": 16},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "hostshort",
+                "parameterType": {"CUInt": 16}
+              }
+          ]
+        },
+        { "foreignFunctionName": "ntohs",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CUInt": 16},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "netshort",
+                "parameterType": {"CUInt": 16}
+              }
+          ]
+        },
+        { "foreignFunctionName": "getsockopt",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "sockfd",
+                "parameterType": {"CInt": 32}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "level",
+                "parameterType": {"CInt": 32}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "optname",
+                "parameterType": {"CInt": 32}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "optval",
+                "parameterType": {"CPointer": {"CVoid": []}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "optlen",
+                "parameterType": {"CPointer": {"CStruct": ["socklen_t", []]}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "setsockopt",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "sockfd",
+                "parameterType": {"CInt": 32}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "level",
+                "parameterType": {"CInt": 32}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "optname",
+                "parameterType": {"CInt": 32}
+              },
+              { "parameterAnnotations": [{"PAConst": []}],
+                "parameterName": "optval",
+                "parameterType": {"CPointer": {"CVoid": []}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "optlen",
+                "parameterType": {"CStruct": ["socklen_t", []]}
+              }
+          ]
+        },
+        { "foreignFunctionName": "getaddrinfo",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PAConst": []}],
+                "parameterName": "node",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              },
+              { "parameterAnnotations": [{"PAConst": []}],
+                "parameterName": "service",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              },
+              { "parameterAnnotations": [{"PAConst": []}],
+                "parameterName": "hints",
+                "parameterType": {"CPointer": {"CStruct": ["addrinfo", []]}}
+              },
+              { "parameterAnnotations": [{"PAOut": []}, {"PANotNull": []}],
+                "parameterName": "res",
+                "parameterType": {"CPointer": {"CPointer": {"CStruct": ["addrinfo", []]}}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "freeaddrinfo",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CVoid": []},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "res",
+                "parameterType": {"CPointer": {"CStruct": ["addrinfo", []]}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "gai_strerror",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CPointer": {"CInt": 8}},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "errcode",
+                "parameterType": {"CInt": 32}
+              }
+          ]
+        },
+        { "foreignFunctionName": "fcntl",
+          "foreignFunctionAnnotations": [{"FAVarArg":[]}],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "fd",
+                "parameterType": {"CInt": 32}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "cmd",
+                "parameterType": {"CInt": 32}
+              }
+          ]
+        },
+        { "foreignFunctionName": "accept",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "sockfd",
+                "parameterType": {"CInt": 32}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "addr",
+                "parameterType": {"CPointer": {"CStruct": ["sockaddr", []]}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "addrlen",
+                "parameterType": {"CPointer": {"CStruct": ["addrlen", []]}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "accept4",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "sockfd",
+                "parameterType": {"CInt": 32}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "addr",
+                "parameterType": {"CPointer": {"CStruct": ["sockaddr", []]}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "addrlen",
+                "parameterType": {"CPointer": {"CStruct": ["addrlen", []]}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "flags",
+                "parameterType": {"CInt": 32}
+              }
+          ]
+        },
+        { "foreignFunctionName": "execl",
+          "foreignFunctionAnnotations": [{"FAVarArg":[]}],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PAConst": []}, {"PAArray": 1}],
+                "parameterName": "path",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              },
+              { "parameterAnnotations": [{"PAConst": []}, {"PAArray": 1}],
+                "parameterName": "arg",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "execlp",
+          "foreignFunctionAnnotations": [{"FAVarArg":[]}],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PAConst": []}, {"PAArray": 1}],
+                "parameterName": "path",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              },
+              { "parameterAnnotations": [{"PAConst": []}, {"PAArray": 1}],
+                "parameterName": "arg",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "execle",
+          "foreignFunctionAnnotations": [{"FAVarArg":[]}],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PAConst": []}, {"PAArray": 1}],
+                "parameterName": "path",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              },
+              { "parameterAnnotations": [{"PAConst": []}, {"PAArray": 1}],
+                "parameterName": "arg",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "execv",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PAConst": []}, {"PAArray": 1}],
+                "parameterName": "path",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              },
+              { "parameterAnnotations": [{"PAConst": []}, {"PAArray": 2}],
+                "parameterName": "argv",
+                "parameterType": {"CPointer": {"CPointer": {"CInt": 8}}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "execvp",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PAConst": []}, {"PAArray": 1}],
+                "parameterName": "path",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              },
+              { "parameterAnnotations": [{"PAConst": []}, {"PAArray": 2}],
+                "parameterName": "argv",
+                "parameterType": {"CPointer": {"CPointer": {"CInt": 8}}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "wait",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CStruct": ["pid_t", []]},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PAOut": []}],
+                "parameterName": "status",
+                "parameterType": {"CPointer": {"CInt": 32}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "waitpid",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CStruct": ["pid_t", []]},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "pid",
+                "parameterType": {"CStruct": ["pid_t", []]}
+              },
+              { "parameterAnnotations": [{"PAOut": []}],
+                "parameterName": "status",
+                "parameterType": {"CPointer": {"CInt": 32}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "options",
+                "parameterType": {"CInt": 32}
+              }
+          ]
+        },
+        { "foreignFunctionName": "waitid",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "idtype",
+                "parameterType": {"CStruct": ["idtype_t", []]}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "id",
+                "parameterType": {"CStruct": ["id_t", []]}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "infop",
+                "parameterType": {"CPointer": {"CStruct": ["siginfo_t", []]}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "options",
+                "parameterType": {"CInt": 32}
+              }
+          ]
+        },
+        { "foreignFunctionName": "sysconf",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "name",
+                "parameterType": {"CInt": 32}
+              }
+          ]
+        },
+        { "foreignFunctionName": "signal",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CStruct": ["sighandler_t", []]},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "signum",
+                "parameterType": {"CInt": 32}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "handler",
+                "parameterType": {"CStruct": ["sighandler_t", []]}
+              }
+          ]
+        },
+        { "foreignFunctionName": "sigemptyset",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "set",
+                "parameterType": {"CPointer": {"CStruct": ["sigset_t", []]}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "sigfillset",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "set",
+                "parameterType": {"CPointer": {"CStruct": ["sigset_t", []]}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "sigaddset",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "set",
+                "parameterType": {"CPointer": {"CStruct": ["sigset_t", []]}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "signum",
+                "parameterType": {"CInt": 32}
+              }
+          ]
+        },
+        { "foreignFunctionName": "sigdelset",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "set",
+                "parameterType": {"CPointer": {"CStruct": ["sigset_t", []]}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "signum",
+                "parameterType": {"CInt": 32}
+              }
+          ]
+        },
+        { "foreignFunctionName": "sigismember",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "set",
+                "parameterType": {"CPointer": {"CStruct": ["sigset_t", []]}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "signum",
+                "parameterType": {"CInt": 32}
+              }
+          ]
+        },
+        { "foreignFunctionName": "sigprocmask",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "how",
+                "parameterType": {"CInt": 32}
+              },
+              { "parameterAnnotations": [{"PAConst": []}],
+                "parameterName": "set",
+                "parameterType": {"CPointer": {"CStruct": ["sigset_t", []]}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "oldset",
+                "parameterType": {"CPointer": {"CStruct": ["sigset_t", []]}}
               }
           ]
         }

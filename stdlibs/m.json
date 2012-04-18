@@ -409,6 +409,127 @@
                 "parameterType": {"CFloat": []}
               }
           ]
+        },
+        { "foreignFunctionName": "nan",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CDouble": []},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PAArray": 1}, {"PAConst": []}, {"PAString": []}],
+                "parameterName": "tagp",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "nanf",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CFloat": []},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PAArray": 1}, {"PAConst": []}, {"PAString": []}],
+                "parameterName": "tagp",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "__isnan",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "x",
+                "parameterType": {"CDouble": []}
+              }
+          ]
+        },
+        { "foreignFunctionName": "__isnanf",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "x",
+                "parameterType": {"CFloat": []}
+              }
+          ]
+        },
+        { "foreignFunctionName": "__isnanl",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "x",
+                "parameterType": {"CDouble": []}
+              }
+          ]
+        },
+        { "foreignFunctionName": "__isinf",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "x",
+                "parameterType": {"CDouble": []}
+              }
+          ]
+        },
+        { "foreignFunctionName": "__isinff",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "x",
+                "parameterType": {"CFloat": []}
+              }
+          ]
+        },
+        { "foreignFunctionName": "__isinfl",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "x",
+                "parameterType": {"CDouble": []}
+              }
+          ]
+        },
+        { "foreignFunctionName": "__isfinite",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "x",
+                "parameterType": {"CDouble": []}
+              }
+          ]
+        },
+        { "foreignFunctionName": "__isfinitef",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "x",
+                "parameterType": {"CFloat": []}
+              }
+          ]
+        },
+        { "foreignFunctionName": "__isfinitel",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "x",
+                "parameterType": {"CDouble": []}
+              }
+          ]
         }
     ]
 }

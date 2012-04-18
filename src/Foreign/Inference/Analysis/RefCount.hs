@@ -23,6 +23,7 @@ import Data.HashMap.Strict ( HashMap )
 import qualified Data.HashMap.Strict as HM
 import Data.Lens.Common
 import Data.Lens.Template
+import Data.List ( find )
 import Data.Maybe ( mapMaybe )
 import Data.Monoid
 import Debug.Trace.LocationTH
@@ -44,8 +45,8 @@ import Foreign.Inference.Interface
 
 data RefCountSummary =
   RefCountSummary { _conditionalFinalizers :: HashSet Function
-                  , _unrefArguments :: HashMap Argument AbstractAccessPath
-                  , _refArguments :: HashMap Argument AbstractAccessPath
+                  , _unrefArguments :: HashMap Argument (AbstractAccessPath, [Witness])
+                  , _refArguments :: HashMap Argument (AbstractAccessPath, [Witness])
                   , _refCountDiagnostics :: !Diagnostics
                   }
 
@@ -89,18 +90,18 @@ instance SummarizeModule RefCountSummary where
       Nothing ->
         case HM.lookup a refArgs of
           Nothing -> []
-          Just fieldPath ->
+          Just (fieldPath, ws) ->
             case matchingTypeAndPath (argumentType a) fieldPath unrefArgs of
-              Nothing -> [(PAAddRef "", [])]
-              Just fname -> [(PAAddRef fname, [])]
-      Just fieldPath ->
+              Nothing -> [(PAAddRef "", ws)]
+              Just fname -> [(PAAddRef fname, ws)]
+      Just (fieldPath, ws) ->
         case matchingTypeAndPath (argumentType a) fieldPath refArgs of
-          Nothing -> [(PAUnref "", [])]
-          Just fname -> [(PAUnref fname, [])]
+          Nothing -> [(PAUnref "", ws)]
+          Just fname -> [(PAUnref fname, ws)]
 
 matchingTypeAndPath :: Type
                        -> AbstractAccessPath
-                       -> HashMap Argument AbstractAccessPath
+                       -> HashMap Argument (AbstractAccessPath, [Witness])
                        -> Maybe String
 matchingTypeAndPath t accPath m =
   case filter matchingPair pairs of
@@ -110,7 +111,7 @@ matchingTypeAndPath t accPath m =
     _ -> Nothing
   where
     pairs = HM.toList m
-    matchingPair (arg, path) = argumentType arg == t && path == accPath
+    matchingPair (arg, (path, _)) = argumentType arg == t && path == accPath
 
 
 data RefCountData =
@@ -133,12 +134,12 @@ identifyRefCounting ds lns depLens1 depLens2 =
     constData = RefCountData ds
     depLens = lens (getL depLens1 &&& getL depLens2) (\(f, s) -> setL depLens1 f . setL depLens2 s)
 
-isConditionalFinalizer :: FinalizerSummary -> Function -> [Instruction] -> Analysis Bool
+isConditionalFinalizer :: FinalizerSummary -> Function -> [Instruction] -> Analysis (Maybe Instruction)
 isConditionalFinalizer summ f funcInstructions = do
   ds <- asks dependencySummary
   case functionIsFinalizer ds summ (Value f) of
-    True -> return False
-    False -> return $! any (isFinalizerCall ds summ) funcInstructions
+    True -> return Nothing
+    False -> return $! find (isFinalizerCall ds summ) funcInstructions
 
 isFinalizerCall :: DependencySummary -> FinalizerSummary -> Instruction -> Bool
 isFinalizerCall ds summ i =
@@ -175,20 +176,20 @@ refCountAnalysis :: (FuncLike funcLike, HasCFG funcLike, HasFunction funcLike)
                     -> Analysis RefCountSummary
 refCountAnalysis (finSumm, seSumm) funcLike summ = do
   let summ' = incRefAnalysis seSumm f summ
-  isCondFin <- isConditionalFinalizer finSumm f functionInstructions
-  case isCondFin of
-    False -> return summ'
-    True ->
+  condFinInstruction <- isConditionalFinalizer finSumm f functionInstructions
+  case condFinInstruction of
+    Nothing -> return summ'
+    Just cfi ->
       let newFin = HS.insert f (summ' ^. conditionalFinalizers)
+          finWitness = Witness cfi "condfin"
+          curUnref = summ' ^. unrefArguments
           -- If this is a conditional finalizer, figure out which
           -- field (if any) is unrefed.
           newUnref = case (decRefCountFields seSumm f, functionParameters f) of
-            ([accPath], [a]) -> HM.insert a accPath (summ' ^. unrefArguments)
-            _ -> summ' ^. unrefArguments
+            ([(accPath, decWitness)], [a]) ->
+              HM.insert a (accPath, [finWitness, decWitness]) curUnref
+            _ -> curUnref
       in return $! (unrefArguments ^= newUnref) $ (conditionalFinalizers ^= newFin) summ' -- `debug`
-           -- printf "%s calls through fptr: %s\n" (show (functionName f)) (show fptrAccessPaths)
-         -- `debug`
-         --   printf "Ref counted fields: %s\n" (show (refCountFields seSumm f))
   where
     f = getFunction funcLike
     functionInstructions = concatMap basicBlockInstructions (functionBody f)
@@ -198,8 +199,8 @@ incRefAnalysis :: ScalarEffectSummary -> Function -> RefCountSummary -> RefCount
 incRefAnalysis seSumm f summ =
   case (incRefCountFields seSumm f, functionParameters f) of
     ([], _) -> summ
-    ([fieldPath], [a]) ->
-      let newAddRef = HM.insert a fieldPath (summ ^. refArguments)
+    ([(fieldPath, w)], [a]) ->
+      let newAddRef = HM.insert a (fieldPath, [w]) (summ ^. refArguments)
       in (refArguments ^= newAddRef) summ
     _ -> summ
 
@@ -219,27 +220,15 @@ indirectCallAccessPath i =
         InstructionC callee -> accessPath callee
         _ -> Nothing
 
-
--- If we find a ref counting function that calls some functions
--- through a function pointer of one argument (where that argument is
--- reachable from the argument of the current function), try to
--- resolve the function pointer using the initializer value analysis.
---
--- Check what each of those possible call targets casts their argument
--- to.
-
--- For incRef, look for scalar effects of Add1 for access paths
--- matching the decRef access path.
-
 -- | Find all of the fields of argument objects that are decremented
 -- in the given Function, returning the affected AbstractAccessPaths
-decRefCountFields :: ScalarEffectSummary -> Function -> [AbstractAccessPath]
+decRefCountFields :: ScalarEffectSummary -> Function -> [(AbstractAccessPath, Witness)]
 decRefCountFields seSumm f = mapMaybe (checkDecRefCount seSumm) allInsts
   where
     allInsts = concatMap basicBlockInstructions (functionBody f)
 
 -- | Likewise, but for incremented fields
-incRefCountFields :: ScalarEffectSummary -> Function -> [AbstractAccessPath]
+incRefCountFields :: ScalarEffectSummary -> Function -> [(AbstractAccessPath, Witness)]
 incRefCountFields seSumm f = mapMaybe (checkIncRefCount seSumm) allInsts
   where
     allInsts = concatMap basicBlockInstructions (functionBody f)
@@ -252,9 +241,9 @@ incRefCountFields seSumm f = mapMaybe (checkIncRefCount seSumm) allInsts
 -- FIXME: Add support for cmpxchg?
 checkDecRefCount :: ScalarEffectSummary
                     -> Instruction
-                    -> Maybe AbstractAccessPath
-checkDecRefCount seSumm i =
-  case i of
+                    -> Maybe (AbstractAccessPath, Witness)
+checkDecRefCount seSumm i = do
+  p <- case i of
     AtomicRMWInst { atomicRMWOperation = AOSub
                   , atomicRMWValue = (valueContent ->
       ConstantC ConstantInt { constantIntValue = 1 })} ->
@@ -290,13 +279,14 @@ checkDecRefCount seSumm i =
                } ->
       absPathThroughCall seSumm scalarEffectSubOne (functionParameters f) a
     _ -> Nothing
+  return (p, Witness i "decr")
 
 -- | Analogous to 'checkDecRefCount', but for increments
 checkIncRefCount :: ScalarEffectSummary
                     -> Instruction
-                    -> Maybe AbstractAccessPath
-checkIncRefCount seSumm i =
-  case i of
+                    -> Maybe (AbstractAccessPath, Witness)
+checkIncRefCount seSumm i = do
+  p <- case i of
     AtomicRMWInst { atomicRMWOperation = AOAdd
                   , atomicRMWValue = (valueContent ->
       ConstantC ConstantInt { constantIntValue = 1 })} ->
@@ -332,6 +322,7 @@ checkIncRefCount seSumm i =
                } ->
       absPathThroughCall seSumm scalarEffectAddOne (functionParameters f) a
     _ -> Nothing
+  return (p, Witness i "incr")
 
 -- | At a call site, if the callee has a scalar effect on its argument,
 -- match up the access path of the actual argument passed to the callee
@@ -375,7 +366,6 @@ absPathThroughCall seSumm effect [singleFormal] actual = do
       -- of the formal parameters of the current function.  This
       -- access path tells us which component of the argument was
       -- passed to the callee.
-      -- return () `debug` printf "Callee: %s\nCaller: %s\n" (show calleeAccessPath) (show actualAccessPath)
       case valueContent' (accessPathBaseValue actualAccessPath) of
         -- If it really was derived from an argument, connect up
         -- the access paths for the caller and callee so we have a

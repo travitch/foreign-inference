@@ -16,6 +16,7 @@ import Data.Text ( Text, pack )
 import Data.Text.Encoding ( decodeUtf8 )
 import qualified Data.Text as T
 import Debug.Trace.LocationTH
+import System.FilePath
 import Text.Blaze.Html5 ( toValue, toHtml, (!), Html, AttributeValue )
 import qualified Text.Blaze.Html5 as H
 import qualified Text.Blaze.Html5.Attributes as A
@@ -55,7 +56,7 @@ htmlFunctionPage r f srcFile startLine functionText = H.docTypeHtml $ do
 
     toHtml funcName >> "(" >> commaSepList (zip [0..] args) (indexPageArgument r) >> ") -> "
     H.span ! A.class_ "code-type" $ toHtml (show fretType)
-    let lang : _ = K.languagesByFilename srcFile
+    let lang = sourceFileLanguage srcFile
         highlightedSrc = K.highlightAs lang (preprocessFunction functionText)
         fmtOpts = defaultFormatOpts { numberLines = True
                                     , startNumber = startLine
@@ -73,6 +74,19 @@ htmlFunctionPage r f srcFile startLine functionText = H.docTypeHtml $ do
     fretType = case functionType f of
       TypeFunction rt _ _ -> rt
       rtype -> rtype
+
+-- | Determine the language type for the file.  Attempt a basic match
+-- against the filename.  If this fails, strip off extensions until
+-- something matches or there are no more extensions.  If it cannot be
+-- determined, assume C.
+sourceFileLanguage :: FilePath -> String
+sourceFileLanguage p =
+  case hasExtension p of
+    False -> "C"
+    True ->
+      case K.languagesByFilename p of
+        [] -> sourceFileLanguage (dropExtension p)
+        lang : _ -> lang
 
 -- | Replace tabs with two spaces.  This makes the line number
 -- highlighting easier to read.

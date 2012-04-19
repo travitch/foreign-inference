@@ -242,7 +242,10 @@ mergeFunction m f = case M.lookup fn m of
   Just f' -> case foreignFunctionLinkage f of
     LinkWeak -> m
     LinkDefault ->
-      $failure ("Functions with overlapping linkage: " ++ show f ++ " and " ++ show f')
+      case f == f' of
+        True -> m
+        False ->
+          $failure ("Functions with overlapping linkage: " ++ show f ++ " and " ++ show f')
   where
     fn = SBS.pack $ foreignFunctionName f
 

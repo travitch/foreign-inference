@@ -306,7 +306,7 @@ moduleToLibraryInterface :: Module   -- ^ Module to summarize
                             -> LibraryAnnotations
                             -> LibraryInterface
 moduleToLibraryInterface m name deps summaries annots =
-  LibraryInterface { libraryFunctions = funcs
+  LibraryInterface { libraryFunctions = funcs ++ aliases
                    , libraryTypes = moduleInterfaceStructTypes m
                    , libraryName = name
                    , libraryDependencies = deps
@@ -314,6 +314,19 @@ moduleToLibraryInterface m name deps summaries annots =
                    }
   where
     funcs = mapMaybe (functionToExternal summaries annots) (moduleDefinedFunctions m)
+    aliases = mapMaybe (functionAliasToExternal summaries annots) (moduleAliases m)
+
+functionAliasToExternal :: [ModuleSummary] -> LibraryAnnotations -> GlobalAlias -> Maybe ForeignFunction
+functionAliasToExternal summaries annots a =
+  case valueContent' (globalAliasTarget a) of
+    FunctionC f -> do
+      -- Copy the visibility of the alias to the function.  It is often the case
+      -- that an alias will be publically visible but the aliasee is not.  This way,
+      -- we can fully re-use functionToExternal
+      let f' = f { functionVisibility = globalAliasVisibility a }
+      e <- functionToExternal summaries annots f'
+      return e { foreignFunctionName = identifierAsString (globalAliasName a) }
+    _ -> Nothing
 
 
 -- | Summarize a single function.  Functions with types in their
@@ -328,7 +341,7 @@ functionToExternal summaries annots f =
       fretty <- typeToCType (functionReturnMetaUnsigned f) fretType
       let indexedArgs = zip [0..] (functionParameters f)
       params <- mapM (paramToExternal summaries annots) indexedArgs
-      return ForeignFunction { foreignFunctionName = SBS.unpack $ identifierContent (functionName f)
+      return ForeignFunction { foreignFunctionName = identifierAsString (functionName f)
                              , foreignFunctionLinkage =
                                   if vis == VisibilityProtected then LinkWeak else lnk
                              , foreignFunctionReturnType = fretty

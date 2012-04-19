@@ -596,6 +596,39 @@
                 "parameterType": {"CDouble": []}
               }
           ]
+        },
+        { "foreignFunctionName": "__finite",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "x",
+                "parameterType": {"CDouble": []}
+              }
+          ]
+        },
+        { "foreignFunctionName": "__finitef",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "x",
+                "parameterType": {"CFloat": []}
+              }
+          ]
+        },
+        { "foreignFunctionName": "__finitel",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "x",
+                "parameterType": {"CDouble": []}
+              }
+          ]
         }
     ]
 }

@@ -1,0 +1,89 @@
+{
+    "libraryDependencies": [],
+    "libraryName": "dl",
+    "libraryTypes": [],
+    "libraryEnums": [],
+    "libraryFunctions": [
+        { "foreignFunctionName": "dlopen",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CPointer": {"CVoid": []}},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PAArray": 1}, {"PAString": []}, {"PAConst": []}],
+                "parameterName": "filename",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "flag",
+                "parameterType": {"CInt": 32}
+              }
+          ]
+        },
+        { "foreignFunctionName": "dlerror",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CPointer": {"CInt": 8}},
+          "foreignFunctionParameters": []
+        },
+        { "foreignFunctionName": "dlsym",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CPointer": {"CVoid": []}},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "handle",
+                "parameterType": {"CPointer": {"CVoid": []}}
+              },
+              { "parameterAnnotations": [{"PAArray": 1}, {"PAString": []}, {"PAConst": []}],
+                "parameterName": "symbol",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "dlclose",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "handle",
+                "parameterType": {"CPointer": {"CVoid": []}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "dladdr",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "addr",
+                "parameterType": {"CPointer": {"CVoid":[]}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "info",
+                "parameterType": {"CPointer": {"CStruct":["Dl_info", []]}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "dlvsym",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CPointer": {"CVoid": []}},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "handle",
+                "parameterType": {"CPointer": {"CVoid": []}}
+              },
+              { "parameterAnnotations": [{"PAArray": 1}, {"PAString": []}],
+                "parameterName": "symbol",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              },
+              { "parameterAnnotations": [{"PAArray": 1}, {"PAString": []}],
+                "parameterName": "version",
+                "parameterType": {"CPointer": {"CInt": 8}}
+              }
+          ]
+        }
+    ]
+}

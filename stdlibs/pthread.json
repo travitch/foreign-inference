@@ -1,0 +1,297 @@
+{
+    "libraryDependencies": [],
+    "libraryName": "pthread",
+    "libraryTypes": [],
+    "libraryEnums": [],
+    "libraryFunctions": [
+        { "foreignFunctionName": "pthread_self",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CStruct": ["pthread_t", []]},
+          "foreignFunctionParameters": []
+        },
+        { "foreignFunctionName": "pthread_create",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAOut":[]}],
+                "parameterName": "thread",
+                "parameterType": {"CPointer": {"CStruct": ["pthread_t", []]}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "attr",
+                "parameterType": {"CPointer": {"CStruct": ["pthread_attr_t", []]}}
+              },
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "start_routine",
+                "parameterType": {"CPointer": {"CFunction": [{"CPointer": {"CVoid":[]}}, [{"CPointer": {"CVoid":[]}}]]}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "arg",
+                "parameterType": {"CPointer": {"CVoid": []}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "pthread_equal",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [],
+                "parameterName": "t1",
+                "parameterType": {"CStruct": ["pthread_t", []]}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "t2",
+                "parameterType": {"CStruct": ["pthread_t", []]}
+              }
+          ]
+        },
+        { "foreignFunctionName": "pthread_cond_init",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "cond",
+                "parameterType": {"CPointer": {"CStruct": ["pthread_cond_t", []]}}
+              },
+              { "parameterAnnotations": [{"PAConst": []}],
+                "parameterName": "attr",
+                "parameterType": {"CPointer": {"CStruct": ["pthread_condattr_t", []]}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "pthread_cond_destroy",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "cond",
+                "parameterType": {"CPointer": {"CStruct": ["pthread_cond_t", []]}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "pthread_cond_signal",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "cond",
+                "parameterType": {"CPointer": {"CStruct": ["pthread_cond_t", []]}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "pthread_cond_broadcast",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "cond",
+                "parameterType": {"CPointer": {"CStruct": ["pthread_cond_t", []]}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "pthread_cond_wait",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "cond",
+                "parameterType": {"CPointer": {"CStruct": ["pthread_cond_t", []]}}
+              },
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "mutex",
+                "parameterType": {"CPointer": {"CStruct": ["pthread_mutex_t", []]}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "pthread_cond_timedwait",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "cond",
+                "parameterType": {"CPointer": {"CStruct": ["pthread_cond_t", []]}}
+              },
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "mutex",
+                "parameterType": {"CPointer": {"CStruct": ["pthread_mutex_t", []]}}
+              },
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "abstime",
+                "parameterType": {"CPointer": {"CStruct": ["timespec", []]}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "pthread_mutex_init",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "mutex",
+                "parameterType": {"CPointer": {"CStruct": ["pthread_mutex_t", []]}}
+              },
+              { "parameterAnnotations": [{"PAConst": []}],
+                "parameterName": "attr",
+                "parameterType": {"CPointer": {"CStruct": ["pthread_mutexattr_t", []]}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "pthread_mutex_destroy",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "mutex",
+                "parameterType": {"CPointer": {"CStruct": ["pthread_mutex_t", []]}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "pthread_mutex_lock",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "mutex",
+                "parameterType": {"CPointer": {"CStruct": ["pthread_mutex_t", []]}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "pthread_mutex_unlock",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "mutex",
+                "parameterType": {"CPointer": {"CStruct": ["pthread_mutex_t", []]}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "pthread_mutex_trylock",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "mutex",
+                "parameterType": {"CPointer": {"CStruct": ["pthread_mutex_t", []]}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "pthread_condattr_init",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "attr",
+                "parameterType": {"CPointer": {"CStruct": ["pthread_condattr_t", []]}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "pthread_condattr_destroy",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "attr",
+                "parameterType": {"CPointer": {"CStruct": ["pthread_condattr_t", []]}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "pthread_condattr_setclock",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "attr",
+                "parameterType": {"CPointer": {"CStruct": ["pthread_condattr_t", []]}}
+              },
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "clock_id",
+                "parameterType": {"CStruct": ["clockid_t", []]}
+              }
+          ]
+        },
+        { "foreignFunctionName": "pthread_condattr_getclock",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "attr",
+                "parameterType": {"CPointer": {"CStruct": ["pthread_condattr_t", []]}}
+              },
+              { "parameterAnnotations": [{"PANotNull":[]}, {"PAOut": []}],
+                "parameterName": "clock_id",
+                "parameterType": {"CPointer": {"CStruct": ["clockid_t", []]}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "pthread_mutexattr_init",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "attr",
+                "parameterType": {"CPointer": {"CStruct": ["pthread_mutexattr_t", []]}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "pthread_mutexattr_destroy",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "attr",
+                "parameterType": {"CPointer": {"CStruct": ["pthread_mutexattr_t", []]}}
+              }
+          ]
+        },
+        { "foreignFunctionName": "pthread_mutexattr_settype",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "attr",
+                "parameterType": {"CPointer": {"CStruct": ["pthread_mutexattr_t", []]}}
+              },
+              { "parameterAnnotations": [],
+                "parameterName": "type",
+                "parameterType": {"CInt": 32}
+              }
+          ]
+        },
+        { "foreignFunctionName": "pthread_mutexattr_gettype",
+          "foreignFunctionAnnotations": [],
+          "foreignFunctionLinkage": { "LinkDefault": [] },
+          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionParameters": [
+              { "parameterAnnotations": [{"PANotNull":[]}],
+                "parameterName": "attr",
+                "parameterType": {"CPointer": {"CStruct": ["pthread_mutexattr_t", []]}}
+              },
+              { "parameterAnnotations": [{"PAOut": []}],
+                "parameterName": "type",
+                "parameterType": {"CPointer": {"CInt": 32}}
+              }
+          ]
+        }
+    ]
+}

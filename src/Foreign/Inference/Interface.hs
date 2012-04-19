@@ -90,6 +90,10 @@ libc :: SBS.ByteString
 libc = $(embedFile "stdlibs/c.json")
 libm :: SBS.ByteString
 libm = $(embedFile "stdlibs/m.json")
+libdl :: SBS.ByteString
+libdl = $(embedFile "stdlibs/dl.json")
+libpthread :: SBS.ByteString
+libpthread = $(embedFile "stdlibs/pthread.json")
 llvmIntrinsics :: SBS.ByteString
 llvmIntrinsics = $(embedFile "stdlibs/llvm.json")
 
@@ -201,7 +205,13 @@ loadDependencies' includeStd summaryDirs deps = do
     addStdlibDeps m CStdLib =
       let lc = decodeInterface libc
           lm = decodeInterface libm
-          fs = libraryFunctions lc ++ libraryFunctions lm
+          ldl = decodeInterface libdl
+          lpthread = decodeInterface libpthread
+          fs = concat [ libraryFunctions lc
+                      , libraryFunctions lm
+                      , libraryFunctions ldl
+                      , libraryFunctions lpthread
+                      ]
       in foldl' mergeFunction m fs
     addStdlibDeps m LLVMLib =
       let ll = decodeInterface llvmIntrinsics

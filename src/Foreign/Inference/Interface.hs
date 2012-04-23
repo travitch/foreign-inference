@@ -113,6 +113,8 @@ data DependencySummary = DS { depSummary :: DepMap
                             }
                        deriving (Show)
 
+-- | Take input annotations and add them to the known annotations in a
+-- dependency summary.
 addLibraryAnnotations :: DependencySummary -> LibraryAnnotations -> DependencySummary
 addLibraryAnnotations ds as = ds { libraryAnnotations = libraryAnnotations ds `mappend` as }
 
@@ -169,7 +171,8 @@ saveModule summaryDir name deps m summaries ds = do
   let i = moduleToLibraryInterface m name deps summaries (libraryAnnotations ds)
   saveInterface summaryDir i
 
--- | Load annotations supplied by the user
+-- | Load annotations supplied by the user.  Annotations are just a
+-- JSON encoding of the LibraryAnnotations type.
 loadAnnotations :: FilePath -> IO LibraryAnnotations
 loadAnnotations p = do
   c <- LBS.readFile p

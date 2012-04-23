@@ -28,7 +28,7 @@ main = do
         [] -> "tests/allocator/*.c"
         [infile] -> infile
         _ -> error "At most one argument allowed"
-  ds <- loadDependencies' [] [] ["c"]
+  ds <- loadDependencies [] []
   let testDescriptors = [ TestDescriptor { testPattern = pattern
                                          , testExpectedMapping = (<.> "expected")
                                          , testResultBuilder = analyzeAllocator ds

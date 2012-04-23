@@ -27,7 +27,7 @@ main = do
         [] -> "tests/finalize/*.c"
         [infile] -> infile
         _ -> error "At most one argument allowed"
-  ds <- loadDependencies' [] ["tests/finalize"] ["c"]
+  ds <- loadDependencies ["tests/finalize"] []
   let testDescriptors = [ TestDescriptor { testPattern = pattern
                                          , testExpectedMapping = (<.> "expected")
                                          , testResultBuilder = analyzeFinalize ds

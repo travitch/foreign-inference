@@ -12,7 +12,9 @@
 -}
 module Foreign.Inference.Analysis.RefCount (
   RefCountSummary,
-  identifyRefCounting
+  identifyRefCounting,
+  -- * Testing
+  refCountSummaryToTestFormat
   ) where
 
 import Control.Arrow
@@ -24,6 +26,8 @@ import qualified Data.HashMap.Strict as HM
 import Data.Lens.Common
 import Data.Lens.Template
 import Data.List ( find )
+import Data.Map ( Map )
+import qualified Data.Map as M
 import Data.Maybe ( mapMaybe )
 import Data.Monoid
 import Debug.Trace.LocationTH
@@ -387,3 +391,16 @@ absPathIfArg i =
       case valueContent' (accessPathBaseValue cap) of
         ArgumentC _ -> Just (abstractAccessPath cap)
         _ -> Nothing
+
+-- Testing
+
+-- | Extract a map of unref functions to ref functions
+refCountSummaryToTestFormat :: RefCountSummary -> Map String String
+refCountSummaryToTestFormat (RefCountSummary _ unrefArgs refArgs _) =
+  foldr addIfRefFound mempty (HM.toList unrefArgs)
+  where
+    addIfRefFound (uarg, (fieldPath, _)) acc =
+      let ufunc = identifierAsString $ functionName $ argumentFunction uarg
+      in case matchingTypeAndPath (argumentType uarg) fieldPath refArgs of
+        Nothing -> acc
+        Just rfunc -> M.insert ufunc rfunc acc

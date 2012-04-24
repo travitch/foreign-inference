@@ -110,12 +110,28 @@ automaticFinalizersForType (FinalizerSummary s _) t =
     compatibleArgs = filter ((t==) . argumentType) args
     funcs = map argumentFunction compatibleArgs
 
+-- | The dataflow fact tracking things that are not finalizedOrNull
 data FinalizerInfo =
   FinalizerInfo { notFinalizedOrNull :: HashSet Argument
                 , finalizedWitnesses :: HashMap Argument (Set Witness)
                 }
   deriving (Eq, Show)
 
+-- | FIXME: To deal with finalizers called through function pointers,
+-- a more sophisticated approach is required.  Paths are allowed to
+-- not finalize IFF the function pointer doing the finalizing was NULL
+-- on that path.  Example:
+--
+-- > if(mem) {
+-- >   if(mem->free_func) {
+-- >     mem->free_func(d);
+-- >   }
+-- > }
+--
+-- should be a reasonable finalizer body.  The approach will be to
+-- track variables that are currently being tested for NULL; if those
+-- variables are used to make a call through a function pointer, then
+-- do a bit of magic in the meet function to allow this.
 instance MeetSemiLattice FinalizerInfo where
   meet (FinalizerInfo s1 m1) (FinalizerInfo s2 m2) =
     FinalizerInfo { notFinalizedOrNull = HS.union s1 s2

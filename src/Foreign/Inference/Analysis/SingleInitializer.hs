@@ -38,9 +38,9 @@ import Data.Monoid
 import LLVM.Analysis
 import LLVM.Analysis.AccessPath
 
-import Text.Printf
-import Debug.Trace
-debug = flip trace
+-- import Text.Printf
+-- import Debug.Trace
+-- debug = flip trace
 
 -- Also, allow paths in finalizers to include exit-like functions.
 
@@ -67,17 +67,19 @@ singleInitializer s v =
       case valueContent' (accessPathBaseValue accPath) of
         GlobalVariableC gv@GlobalVariable { globalVariableInitializer = Just initVal } ->
           case followAccessPath absPath initVal of
-            Nothing -> return $! globalVarLookup s gv -- M.lookup gv (concreteValueInitializers s)
+            Nothing -> return $! globalVarLookup s gv
             accPathVal -> fmap return accPathVal
-        _ -> return $! absPathLookup s absPath -- M.lookup absPath (abstractPathInitializers s)
+        _ -> return $! absPathLookup s absPath
     _ -> []
 
-absPathLookup s absPath = storeInits `union` argInits -- `debug` show argInits
+absPathLookup :: SingleInitializerSummary -> AbstractAccessPath -> [Value]
+absPathLookup s absPath = storeInits `union` argInits
   where
     storeInits = M.findWithDefault [] absPath (abstractPathInitializers s)
     argDeps = M.findWithDefault [] absPath (fieldArgDependencies s)
     argInits = concatMap (\x -> M.findWithDefault [] x (argumentInitializers s)) argDeps
 
+globalVarLookup :: SingleInitializerSummary -> GlobalVariable -> [Value]
 globalVarLookup s gv = concreteInits `union` argInits
   where
     concreteInits = M.findWithDefault [] gv (concreteValueInitializers s)
@@ -93,6 +95,9 @@ identifySingleInitializers m =
     allInsts = concatMap basicBlockInstructions allBlocks
     globalsWithInits = foldr extractGlobalsWithInits [] (moduleGlobalVariables m)
 
+extractGlobalsWithInits :: GlobalVariable
+                           -> [(GlobalVariable, [Value])]
+                           -> [(GlobalVariable, [Value])]
 extractGlobalsWithInits gv acc =
   case globalVariableInitializer gv of
     Nothing -> acc
@@ -125,6 +130,10 @@ recordInitializers i s =
 -- | If an actual argument has a Function (or ExternalFunction) as its
 -- value, record that as a value as associated with the ix'th argument
 -- of the callee.
+recordArgFuncInit :: Function
+                     -> SingleInitializerSummary
+                     -> (Int, Value)
+                     -> SingleInitializerSummary
 recordArgFuncInit f s (ix, arg) =
   case valueContent' arg of
     FunctionC _ ->
@@ -137,6 +146,12 @@ recordArgFuncInit f s (ix, arg) =
         }
     _ -> s
 
+recordArgInitializer :: Instruction
+                        -> Function
+                        -> Int
+                        -> Value
+                        -> SingleInitializerSummary
+                        -> SingleInitializerSummary
 recordArgInitializer i f ix sa s =
   case valueContent' sa of
     GlobalVariableC gv ->

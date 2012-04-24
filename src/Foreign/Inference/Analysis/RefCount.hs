@@ -148,10 +148,16 @@ isConditionalFinalizer summ f funcInstructions = do
 isFinalizerCall :: DependencySummary -> FinalizerSummary -> Instruction -> Bool
 isFinalizerCall ds summ i =
   case i of
-    CallInst { callFunction = callee } ->
-      functionIsFinalizer ds summ callee
-    InvokeInst { invokeFunction = callee } ->
-      functionIsFinalizer ds summ callee
+    CallInst { callFunction = callee, callArguments = args } ->
+      functionIsFinalizer ds summ callee && any isArgument (map fst args)
+    InvokeInst { invokeFunction = callee, invokeArguments = args } ->
+      functionIsFinalizer ds summ callee && any isArgument (map fst args)
+    _ -> False
+
+isArgument :: Value -> Bool
+isArgument v =
+  case valueContent' v of
+    ArgumentC _ -> True
     _ -> False
 
 functionIsFinalizer :: DependencySummary -> FinalizerSummary -> Value -> Bool

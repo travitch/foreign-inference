@@ -1,3 +1,4 @@
+{-# LANGUAGE ViewPatterns #-}
 -- | FIXME: Currently there is an exception allowing us to identify
 -- finalizers that are called through function pointers if the
 -- function pointer is global and has an initializer.
@@ -28,8 +29,8 @@ module Foreign.Inference.Analysis.SingleInitializer (
   singleInitializer
   ) where
 
-import Data.List ( foldl' )
-import Data.List.Ordered ( insertSet )
+import Data.List ( elemIndex, foldl' )
+import Data.List.Ordered ( union )
 import Data.Map ( Map )
 import qualified Data.Map as M
 import Data.Monoid
@@ -37,22 +38,25 @@ import Data.Monoid
 import LLVM.Analysis
 import LLVM.Analysis.AccessPath
 
--- import Text.Printf
--- import Debug.Trace
--- debug = flip trace
+import Text.Printf
+import Debug.Trace
+debug = flip trace
 
 -- Also, allow paths in finalizers to include exit-like functions.
 
 data SingleInitializerSummary =
   SIS { abstractPathInitializers :: !(Map AbstractAccessPath [Value])
       , concreteValueInitializers :: !(Map GlobalVariable [Value])
+      , argumentInitializers :: !(Map (Function, Int) [Value])
+      , fieldArgDependencies :: !(Map AbstractAccessPath [(Function, Int)])
+      , globalArgDependencies :: !(Map GlobalVariable [(Function, Int)])
       }
   deriving (Eq)
 
 instance Monoid SingleInitializerSummary where
-  mempty = SIS mempty mempty
-  mappend (SIS a1 c1) (SIS a2 c2) =
-    SIS (a1 `mappend` a2) (c1 `mappend` c2)
+  mempty = SIS mempty mempty mempty mempty mempty
+  mappend (SIS a1 c1 arg1 f1 g1) (SIS a2 c2 arg2 f2 g2) =
+    SIS (a1 `mappend` a2) (c1 `mappend` c2) (arg1 `mappend` arg2) (f1 `mappend` f2) (g1 `mappend` g2)
 
 singleInitializer :: SingleInitializerSummary -> Value -> [Value]
 singleInitializer s v =
@@ -63,10 +67,22 @@ singleInitializer s v =
       case valueContent' (accessPathBaseValue accPath) of
         GlobalVariableC gv@GlobalVariable { globalVariableInitializer = Just initVal } ->
           case followAccessPath absPath initVal of
-            Nothing -> M.lookup gv (concreteValueInitializers s)
+            Nothing -> return $! globalVarLookup s gv -- M.lookup gv (concreteValueInitializers s)
             accPathVal -> fmap return accPathVal
-        _ -> M.lookup absPath (abstractPathInitializers s)
+        _ -> return $! absPathLookup s absPath -- M.lookup absPath (abstractPathInitializers s)
     _ -> []
+
+absPathLookup s absPath = storeInits `union` argInits -- `debug` show argInits
+  where
+    storeInits = M.findWithDefault [] absPath (abstractPathInitializers s)
+    argDeps = M.findWithDefault [] absPath (fieldArgDependencies s)
+    argInits = concatMap (\x -> M.findWithDefault [] x (argumentInitializers s)) argDeps
+
+globalVarLookup s gv = concreteInits `union` argInits
+  where
+    concreteInits = M.findWithDefault [] gv (concreteValueInitializers s)
+    argDeps = M.findWithDefault [] gv (globalArgDependencies s)
+    argInits = concatMap (\x -> M.findWithDefault [] x (argumentInitializers s)) argDeps
 
 identifySingleInitializers :: Module -> SingleInitializerSummary
 identifySingleInitializers m =
@@ -89,8 +105,52 @@ recordInitializers i s =
       case valueContent' sv of
         FunctionC _ -> maybeRecordInitializer i sv sa s
         ExternalFunctionC _ -> maybeRecordInitializer i sv sa s
+        ArgumentC a ->
+          let f = argumentFunction a
+              Just ix = elemIndex a (functionParameters f)
+          in recordArgInitializer i f ix sa s
         _ -> s
+    CallInst { callFunction = (valueContent' -> FunctionC f)
+             , callArguments = args
+             } ->
+      let ixArgs = zip [0..] $ map fst args
+      in foldl' (recordArgFuncInit f) s ixArgs
+    InvokeInst { invokeFunction = (valueContent' -> FunctionC f)
+               , invokeArguments = args
+               } ->
+      let ixArgs = zip [0..] $ map fst args
+      in foldl' (recordArgFuncInit f) s ixArgs
     _ -> s
+
+-- | If an actual argument has a Function (or ExternalFunction) as its
+-- value, record that as a value as associated with the ix'th argument
+-- of the callee.
+recordArgFuncInit f s (ix, arg) =
+  case valueContent' arg of
+    FunctionC _ ->
+      s { argumentInitializers =
+             M.insertWith union (f, ix) [arg] (argumentInitializers s)
+        }
+    ExternalFunctionC _ ->
+      s { argumentInitializers =
+             M.insertWith union (f, ix) [arg] (argumentInitializers s)
+        }
+    _ -> s
+
+recordArgInitializer i f ix sa s =
+  case valueContent' sa of
+    GlobalVariableC gv ->
+      s { globalArgDependencies =
+             M.insertWith' union gv [(f, ix)] (globalArgDependencies s)
+        }
+    _ ->
+      case accessPath i of
+        Nothing -> s
+        Just accPath ->
+          let absPath = abstractAccessPath accPath
+          in s { fieldArgDependencies =
+                    M.insertWith' union absPath [(f, ix)] (fieldArgDependencies s)
+               }
 
 -- | Initializers here (sv) are only functions (external or otherwise)
 maybeRecordInitializer :: Instruction -> Value -> Value
@@ -99,26 +159,14 @@ maybeRecordInitializer :: Instruction -> Value -> Value
 maybeRecordInitializer i sv sa s =
   case valueContent' sa of
     GlobalVariableC gv ->
-      case M.lookup gv (concreteValueInitializers s) of
-        Nothing ->
-          s { concreteValueInitializers =
-                 M.insert gv [sv] (concreteValueInitializers s)
-            }
-        Just current ->
-          s { concreteValueInitializers =
-                 M.insert gv (insertSet sv current) (concreteValueInitializers s)
-            }
+      s { concreteValueInitializers =
+             M.insertWith' union gv [sv] (concreteValueInitializers s)
+        }
     _ ->
       case accessPath i of
         Nothing -> s
         Just accPath ->
           let absPath = abstractAccessPath accPath
-          in case M.lookup absPath (abstractPathInitializers s) of
-            Nothing ->
-              s { abstractPathInitializers =
-                     M.insert absPath [sv] (abstractPathInitializers s)
-                }
-            Just current ->
-              s { abstractPathInitializers =
-                     M.insert absPath (insertSet sv current) (abstractPathInitializers s)
-                }
+          in s { abstractPathInitializers =
+                    M.insertWith' union absPath [sv] (abstractPathInitializers s)
+               }

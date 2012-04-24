@@ -52,6 +52,7 @@ import Foreign.Inference.Analysis.Finalize
 import Foreign.Inference.Analysis.SingleInitializer
 import Foreign.Inference.Internal.FlattenValue
 
+-- import Text.Printf
 -- import Debug.Trace
 -- debug = flip trace
 

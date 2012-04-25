@@ -25,7 +25,7 @@ import Data.HashMap.Strict ( HashMap )
 import qualified Data.HashMap.Strict as HM
 import Data.Lens.Common
 import Data.Lens.Template
-import Data.List ( find )
+import Data.List ( stripPrefix )
 import Data.Map ( Map )
 import qualified Data.Map as M
 import Data.Maybe ( mapMaybe )
@@ -47,9 +47,19 @@ import Foreign.Inference.Interface
 -- import Debug.Trace
 -- debug = flip trace
 
+data UnrefData = UnrefData { unrefCountAccessPath :: AbstractAccessPath
+                           , unrefFuncPtrCalls :: [AbstractAccessPath]
+                           , unrefWitnesses :: [Witness]
+                           }
+               deriving (Eq)
+
+instance NFData UnrefData where
+  rnf u@(UnrefData accPath fp ws) =
+    accPath `deepseq` fp `deepseq` ws `deepseq` u `seq` ()
+
 data RefCountSummary =
   RefCountSummary { _conditionalFinalizers :: HashSet Function
-                  , _unrefArguments :: HashMap Argument (AbstractAccessPath, [Witness])
+                  , _unrefArguments :: HashMap Argument UnrefData
                   , _refArguments :: HashMap Argument (AbstractAccessPath, [Witness])
                   , _refCountDiagnostics :: !Diagnostics
                   }
@@ -95,19 +105,34 @@ instance SummarizeModule RefCountSummary where
         case HM.lookup a refArgs of
           Nothing -> []
           Just (fieldPath, ws) ->
-            case matchingTypeAndPath (argumentType a) fieldPath unrefArgs of
+            case matchingTypeAndPath (argumentType a) fieldPath unrefCountAccessPath unrefArgs of
               Nothing -> [(PAAddRef "", ws)]
               Just fname -> [(PAAddRef fname, ws)]
-      Just (fieldPath, ws) ->
-        case matchingTypeAndPath (argumentType a) fieldPath refArgs of
-          Nothing -> [(PAUnref "", ws)]
-          Just fname -> [(PAUnref fname, ws)]
+      Just (UnrefData fieldPath fptrPaths ws) ->
+        case matchingTypeAndPath (argumentType a) fieldPath fst refArgs of
+          Nothing -> [(PAUnref "" (map externalizeAccessPath fptrPaths), ws)]
+          Just fname -> [(PAUnref fname (map externalizeAccessPath fptrPaths), ws)]
+
+externalizeAccessPath :: AbstractAccessPath -> (String, [AccessType])
+externalizeAccessPath accPath =
+  (baseName, abstractAccessPathComponents accPath)
+  where
+    bt = abstractAccessPathBaseType accPath
+    n = case bt of
+      TypePointer (TypeStruct (Just name) _ _) _ -> name
+      _ -> $failure ("Expected a struct type: " ++ show bt)
+    baseName = case stripPrefix "struct." n of
+      Nothing -> takeWhile (/='.') n
+      Just n' -> takeWhile (/='.') n'
+
+
 
 matchingTypeAndPath :: Type
                        -> AbstractAccessPath
-                       -> HashMap Argument (AbstractAccessPath, [Witness])
+                       -> (a -> AbstractAccessPath)
+                       -> HashMap Argument a
                        -> Maybe String
-matchingTypeAndPath t accPath m =
+matchingTypeAndPath t accPath toPath m =
   case filter matchingPair pairs of
     [(singleMatch, _)] ->
       let f = argumentFunction singleMatch
@@ -115,7 +140,7 @@ matchingTypeAndPath t accPath m =
     _ -> Nothing
   where
     pairs = HM.toList m
-    matchingPair (arg, (path, _)) = argumentType arg == t && path == accPath
+    matchingPair (arg, d) = argumentType arg == t && (toPath d) == accPath
 
 
 data RefCountData =
@@ -138,46 +163,76 @@ identifyRefCounting ds lns depLens1 depLens2 =
     constData = RefCountData ds
     depLens = lens (getL depLens1 &&& getL depLens2) (\(f, s) -> setL depLens1 f . setL depLens2 s)
 
-isConditionalFinalizer :: FinalizerSummary -> Function -> [Instruction] -> Analysis (Maybe Instruction)
-isConditionalFinalizer summ f funcInstructions = do
+-- | Check to see if the given function is a conditional finalizer.
+-- If it is, return the call instruction that (conditionally) invokes
+-- a finalizer AND the argument being finalized.
+--
+-- This argument is needed for later steps.
+--
+-- Note that no finalizer is allowed to be a conditional finalizer
+isConditionalFinalizer :: FinalizerSummary
+                          -> Function
+                          -> Analysis (Maybe (Instruction, Argument))
+isConditionalFinalizer summ f = do
   ds <- asks dependencySummary
-  case functionIsFinalizer ds summ (Value f) of
+  case functionIsFinalizer ds summ f of
     True -> return Nothing
-    False -> return $! find (isFinalizerCall ds summ) funcInstructions
+    False ->
+      -- Find the list of all arguments that are finalized in the
+      -- function.
+      case mapMaybe (isFinalizerCall ds summ) (functionInstructions f) of
+        [] -> return Nothing
+        -- If there is more than one match, ensure that they all
+        -- finalize the same argument.  If that is not the case,
+        -- return Nothing
+        x@(_, a) : rest ->
+          case all (==a) (map snd rest) of
+            False -> return Nothing
+            True -> return (Just x)
 
-isFinalizerCall :: DependencySummary -> FinalizerSummary -> Instruction -> Bool
+isFinalizerCall :: DependencySummary
+                   -> FinalizerSummary
+                   -> Instruction
+                   -> Maybe (Instruction, Argument)
 isFinalizerCall ds summ i =
   case i of
     CallInst { callFunction = callee, callArguments = args } ->
-      functionIsFinalizer ds summ callee && any isArgument (map fst args)
+      callFinalizes ds summ i callee (map fst args)
     InvokeInst { invokeFunction = callee, invokeArguments = args } ->
-      functionIsFinalizer ds summ callee && any isArgument (map fst args)
-    _ -> False
+      callFinalizes ds summ i callee (map fst args)
+    _ -> Nothing
 
-isArgument :: Value -> Bool
-isArgument v =
-  case valueContent' v of
-    ArgumentC _ -> True
-    _ -> False
+-- | If the given call (value + args) is a finalizer, return the
+-- Argument it is finalizing.  If it is a finalizer but does not
+-- finalize an argument, returns Nothing.
+callFinalizes :: DependencySummary
+                       -> FinalizerSummary
+                       -> Instruction
+                       -> Value -- ^ The called value
+                       -> [Value] -- ^ Actual arguments
+                       -> Maybe (Instruction, Argument)
+callFinalizes ds fs i callee args =
+  case mapMaybe isFinalizedArgument (zip [0..] args) of
+    [finArg] -> return (i, finArg)
+    _ -> Nothing
+  where
+    isFinalizedArgument (ix, arg) = do
+      annots <- lookupArgumentSummary ds fs callee ix
+      case (PAFinalize `elem` annots, valueContent' arg) of
+        (False, _) -> Nothing
+        -- We only return a hit if this is an Argument to the *caller*
+        -- that is being finalized
+        (True, ArgumentC a) -> return a
+        (True, _) -> Nothing
 
-functionIsFinalizer :: DependencySummary -> FinalizerSummary -> Value -> Bool
-functionIsFinalizer ds fs callee =
+functionIsFinalizer :: DependencySummary -> FinalizerSummary -> Function -> Bool
+functionIsFinalizer ds fs f =
   any argFinalizes allArgAnnots
   where
-    atypes = case valueType callee of
-      TypeFunction _ ats _ -> ats
-      TypePointer (TypeFunction _ ats _) _ -> ats
-      _ -> $failure ("Expected function type: " ++ show (valueType callee))
-    maxArg = length atypes - 1
-    allArgAnnots = map (lookupArgumentSummary ds fs callee) [0..maxArg]
+    maxArg = length (functionParameters f) - 1
+    allArgAnnots = map (lookupArgumentSummary ds fs f) [0..maxArg]
     argFinalizes Nothing = False
     argFinalizes (Just annots) = PAFinalize `elem` annots
-
-annotateArg :: FinalizerSummary -> Argument -> (Argument, Bool)
-annotateArg summ a = (a, any doesFinalize (summarizeArgument a summ))
-  where
-    doesFinalize (PAFinalize, _) = True
-    doesFinalize _ = False
 
 refCountAnalysis :: (FuncLike funcLike, HasCFG funcLike, HasFunction funcLike)
                     => (FinalizerSummary, ScalarEffectSummary)
@@ -186,24 +241,24 @@ refCountAnalysis :: (FuncLike funcLike, HasCFG funcLike, HasFunction funcLike)
                     -> Analysis RefCountSummary
 refCountAnalysis (finSumm, seSumm) funcLike summ = do
   let summ' = incRefAnalysis seSumm f summ
-  condFinInstruction <- isConditionalFinalizer finSumm f functionInstructions
-  case condFinInstruction of
+  condFinData <- isConditionalFinalizer finSumm f
+  case condFinData of
     Nothing -> return summ'
-    Just cfi ->
+    Just (cfi, cfa) ->
       let newFin = HS.insert f (summ' ^. conditionalFinalizers)
           finWitness = Witness cfi "condfin"
           curUnref = summ' ^. unrefArguments
+          fptrAccessPaths = mapMaybe (indirectCallAccessPath cfa) (functionInstructions f)
           -- If this is a conditional finalizer, figure out which
           -- field (if any) is unrefed.
           newUnref = case (decRefCountFields seSumm f, functionParameters f) of
             ([(accPath, decWitness)], [a]) ->
-              HM.insert a (accPath, [finWitness, decWitness]) curUnref
+              let ud = UnrefData accPath fptrAccessPaths [finWitness, decWitness]
+              in HM.insert a ud curUnref
             _ -> curUnref
-      in return $! (unrefArguments ^= newUnref) $ (conditionalFinalizers ^= newFin) summ' -- `debug`
+      in return $! (unrefArguments ^= newUnref) $ (conditionalFinalizers ^= newFin) summ'
   where
     f = getFunction funcLike
-    functionInstructions = concatMap basicBlockInstructions (functionBody f)
-    fptrAccessPaths = mapMaybe indirectCallAccessPath functionInstructions
 
 incRefAnalysis :: ScalarEffectSummary -> Function -> RefCountSummary -> RefCountSummary
 incRefAnalysis seSumm f summ =
@@ -214,21 +269,43 @@ incRefAnalysis seSumm f summ =
       in (refArguments ^= newAddRef) summ
     _ -> summ
 
+-- Note, here pass in the argument that is conditionally finalized.  It should
+-- be an argument to this indirect call.  Additionally, the base of the access
+-- path should be this argument
+
 -- | If the instruction is an indirect function call, return the
 -- *concrete* AccessPath from which the function pointer was obtained.
-indirectCallAccessPath :: Instruction -> Maybe AccessPath
-indirectCallAccessPath i =
+indirectCallAccessPath :: Argument -> Instruction -> Maybe AbstractAccessPath
+indirectCallAccessPath arg i =
   case i of
-    CallInst { callFunction = f } -> notDirect f
-    InvokeInst { invokeFunction = f } -> notDirect f
+    CallInst { callFunction = f, callArguments = actuals } ->
+      notDirect f (map fst actuals)
+    InvokeInst { invokeFunction = f, invokeArguments = actuals } ->
+      notDirect f (map fst actuals)
     _ -> Nothing
   where
-    notDirect v =
-      case valueContent' v of
-        FunctionC _ -> Nothing
-        ExternalFunctionC _ -> Nothing
-        InstructionC callee -> accessPath callee
+    -- The only indirect calls occur through a load instruction.
+    -- Additionally, we want the Argument input to the caller to
+    -- appear in the argument list of the indirect call.
+    --
+    -- Ideally, we would like to ensure that the function pointer
+    -- being invoked is in some way derived from the argument being
+    -- finalized.  This is a kind of backwards reachability from the
+    -- base of the access path
+    notDirect v actuals =
+      case (any (isSameArg arg) actuals, valueContent' v) of
+        (True, InstructionC callee@LoadInst {}) -> do
+          accPath <- accessPath callee
+          return $! abstractAccessPath accPath
         _ -> Nothing
+
+isSameArg :: Argument -> Value -> Bool
+isSameArg arg v =
+  case valueContent' v of
+    ArgumentC a -> arg == a
+    _ -> False
+
+-- FIXME: Equality with arg isn't enough because of bitcasts
 
 -- | Find all of the fields of argument objects that are decremented
 -- in the given Function, returning the affected AbstractAccessPaths
@@ -405,8 +482,8 @@ refCountSummaryToTestFormat :: RefCountSummary -> Map String String
 refCountSummaryToTestFormat (RefCountSummary _ unrefArgs refArgs _) =
   foldr addIfRefFound mempty (HM.toList unrefArgs)
   where
-    addIfRefFound (uarg, (fieldPath, _)) acc =
+    addIfRefFound (uarg, UnrefData fieldPath _ _) acc =
       let ufunc = identifierAsString $ functionName $ argumentFunction uarg
-      in case matchingTypeAndPath (argumentType uarg) fieldPath refArgs of
+      in case matchingTypeAndPath (argumentType uarg) fieldPath fst refArgs of
         Nothing -> acc
         Just rfunc -> M.insert ufunc rfunc acc

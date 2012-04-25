@@ -29,7 +29,7 @@ data ParamAnnotation = PAArray !Int
                      | PAString
                      | PAConst
                      | PAFinalize
-                     | PAUnref String
+                     | PAUnref String [(String, [AccessType])]
                      | PAAddRef String
                      | PAEscape
                      | PAFptrEscape

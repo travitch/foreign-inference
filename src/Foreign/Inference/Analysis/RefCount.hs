@@ -47,16 +47,47 @@ import Foreign.Inference.Interface
 -- import Debug.Trace
 -- debug = flip trace
 
-data UnrefData = UnrefData { unrefCountAccessPath :: AbstractAccessPath
-                           , unrefFuncPtrCalls :: [AbstractAccessPath]
-                           , unrefWitnesses :: [Witness]
-                           }
-               deriving (Eq)
+-- | The data needed to track unref functions.  The
+-- @unrefCountAccessPath@ is the access path to the struct field that
+-- serves as the reference count (and is decremented in the unref
+-- function).
+--
+-- The @unrefFuncPtrCalls@ are the access paths of function pointers
+-- called in the unref function.  The idea is that these functions
+-- will tell us the types that are involved in reference counting for
+-- object systems like glib.  For example, assuming the following line
+-- is in an unref function
+--
+-- > obj->finalize(obj)
+--
+-- and (in some other function)
+--
+-- > obj->class = cls;
+-- > cls->finalize = finalizeFoo;
+--
+-- and
+--
+-- > void finalizeFoo(Object *o) {
+-- >   RealObject* obj = (RealObject*)o;
+-- >   // use obj
+-- > }
+--
+-- This tells us that the type RealObject is reference counted.  We
+-- just need to look at places where the field recorded here is
+-- initialized with a function and then analyze the types used by that
+-- function.
+data UnrefData =
+  UnrefData { unrefCountAccessPath :: AbstractAccessPath
+            , unrefFuncPtrCalls :: [AbstractAccessPath]
+            , unrefWitnesses :: [Witness]
+            }
+  deriving (Eq)
 
 instance NFData UnrefData where
   rnf u@(UnrefData accPath fp ws) =
     accPath `deepseq` fp `deepseq` ws `deepseq` u `seq` ()
 
+-- | Summary information for the reference counting analysis
 data RefCountSummary =
   RefCountSummary { _conditionalFinalizers :: HashSet Function
                   , _unrefArguments :: HashMap Argument UnrefData

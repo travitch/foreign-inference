@@ -25,7 +25,6 @@ import Data.HashMap.Strict ( HashMap )
 import qualified Data.HashMap.Strict as HM
 import Data.Lens.Common
 import Data.Lens.Template
-import Data.List ( stripPrefix )
 import Data.Map ( Map )
 import qualified Data.Map as M
 import Data.Maybe ( mapMaybe )
@@ -43,9 +42,9 @@ import Foreign.Inference.Analysis.ScalarEffects
 import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
 
--- import Text.Printf
--- import Debug.Trace
--- debug = flip trace
+import Text.Printf
+import Debug.Trace
+debug = flip trace
 
 -- | The data needed to track unref functions.  The
 -- @unrefCountAccessPath@ is the access path to the struct field that
@@ -141,22 +140,8 @@ instance SummarizeModule RefCountSummary where
               Just fname -> [(PAAddRef fname, ws)]
       Just (UnrefData fieldPath fptrPaths ws) ->
         case matchingTypeAndPath (argumentType a) fieldPath fst refArgs of
-          Nothing -> [(PAUnref "" (map externalizeAccessPath fptrPaths), ws)]
-          Just fname -> [(PAUnref fname (map externalizeAccessPath fptrPaths), ws)]
-
-externalizeAccessPath :: AbstractAccessPath -> (String, [AccessType])
-externalizeAccessPath accPath =
-  (baseName, abstractAccessPathComponents accPath)
-  where
-    bt = abstractAccessPathBaseType accPath
-    n = case bt of
-      TypePointer (TypeStruct (Just name) _ _) _ -> name
-      _ -> $failure ("Expected a struct type: " ++ show bt)
-    baseName = case stripPrefix "struct." n of
-      Nothing -> takeWhile (/='.') n
-      Just n' -> takeWhile (/='.') n'
-
-
+          Nothing -> [(PAUnref "" (mapMaybe externalizeAccessPath fptrPaths), ws)]
+          Just fname -> [(PAUnref fname (mapMaybe externalizeAccessPath fptrPaths), ws)]
 
 matchingTypeAndPath :: Type
                        -> AbstractAccessPath
@@ -273,6 +258,10 @@ refCountAnalysis :: (FuncLike funcLike, HasCFG funcLike, HasFunction funcLike)
 refCountAnalysis (finSumm, seSumm) funcLike summ = do
   let summ' = incRefAnalysis seSumm f summ
   condFinData <- isConditionalFinalizer finSumm f
+  refFuncFields <- refCountIndicatorFields f
+  case null refFuncFields of
+    True -> return ()
+    False -> return () `debug` show (map (\(x1,x2,x3) -> (functionName x1, x2, x3)) refFuncFields)
   case condFinData of
     Nothing -> return summ'
     Just (cfi, cfa) ->
@@ -290,6 +279,23 @@ refCountAnalysis (finSumm, seSumm) funcLike summ = do
       in return $! (unrefArguments ^= newUnref) $ (conditionalFinalizers ^= newFin) summ'
   where
     f = getFunction funcLike
+
+refCountIndicatorFields :: Function -> Analysis [(Function, String, String)]
+refCountIndicatorFields f = do
+  ds <- asks dependencySummary
+  return $! mapMaybe (identifyIndicatorFields ds) (functionInstructions f)
+  where
+    identifyIndicatorFields ds i =
+      case i of
+        StoreInst { storeValue = (valueContent' -> FunctionC sv) } ->
+          case accessPath i of
+            Nothing -> Nothing
+            Just cAccPath -> do
+              let aAccPath = abstractAccessPath cAccPath
+              (incRef, decRef) <- refCountFunctionsForField ds aAccPath
+              return (sv, incRef, decRef)
+        _ -> Nothing
+
 
 incRefAnalysis :: ScalarEffectSummary -> Function -> RefCountSummary -> RefCountSummary
 incRefAnalysis seSumm f summ =

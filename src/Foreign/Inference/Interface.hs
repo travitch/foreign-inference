@@ -42,6 +42,7 @@ module Foreign.Inference.Interface (
   readLibraryInterface,
   addLibraryAnnotations,
   loadAnnotations,
+  refCountFunctionsForField,
   -- *
   userFunctionAnnotations,
   userParameterAnnotations
@@ -67,12 +68,13 @@ import Data.Maybe ( mapMaybe )
 import Data.Monoid
 import Data.Set ( Set )
 import qualified Data.Set as S
-import Data.List ( foldl' )
+import Data.Foldable ( foldl' )
 import Debug.Trace.LocationTH
 import System.FilePath
 import System.IO.Error hiding ( catch )
 
 import LLVM.Analysis
+import LLVM.Analysis.AccessPath
 
 import Foreign.Inference.Interface.Metadata
 import Foreign.Inference.Interface.Types
@@ -104,12 +106,39 @@ instance Exception InterfaceException
 type LibraryAnnotations = Map ByteString ([FuncAnnotation], IntMap [ParamAnnotation])
 type DepMap = HashMap ByteString ForeignFunction
 
+-- | This index is a map from struct fields containing ref-counting
+-- finalizers to the associated ref/unref functions.
+type RefCountIndex = Map (String, [AccessType]) (String, String)
+
 -- | A summary of all of the functions that are dependencies of the
 -- current library.
-data DependencySummary = DS { depSummary :: DepMap
-                            , libraryAnnotations :: LibraryAnnotations
-                            }
-                       deriving (Show)
+data DependencySummary =
+  DependencySummary { depSummary :: DepMap
+                    , libraryAnnotations :: LibraryAnnotations
+                    , refCountIndex :: RefCountIndex
+                    }
+  deriving (Show)
+
+refCountFunctionsForField :: DependencySummary -> AbstractAccessPath -> Maybe (String, String)
+refCountFunctionsForField ds accPath = do
+  extPath <- externalizeAccessPath accPath
+  Map.lookup extPath (refCountIndex ds)
+
+indexRefCounts :: DepMap -> RefCountIndex
+indexRefCounts = foldr indexForeignFunction mempty . M.elems
+  where
+    unrefDetails (PAUnref refFunc fields) = Just (refFunc, fields)
+    unrefDetails _ = Nothing
+    -- | Only want to index the unref functions with a single argument
+    -- (otherwise we can't automatially call them anyway).
+    indexForeignFunction ff acc =
+      case foreignFunctionParameters ff of
+        [p] ->
+          case mapMaybe unrefDetails (parameterAnnotations p) of
+            [(refFunc, fields)] ->
+              foldl' (\a f -> Map.insert f (refFunc, (foreignFunctionName ff)) a) acc fields
+            _ -> acc
+        _ -> acc
 
 -- | Take input annotations and add them to the known annotations in a
 -- dependency summary.
@@ -201,7 +230,7 @@ loadDependencies' :: [StdLib] -> [FilePath] -> [String] -> IO DependencySummary
 loadDependencies' includeStd summaryDirs deps = do
   let baseDeps = foldl' addStdlibDeps M.empty includeStd
   m <- loadTransDeps summaryDirs deps S.empty baseDeps
-  return (DS m mempty)
+  return $! DependencySummary m mempty $ indexRefCounts m
   where
     addStdlibDeps m CStdLib =
       let lc = decodeInterface libc

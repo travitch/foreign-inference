@@ -8,6 +8,7 @@ module Foreign.Inference.Interface.Types (
   CType(..),
   FuncAnnotation(..),
   ParamAnnotation(..),
+  TypeAnnotation(..),
   Linkage(..)
   ) where
 
@@ -57,6 +58,11 @@ data FuncAnnotation = FAAllocator String -- ^ Record the associated finalizer
                     deriving (Show, Generic, Eq, Ord)
 instance FromJSON FuncAnnotation
 instance ToJSON FuncAnnotation
+
+data TypeAnnotation = TARefCounted String String -- ^ The addRef and decRef functions
+                    deriving (Show, Generic, Eq, Ord)
+instance FromJSON TypeAnnotation
+instance ToJSON TypeAnnotation
 
 -- | Define linkage types so that modules with overlapping symbol
 -- definitions have a chance at being linked together.
@@ -132,7 +138,7 @@ instance ToJSON CEnum
 data LibraryInterface = LibraryInterface { libraryFunctions :: [ForeignFunction]
                                          , libraryName :: String
                                          , libraryDependencies :: [String]
-                                         , libraryTypes :: [CType]
+                                         , libraryTypes :: [(CType, [TypeAnnotation])]
                                          , libraryEnums :: [CEnum]
                                          }
                       deriving (Show, Generic)

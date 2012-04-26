@@ -138,8 +138,8 @@ interfaceToCtypes libName iface =
                        , concat enumDecls
                        ]
 
-    typeDecls = map (runQ' . buildTypeDecl) (libraryTypes iface)
-    typeDefs = map (runQ' . buildTypeDef) (libraryTypes iface)
+    typeDecls = map (runQ' . buildTypeDecl . fst) (libraryTypes iface)
+    typeDefs = map (runQ' . buildTypeDef . fst) (libraryTypes iface)
 
     funcs = map (runQ' . buildFunction) (libraryFunctions iface)
     runQ' = PP.prettyTextBuilder . runQ

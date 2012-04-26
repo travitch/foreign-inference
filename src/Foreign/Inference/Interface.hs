@@ -30,6 +30,7 @@ module Foreign.Inference.Interface (
   Linkage(..),
   ParamAnnotation(..),
   FuncAnnotation(..),
+  TypeAnnotation(..),
   StdLib(..),
   -- * Functions
   lookupArgumentSummary,
@@ -79,8 +80,8 @@ import LLVM.Analysis.AccessPath
 import Foreign.Inference.Interface.Metadata
 import Foreign.Inference.Interface.Types
 
--- import Debug.Trace
--- debug = flip trace
+import Debug.Trace
+debug = flip trace
 
 -- | The extension used for all summaries
 summaryExtension :: String
@@ -175,6 +176,10 @@ data ModuleSummary = forall a . (SummarizeModule a) => ModuleSummary a
 class SummarizeModule s where
   summarizeArgument :: Argument -> s -> [(ParamAnnotation, [Witness])]
   summarizeFunction :: Function -> s -> [FuncAnnotation]
+  -- | Annotate types.  The default implementation just returns the
+  -- empty list
+  summarizeType :: CType -> s -> [(TypeAnnotation, [Witness])]
+  summarizeType _ _ = []
 
 instance SummarizeModule ModuleSummary where
   summarizeArgument a (ModuleSummary s) = summarizeArgument a s
@@ -337,14 +342,18 @@ moduleToLibraryInterface :: Module   -- ^ Module to summarize
                             -> LibraryInterface
 moduleToLibraryInterface m name deps summaries annots =
   LibraryInterface { libraryFunctions = funcs ++ aliases
-                   , libraryTypes = moduleInterfaceStructTypes m
+                   , libraryTypes = map annotateType ts `debug` show ts
                    , libraryName = name
                    , libraryDependencies = deps
                    , libraryEnums = moduleInterfaceEnumerations m
                    }
   where
+    ts = moduleInterfaceStructTypes m
     funcs = mapMaybe (functionToExternal summaries annots) (moduleDefinedFunctions m)
     aliases = mapMaybe (functionAliasToExternal summaries annots) (moduleAliases m)
+    annotateType t =
+      let tannots = concatMap (map fst . summarizeType t) summaries
+      in (t, tannots) `debug` ("Summarizing: " ++ show t ++ " / " ++ show (length summaries)) `debug` show tannots
 
 functionAliasToExternal :: [ModuleSummary] -> LibraryAnnotations -> GlobalAlias -> Maybe ForeignFunction
 functionAliasToExternal summaries annots a =

@@ -19,6 +19,7 @@ module Foreign.Inference.Analysis.RefCount (
 
 import Control.Arrow
 import Control.DeepSeq
+import Data.Foldable ( find )
 import Data.HashSet ( HashSet )
 import qualified Data.HashSet as HS
 import Data.HashMap.Strict ( HashMap )
@@ -91,22 +92,29 @@ data RefCountSummary =
   RefCountSummary { _conditionalFinalizers :: HashSet Function
                   , _unrefArguments :: HashMap Argument UnrefData
                   , _refArguments :: HashMap Argument (AbstractAccessPath, [Witness])
+                  , _refCountedTypes :: HashMap (String, String) (HashSet Type)
                   , _refCountDiagnostics :: !Diagnostics
                   }
 
 $(makeLens ''RefCountSummary)
 
 instance Monoid RefCountSummary where
-  mempty = RefCountSummary mempty mempty mempty mempty
-  mappend (RefCountSummary s1 a1 r1 d1) (RefCountSummary s2 a2 r2 d2) =
-    RefCountSummary (s1 `mappend` s2) (a1 `mappend` a2) (r1 `mappend` r2) (d1 `mappend` d2)
+  mempty = RefCountSummary mempty mempty mempty mempty mempty
+  mappend (RefCountSummary s1 a1 r1 rcts1 d1) (RefCountSummary s2 a2 r2 rcts2 d2) =
+    RefCountSummary { _conditionalFinalizers = s1 `mappend` s2
+                    , _unrefArguments = a1 `mappend` a2
+                    , _refArguments = r1 `mappend` r2
+                    , _refCountedTypes = HM.unionWith HS.union rcts1 rcts2
+                    , _refCountDiagnostics = d1 `mappend` d2
+                    }
 
 instance NFData RefCountSummary where
-  rnf r@(RefCountSummary s a rr _) = s `deepseq` a `deepseq` rr `deepseq` r `seq` ()
+  rnf r@(RefCountSummary s a rr rcts _) =
+    s `deepseq` a `deepseq` rr `deepseq` rcts `deepseq` r `seq` ()
 
 instance Eq RefCountSummary where
-  (RefCountSummary s1 a1 r1 _) == (RefCountSummary s2 a2 r2 _) =
-    s1 == s2 && a1 == a2 && r1 == r2
+  (RefCountSummary s1 a1 r1 rcts1 _) == (RefCountSummary s2 a2 r2 rcts2 _) =
+    s1 == s2 && a1 == a2 && r1 == r2 && rcts1 == rcts2
 
 instance HasDiagnostics RefCountSummary where
   diagnosticLens = refCountDiagnostics
@@ -125,11 +133,11 @@ instance SummarizeModule RefCountSummary where
   -- FIXME: Eventually remove FACondFinalizer from the output.  It
   -- isn't useful for code generators (though it is nice for
   -- debugging)
-  summarizeFunction f (RefCountSummary s _ _ _) =
+  summarizeFunction f (RefCountSummary s _ _ _ _) =
     case HS.member f s of
       True -> [FACondFinalizer]
       False -> []
-  summarizeArgument a (RefCountSummary _ unrefArgs refArgs _) =
+  summarizeArgument a (RefCountSummary _ unrefArgs refArgs _ _) =
     case HM.lookup a unrefArgs of
       Nothing ->
         case HM.lookup a refArgs of
@@ -142,6 +150,20 @@ instance SummarizeModule RefCountSummary where
         case matchingTypeAndPath (argumentType a) fieldPath fst refArgs of
           Nothing -> [(PAUnref "" (mapMaybe externalizeAccessPath fptrPaths), ws)]
           Just fname -> [(PAUnref fname (mapMaybe externalizeAccessPath fptrPaths), ws)]
+  summarizeType = convertRefCountedTypes `debug` "summarizing a type"
+
+-- HashMap (String, String) (HashSet Type)
+
+convertRefCountedTypes :: CType -> RefCountSummary -> [(TypeAnnotation, [Witness])]
+convertRefCountedTypes (CStruct n _) (RefCountSummary _ _ _ rcTypes _) =
+  case find entryForType (HM.toList rcTypes) `debug` show rcTypes of
+    Nothing -> []
+    Just ((addRef, decRef), _) -> [(TARefCounted addRef decRef, [])]
+  where
+    entryForType (_, typeSet) =
+      let groupTypeNames = mapMaybe (structTypeToName . stripPointerTypes) (HS.toList typeSet)
+      in n `elem` groupTypeNames `debug` show groupTypeNames
+convertRefCountedTypes t _ = [] `debug` ("What type: " ++ show t)
 
 matchingTypeAndPath :: Type
                        -> AbstractAccessPath
@@ -258,32 +280,37 @@ refCountAnalysis :: (FuncLike funcLike, HasCFG funcLike, HasFunction funcLike)
 refCountAnalysis (finSumm, seSumm) funcLike summ = do
   let summ' = incRefAnalysis seSumm f summ
   condFinData <- isConditionalFinalizer finSumm f
-  refFuncFields <- refCountIndicatorFields f
-  case null refFuncFields of
-    True -> return ()
-    False -> return () `debug` show (map (\(x1,x2,x3) -> (functionName x1, x2, x3)) refFuncFields)
+  rcTypes <- refCountTypes f
+
+  -- case HM.null rcTypes of
+  --   True -> return ()
+  --   False -> return () `debug` show rcTypes -- `debug` show (summ' ^. refCountedTypes)
+  let summ'' = (refCountedTypes ^!%= HM.unionWith HS.union rcTypes) summ'
+
   case condFinData of
-    Nothing -> return summ'
+    Nothing -> return summ''
     Just (cfi, cfa) ->
-      let newFin = HS.insert f (summ' ^. conditionalFinalizers)
+      let summWithCondFin = (conditionalFinalizers ^!%= HS.insert f) summ''
           finWitness = Witness cfi "condfin"
-          curUnref = summ' ^. unrefArguments
           fptrAccessPaths = mapMaybe (indirectCallAccessPath cfa) (functionInstructions f)
           -- If this is a conditional finalizer, figure out which
           -- field (if any) is unrefed.
           newUnref = case (decRefCountFields seSumm f, functionParameters f) of
             ([(accPath, decWitness)], [a]) ->
               let ud = UnrefData accPath fptrAccessPaths [finWitness, decWitness]
-              in HM.insert a ud curUnref
-            _ -> curUnref
-      in return $! (unrefArguments ^= newUnref) $ (conditionalFinalizers ^= newFin) summ'
+              in HM.insert a ud
+            _ -> id
+          summWithUnref = (unrefArguments ^!%= newUnref) summWithCondFin
+      in return summWithUnref -- `debug` show (summWithUnref ^. refCountedTypes)
   where
     f = getFunction funcLike
 
-refCountIndicatorFields :: Function -> Analysis [(Function, String, String)]
-refCountIndicatorFields f = do
+refCountTypes :: Function -> Analysis (HashMap (String, String) (HashSet Type))
+refCountTypes f = do
   ds <- asks dependencySummary
-  return $! mapMaybe (identifyIndicatorFields ds) (functionInstructions f)
+  let fptrFuncs = mapMaybe (identifyIndicatorFields ds) (functionInstructions f)
+      rcTypes = map (id *** unaryFuncToCastedArgTypes) fptrFuncs
+  return $ foldr (\(k, v) m -> HM.insertWith HS.union k v m) mempty rcTypes
   where
     identifyIndicatorFields ds i =
       case i of
@@ -292,10 +319,28 @@ refCountIndicatorFields f = do
             Nothing -> Nothing
             Just cAccPath -> do
               let aAccPath = abstractAccessPath cAccPath
-              (incRef, decRef) <- refCountFunctionsForField ds aAccPath
-              return (sv, incRef, decRef)
+              refFuncs <- refCountFunctionsForField ds aAccPath
+              return (refFuncs, sv)
         _ -> Nothing
 
+-- | If the function is unary, return a set with the type of that
+-- argument along with all of the types it is casted to in the body of
+-- the function
+unaryFuncToCastedArgTypes :: Function -> HashSet Type
+unaryFuncToCastedArgTypes f =
+  case functionParameters f of
+    [p] ->
+      let s0 = (HS.singleton (argumentType p), HS.singleton (Value p))
+      in fst $ foldr captureCastedType s0 (functionInstructions f)
+    _ -> mempty
+  where
+    captureCastedType i acc@(ts, vs) =
+      case i of
+        BitcastInst { castedValue = cv } ->
+          case cv `HS.member` vs of
+            False -> acc
+            True -> (HS.insert (valueType i) ts, HS.insert (Value i) vs)
+        _ -> acc
 
 incRefAnalysis :: ScalarEffectSummary -> Function -> RefCountSummary -> RefCountSummary
 incRefAnalysis seSumm f summ =
@@ -516,7 +561,7 @@ absPathIfArg i =
 
 -- | Extract a map of unref functions to ref functions
 refCountSummaryToTestFormat :: RefCountSummary -> Map String String
-refCountSummaryToTestFormat (RefCountSummary _ unrefArgs refArgs _) =
+refCountSummaryToTestFormat (RefCountSummary _ unrefArgs refArgs _ _) =
   foldr addIfRefFound mempty (HM.toList unrefArgs)
   where
     addIfRefFound (uarg, UnrefData fieldPath _ _) acc =

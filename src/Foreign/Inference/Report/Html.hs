@@ -6,9 +6,10 @@ module Foreign.Inference.Report.Html (
   htmlFunctionPage
   ) where
 
+import Control.Arrow ( (&&&) )
 import Control.Monad ( forM_, when )
 import Data.ByteString.Lazy.Char8 ( ByteString, unpack )
-import Data.List ( intercalate, partition )
+import Data.List ( intercalate, partition, sort )
 import Data.Maybe ( mapMaybe )
 import qualified Data.Map as M
 import Data.Monoid
@@ -26,6 +27,7 @@ import Text.Highlighting.Kate.Types ( defaultFormatOpts, FormatOptions(..) )
 import LLVM.Analysis
 
 import Foreign.Inference.Interface
+import Foreign.Inference.Interface.Metadata
 import Foreign.Inference.Report.Types
 
 -- | Options for generating the HTML summary page
@@ -191,12 +193,14 @@ htmlIndexPage r opts = H.docTypeHtml $ do
     indexPageFunctionListing r (LinkDrilldowns `elem` opts) "exposed-functions" externs
     H.h1 "Private Functions"
     indexPageFunctionListing r (LinkDrilldowns `elem` opts) "private-functions" privates
+    H.h1 "Annotated Types"
+    indexPageTypeListing r ts
   where
     pageTitle :: Text
     pageTitle = decodeUtf8 (moduleIdentifier m) `mappend` " summary report"
     m = reportModule r
-    (externs, privates) =
-      partition isExtern (moduleDefinedFunctions m)
+    ts = moduleInterfaceStructTypes m
+    (externs, privates) = partition isExtern (moduleDefinedFunctions m)
 
     isExtern :: Function -> Bool
     isExtern Function { functionLinkage = l } =
@@ -206,6 +210,23 @@ htmlIndexPage r opts = H.docTypeHtml $ do
         LTDLLExport -> True
         LTExternalWeak -> True
         _ -> False
+
+indexPageTypeListing :: InterfaceReport -> [CType] -> Html
+indexPageTypeListing r ts = do
+  H.div ! A.id "annotated-types" $ do
+    H.ul $ do
+      forM_ ts' indexPageAnnotatedType
+  where
+    ts' = filter (not . null . snd) $ map (id &&& annotateType) (sort ts)
+    annotateType t = concatMap (map fst . summarizeType t) (reportSummaries r)
+
+indexPageAnnotatedType :: (CType, [TypeAnnotation]) -> Html
+indexPageAnnotatedType (t, annots) = do
+  H.li $ do
+    H.span $ toHtml (show t)
+    " "
+    H.span ! A.class_ "code-comment" $ toHtml ("/* " ++ (show annots) ++ " */")
+
 
 indexPageFunctionListing :: InterfaceReport -> Bool -> AttributeValue -> [Function] -> Html
 indexPageFunctionListing r linkFuncs divId funcs = do

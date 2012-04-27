@@ -43,9 +43,9 @@ import Foreign.Inference.Analysis.ScalarEffects
 import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
 
-import Text.Printf
-import Debug.Trace
-debug = flip trace
+-- import Text.Printf
+-- import Debug.Trace
+-- debug = flip trace
 
 -- | The data needed to track unref functions.  The
 -- @unrefCountAccessPath@ is the access path to the struct field that
@@ -281,7 +281,7 @@ refCountAnalysis (finSumm, seSumm) funcLike summ = do
 
   -- case HM.null rcTypes of
   --   True -> return ()
-  --   False -> return () `debug` show rcTypes -- `debug` show (summ' ^. refCountedTypes)
+  --   False -> return () `debug` show rcTypes `debug` show (functionName f) -- `debug` show (summ' ^. refCountedTypes)
   let summ'' = (refCountedTypes ^!%= HM.unionWith HS.union rcTypes) summ'
 
   case condFinData of

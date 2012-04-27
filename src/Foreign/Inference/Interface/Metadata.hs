@@ -12,10 +12,12 @@ import Control.Arrow ( (&&&) )
 import qualified Data.ByteString.Char8 as SBS
 import Data.HashMap.Strict ( HashMap )
 import qualified Data.HashMap.Strict as M
+import Data.HashSet ( HashSet )
 import qualified Data.HashSet as HS
 import qualified Data.Set as S
 import Data.List ( stripPrefix )
 import Data.Maybe ( catMaybes, mapMaybe )
+import Data.Monoid
 import Debug.Trace.LocationTH
 
 import LLVM.Analysis
@@ -27,6 +29,7 @@ import Data.Graph.Algorithms.Matching.DFS
 import Foreign.Inference.Internal.TypeUnification
 import Foreign.Inference.Interface.Types
 
+-- import Text.Printf
 -- import Debug.Trace
 -- debug = flip trace
 
@@ -40,14 +43,20 @@ moduleInterfaceStructTypes :: Module -> [CType]
 moduleInterfaceStructTypes m = opaqueTypes ++ concreteTypes
   where
     defFuncs = moduleDefinedFunctions m
-    interfaceTypeMap = foldr extractInterfaceStructTypes M.empty defFuncs
+    (interfaceTypeMap, noMDTypes) = foldr extractInterfaceStructTypes (mempty, mempty) defFuncs
     (unifiedTypes, ununifiedTypes) = unifyTypes (M.keys interfaceTypeMap)
     unifiedMDTypes = map (findTypeMD interfaceTypeMap) unifiedTypes
     sortedUnifiedMDTypes = typeSort unifiedMDTypes
-    concreteTypes = mapMaybe metadataStructTypeToCType sortedUnifiedMDTypes
+    concreteTypes = map metadataStructTypeToCType sortedUnifiedMDTypes
+    concreteNameSet = S.fromList $ mapMaybe ctypeStructName concreteTypes
 
-    uniqueOpaqueTypeNames = HS.toList $ HS.fromList $ map structTypeName ununifiedTypes
-    opaqueTypes = map toOpaqueCType uniqueOpaqueTypeNames
+    opaqueLLVMTypes = ununifiedTypes ++ HS.toList noMDTypes
+    uniqueOpaqueTypeNames = HS.toList $ HS.fromList $ map structTypeName opaqueLLVMTypes
+    opaqueTypes0 = map toOpaqueCType uniqueOpaqueTypeNames
+    opaqueTypes = filter nameNotConcrete opaqueTypes0
+
+    nameNotConcrete (CStruct n _) = not (S.member n concreteNameSet)
+    nameNotConcrete t = $failure ("Expected struct type: " ++ show t)
 
 -- | Collect all of the struct types (along with their metadata) used
 -- in the external interface of a Module.
@@ -62,6 +71,9 @@ structTypeName t = $failure ("Expected struct type: " ++ show t)
 toOpaqueCType :: String -> CType
 toOpaqueCType name = CStruct name []
 
+ctypeStructName :: CType -> Maybe String
+ctypeStructName (CStruct n _) = Just n
+ctypeStructName _ = Nothing
 
 -- | Match up a type with its metadata
 findTypeMD :: HashMap Type Metadata -> Type -> (Type, Metadata)
@@ -111,36 +123,43 @@ toEnumeratorValue (Just MetaDWEnumerator { metaEnumeratorName = ename
   Just (SBS.unpack ename, fromIntegral eval)
 toEnumeratorValue _ = Nothing
 
-extractInterfaceStructTypes :: Function -> HashMap Type Metadata -> HashMap Type Metadata
-extractInterfaceStructTypes f m =
-  foldr addTypeMdMapping m (mapMaybe isStructType typeMds)
+extractInterfaceStructTypes :: Function
+                               -> (HashMap Type Metadata, HashSet Type)
+                               -> (HashMap Type Metadata, HashSet Type)
+extractInterfaceStructTypes f (typeMDMap, opaqueTypes) =
+  (typesWithMD, otherStructs `HS.union` opaqueTypes)
   where
+    (structsWithMD, otherStructs) = foldr toStructType (mempty, mempty) typeMds
+    typesWithMD = foldr addTypeMdMapping typeMDMap structsWithMD
+
     TypeFunction rt _ _ = functionType f
     retMd = functionReturnTypeMetadata f
     argMds = map (argumentType &&& paramTypeMetadata) (functionParameters f)
     typeMds = (rt, retMd) : argMds
-    addTypeMdMapping (llvmType, mdType) mdMap =
-      case mdType of
-        Nothing -> mdMap
-        Just md -> M.insert llvmType md mdMap
+    addTypeMdMapping (llvmType, md) = M.insert llvmType md
 
-isStructType :: (Type, Maybe Metadata) -> Maybe (Type, Maybe Metadata)
-isStructType (t@(TypeStruct _ _ _),
+toStructType :: (Type, Maybe Metadata)
+                -> ([(Type, Metadata)], HashSet Type)
+                -> ([(Type, Metadata)], HashSet Type)
+toStructType (t@(TypeStruct _ _ _),
               Just MetaDWDerivedType { metaDerivedTypeTag = DW_TAG_typedef
                                 , metaDerivedTypeParent = parent
-                                }) =
-  isStructType (t, parent)
-isStructType (t@(TypeStruct _ _ _), a) = Just (t, a)
-isStructType (TypePointer inner _,
+                                }) acc =
+  toStructType (t, parent) acc
+toStructType (t@(TypeStruct _ _ _), Just a) (tms, ts) = ((t, a) : tms, ts)
+toStructType (TypePointer inner _,
               Just MetaDWDerivedType { metaDerivedTypeTag = DW_TAG_pointer_type
                                 , metaDerivedTypeParent = parent
-                                }) =
-  isStructType (inner, parent)
-isStructType (t@(TypePointer _ _),
-              Just MetaDWDerivedType { metaDerivedTypeTag = DW_TAG_typedef
-                                , metaDerivedTypeParent = parent}) =
-  isStructType (t, parent)
-isStructType _ = Nothing
+                                }) acc =
+  toStructType (inner, parent) acc
+toStructType (t@(TypePointer _ _),
+              Just MetaDWDerivedType { metaDerivedTypeParent = parent}) acc =
+  toStructType (t, parent) acc
+toStructType (TypePointer inner _, Nothing) acc =
+  toStructType (inner, Nothing) acc
+toStructType (t@TypeStruct {}, Nothing) (tms, ts) =
+  (tms, HS.insert t ts)
+toStructType _ acc = acc
 
 sanitizeStructName :: String -> String
 sanitizeStructName name = takeWhile (/= '.') name'
@@ -152,14 +171,14 @@ sanitizeStructName name = takeWhile (/= '.') name'
           Just x -> x
       Just x -> x
 
-metadataStructTypeToCType :: (Type, Metadata) -> Maybe CType
+metadataStructTypeToCType :: (Type, Metadata) -> CType
 metadataStructTypeToCType (TypeStruct (Just name) members _,
                            MetaDWCompositeType { metaCompositeTypeMembers =
                                                     Just (MetadataList _ cmembers)
-                                               }) = do
+                                               }) =
   let memberTypes = zip members cmembers
-  mtys <- mapM trNameAndType memberTypes
-  return (CStruct (sanitizeStructName name) mtys)
+      mtys = mapM trNameAndType memberTypes
+  in CStruct (sanitizeStructName name) $ maybe [] id mtys
   where
     trNameAndType (llvmType, Just MetaDWDerivedType { metaDerivedTypeName = memberName
                                                }) = do
@@ -168,7 +187,7 @@ metadataStructTypeToCType (TypeStruct (Just name) members _,
     trNameAndType _ = Nothing
 -- If there were no members in the metadata, this is an opaque type
 metadataStructTypeToCType (TypeStruct (Just name) _ _, _) =
-  return $! CStruct (sanitizeStructName name) []
+  CStruct (sanitizeStructName name) []
 metadataStructTypeToCType t =
   $failure ("Unexpected non-struct metadata: " ++ show t)
 

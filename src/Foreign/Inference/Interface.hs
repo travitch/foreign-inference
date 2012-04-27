@@ -51,6 +51,7 @@ module Foreign.Inference.Interface (
 
 import Prelude hiding ( catch )
 
+import Control.Arrow
 import Control.DeepSeq
 import Control.Exception
 import Data.Aeson
@@ -80,8 +81,8 @@ import LLVM.Analysis.AccessPath
 import Foreign.Inference.Interface.Metadata
 import Foreign.Inference.Interface.Types
 
-import Debug.Trace
-debug = flip trace
+-- import Debug.Trace
+-- debug = flip trace
 
 -- | The extension used for all summaries
 summaryExtension :: String
@@ -184,6 +185,7 @@ class SummarizeModule s where
 instance SummarizeModule ModuleSummary where
   summarizeArgument a (ModuleSummary s) = summarizeArgument a s
   summarizeFunction f (ModuleSummary s) = summarizeFunction f s
+  summarizeType t (ModuleSummary s) = summarizeType t s
 
 -- | Persist a 'LibraryInterface' to disk in the given @summaryDir@.
 -- It uses the name specified in the 'LibraryInterface' to choose the
@@ -342,7 +344,7 @@ moduleToLibraryInterface :: Module   -- ^ Module to summarize
                             -> LibraryInterface
 moduleToLibraryInterface m name deps summaries annots =
   LibraryInterface { libraryFunctions = funcs ++ aliases
-                   , libraryTypes = map annotateType ts `debug` show ts
+                   , libraryTypes = map (id &&& annotateType) ts
                    , libraryName = name
                    , libraryDependencies = deps
                    , libraryEnums = moduleInterfaceEnumerations m
@@ -351,9 +353,8 @@ moduleToLibraryInterface m name deps summaries annots =
     ts = moduleInterfaceStructTypes m
     funcs = mapMaybe (functionToExternal summaries annots) (moduleDefinedFunctions m)
     aliases = mapMaybe (functionAliasToExternal summaries annots) (moduleAliases m)
-    annotateType t =
-      let tannots = concatMap (map fst . summarizeType t) summaries
-      in (t, tannots) `debug` ("Summarizing: " ++ show t ++ " / " ++ show (length summaries)) `debug` show tannots
+    annotateType t = concatMap (map fst . summarizeType t) summaries
+
 
 functionAliasToExternal :: [ModuleSummary] -> LibraryAnnotations -> GlobalAlias -> Maybe ForeignFunction
 functionAliasToExternal summaries annots a =

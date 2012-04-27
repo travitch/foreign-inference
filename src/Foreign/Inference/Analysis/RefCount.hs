@@ -150,20 +150,17 @@ instance SummarizeModule RefCountSummary where
         case matchingTypeAndPath (argumentType a) fieldPath fst refArgs of
           Nothing -> [(PAUnref "" (mapMaybe externalizeAccessPath fptrPaths), ws)]
           Just fname -> [(PAUnref fname (mapMaybe externalizeAccessPath fptrPaths), ws)]
-  summarizeType = convertRefCountedTypes `debug` "summarizing a type"
-
--- HashMap (String, String) (HashSet Type)
-
-convertRefCountedTypes :: CType -> RefCountSummary -> [(TypeAnnotation, [Witness])]
-convertRefCountedTypes (CStruct n _) (RefCountSummary _ _ _ rcTypes _) =
-  case find entryForType (HM.toList rcTypes) `debug` show rcTypes of
-    Nothing -> []
-    Just ((addRef, decRef), _) -> [(TARefCounted addRef decRef, [])]
-  where
-    entryForType (_, typeSet) =
-      let groupTypeNames = mapMaybe (structTypeToName . stripPointerTypes) (HS.toList typeSet)
-      in n `elem` groupTypeNames `debug` show groupTypeNames
-convertRefCountedTypes t _ = [] `debug` ("What type: " ++ show t)
+  summarizeType t (RefCountSummary _ _ _ rcTypes _) =
+    case t of
+      CStruct n _ ->
+        case find entryForType (HM.toList rcTypes) of
+          Nothing -> []
+          Just ((addRef, decRef), _) -> [(TARefCounted addRef decRef, [])]
+        where
+          entryForType (_, typeSet) =
+            let groupTypeNames = mapMaybe (structTypeToName . stripPointerTypes) (HS.toList typeSet)
+            in n `elem` groupTypeNames
+      _ -> []
 
 matchingTypeAndPath :: Type
                        -> AbstractAccessPath

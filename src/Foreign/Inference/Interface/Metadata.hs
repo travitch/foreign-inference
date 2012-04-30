@@ -66,6 +66,7 @@ moduleInterfaceStructTypes m = opaqueTypes ++ concreteTypes
 
 structTypeName :: Type -> String
 structTypeName (TypeStruct (Just name) _ _) = sanitizeStructName name
+structTypeName (TypeStruct Nothing _ _) = "anon"
 structTypeName t = $failure ("Expected struct type: " ++ show t)
 
 toOpaqueCType :: String -> CType

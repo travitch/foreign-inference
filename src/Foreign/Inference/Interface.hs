@@ -74,6 +74,7 @@ import Data.Foldable ( foldl' )
 import Debug.Trace.LocationTH
 import System.FilePath
 import System.IO.Error hiding ( catch )
+import Text.Jasmine
 
 import LLVM.Analysis
 import LLVM.Analysis.AccessPath
@@ -210,7 +211,7 @@ saveModule summaryDir name deps m summaries ds = do
 loadAnnotations :: FilePath -> IO LibraryAnnotations
 loadAnnotations p = do
   c <- LBS.readFile p
-  case decode' c of
+  case decode' (minify c) of
     Nothing ->
       let ex = mkIOError doesNotExistErrorType "loadAnnotations" Nothing (Just p)
       in ioError ex
@@ -301,7 +302,7 @@ mergeFunction m f = case M.lookup fn m of
 readLibraryInterface :: FilePath -> IO LibraryInterface
 readLibraryInterface p = do
   c <- LBS.readFile p
-  case decode' c of
+  case decode' (minify c) of
     Nothing ->
       let ex = mkIOError doesNotExistErrorType "readLibraryInterface" Nothing (Just p)
       in ioError ex
@@ -315,14 +316,14 @@ readLibraryInterface p = do
 parseInterface :: [FilePath] -> FilePath -> IO LibraryInterface
 parseInterface summaryDirs p = do
   c <- loadFromSources summaryDirs p
-  let mval = decode' c
+  let mval = decode' (minify c)
   case mval of
     Nothing -> throw (DependencyDecodeError p)
     Just li -> return li
 
 decodeInterface :: SBS.ByteString -> LibraryInterface
 decodeInterface bs =
-  case decode' (LBS.fromChunks [bs]) of
+  case decode' (minify (LBS.fromChunks [bs])) of
     Nothing -> throw (DependencyDecodeError "builtin")
     Just li -> li
 

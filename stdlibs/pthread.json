@@ -293,5 +293,8 @@
               }
           ]
         }
+        /*
+          FIXME: Missing pthread_create, kill, etc
+         */
     ]
 }

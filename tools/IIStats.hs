@@ -68,6 +68,12 @@ renderStatsHTML stats = H.docTypeHtml $ do
   H.body $ do
     mapM_ renderStatsTable stats
     renderStatsTable (mconcat stats)
+    H.p $ do
+      "Annotated Percent List = "
+      toHtml (show pctList)
+  where
+    pctList = map annotatedFunctionPercent stats
+
 
 renderStatsTable :: InterfaceStats -> Html
 renderStatsTable stats = do
@@ -84,11 +90,7 @@ renderStatsTable stats = do
       H.td $ toHtml $ show $ statsTotalAnnotations stats
     H.tr $ do
       H.td "Percent With Annotations"
-      let annotLen :: Double
-          annotLen = fromInteger $ toInteger $ length (statsAnnotatedFunctions stats)
-          totalFuncs :: Double
-          totalFuncs = fromInteger $ toInteger $ statsTotalFunctions stats
-      H.td $ toHtml $ show $ annotLen / totalFuncs
+      H.td $ toHtml $ show $ annotatedFunctionPercent stats
     forM_ (M.toList (statsPerFuncAnnotation stats)) $ \(annot, lst) -> do
       H.tr $ do
         H.td $ toHtml (show annot)
@@ -98,6 +100,13 @@ renderStatsTable stats = do
         H.td $ toHtml (show annot)
         H.td $ toHtml $ show (length lst)
 
+annotatedFunctionPercent :: InterfaceStats -> Double
+annotatedFunctionPercent stats = annotLen / totalFuncs
+  where
+    annotLen :: Double
+    annotLen = fromInteger $ toInteger $ length (statsAnnotatedFunctions stats)
+    totalFuncs :: Double
+    totalFuncs = fromInteger $ toInteger $ statsTotalFunctions stats
 
 data InterfaceStats =
   InterfaceStats { statsForLibrary :: String

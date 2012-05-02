@@ -133,10 +133,10 @@ instance SummarizeModule RefCountSummary where
   -- FIXME: Eventually remove FACondFinalizer from the output.  It
   -- isn't useful for code generators (though it is nice for
   -- debugging)
-  summarizeFunction f (RefCountSummary s _ _ _ _) =
-    case HS.member f s of
-      True -> [FACondFinalizer]
-      False -> []
+  summarizeFunction f (RefCountSummary s _ _ _ _) = []
+    -- case HS.member f s of
+    --   True -> [FACondFinalizer]
+    --   False -> []
   summarizeArgument a (RefCountSummary _ unrefArgs refArgs _ _) =
     case HM.lookup a unrefArgs of
       Nothing ->

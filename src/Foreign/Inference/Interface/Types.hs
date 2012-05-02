@@ -37,7 +37,7 @@ data ParamAnnotation = PAArray !Int
                      | PAWillEscape
                      | PAScalarEffectAddOne String [AccessType]
                      | PAScalarEffectSubOne String [AccessType]
-                     deriving (Show, Generic, Eq, Ord)
+                     deriving (Show, Read, Generic, Eq, Ord)
 instance FromJSON ParamAnnotation
 instance ToJSON ParamAnnotation
 
@@ -55,12 +55,12 @@ data FuncAnnotation = FAAllocator String -- ^ Record the associated finalizer
                     | FANoRet -- ^ The function does not return to the caller
                     | FAVarArg
                     | FACondFinalizer
-                    deriving (Show, Generic, Eq, Ord)
+                    deriving (Show, Read, Generic, Eq, Ord)
 instance FromJSON FuncAnnotation
 instance ToJSON FuncAnnotation
 
 data TypeAnnotation = TARefCounted String String -- ^ The addRef and decRef functions
-                    deriving (Show, Generic, Eq, Ord)
+                    deriving (Show, Read, Generic, Eq, Ord)
 instance FromJSON TypeAnnotation
 instance ToJSON TypeAnnotation
 

@@ -1,23 +1,63 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Main ( main ) where
 
-import Control.Monad ( forM_ )
+import Control.Monad ( forM_, when )
+import Data.Default
 import Data.Map ( Map )
 import qualified Data.Map as M
 import Data.Monoid
 import qualified Data.Text.Lazy.IO as T
-import System.Environment ( getArgs )
+import System.Console.CmdArgs.Explicit
+import System.Console.CmdArgs.Text
+import System.Exit
 import Text.Blaze.Html5 ( Html, toHtml )
 import qualified Text.Blaze.Html5 as H
 import qualified Text.Blaze.Renderer.Text as T
 
 import Foreign.Inference.Interface
 
+data Opts = Opts { wantsHelp :: Bool
+                 , ignoredAnnotations :: [ParamAnnotation]
+                 , interfaceFiles :: [FilePath]
+                 }
+          deriving (Show)
+
+instance Default Opts where
+  def = Opts { wantsHelp = False
+             , ignoredAnnotations = []
+             , interfaceFiles = []
+             }
+
+setHelp :: Opts -> Opts
+setHelp o = o { wantsHelp = True }
+
+addIgnored :: String -> Opts -> Either String Opts
+addIgnored a o =
+  case reads a of
+    [(annot, "")] -> Right o { ignoredAnnotations = annot : ignoredAnnotations o }
+    _ -> Left ("Invalid annotation " ++ a)
+
+addInterface :: String -> Opts -> Either String Opts
+addInterface f o = Right o { interfaceFiles = f : interfaceFiles o }
+
+cmdOpts :: Mode Opts
+cmdOpts = mode "IIStats" def desc ifaceArg as
+  where
+    ifaceArg = flagArg addInterface "FILE"
+    desc = "Compute aggregate stats for interfaces"
+    as = [ flagHelpSimple setHelp
+         , flagReq ["ignore"] addIgnored "ANNOTATION" "Ignore an annotation.  Can be specified multiple times"
+         ]
+
 main :: IO ()
 main = do
-  interfaceFiles <- getArgs
-  interfaces <- mapM readLibraryInterface interfaceFiles
-  let stats = map interfaceStats interfaces
+  opts <- processArgs cmdOpts
+  when (wantsHelp opts) $ do
+    putStrLn $ showText (Wrap 80) $ helpText [] HelpFormatOne cmdOpts
+    exitSuccess
+
+  interfaces <- mapM readLibraryInterface (interfaceFiles opts)
+  let stats = map (interfaceStats (ignoredAnnotations opts)) interfaces
       h = renderStatsHTML stats
   T.putStrLn (T.renderHtml h)
 
@@ -79,12 +119,12 @@ instance Monoid InterfaceStats where
                    , statsPerFuncAnnotation = M.unionWith (++) (statsPerFuncAnnotation is1) (statsPerFuncAnnotation is2)
                    }
 
-interfaceStats :: LibraryInterface -> InterfaceStats
-interfaceStats libIface =
+interfaceStats :: [ParamAnnotation] -> LibraryInterface -> InterfaceStats
+interfaceStats ignored libIface =
   InterfaceStats { statsForLibrary = libraryName libIface
                  , statsTotalFunctions = length funcs
-                 , statsAnnotatedFunctions = filter funcHasAnnotation funcs
-                 , statsPerParamAnnotation = foldr collectParamAnnotations mempty params
+                 , statsAnnotatedFunctions = filter (funcHasAnnotation ignored) funcs
+                 , statsPerParamAnnotation = foldr (collectParamAnnotations ignored) mempty params
                  , statsPerFuncAnnotation = foldr collectFuncAnnotations mempty funcs
                  }
   where
@@ -104,18 +144,23 @@ collectFuncAnnotations ff acc =
   where
     go annot = M.insertWith' (++) annot [ff]
 
-collectParamAnnotations :: Parameter
+collectParamAnnotations :: [ParamAnnotation]
+                           -> Parameter
                            -> Map ParamAnnotation [Parameter]
                            -> Map ParamAnnotation [Parameter]
-collectParamAnnotations p acc =
+collectParamAnnotations ignored p acc =
   foldr go acc (parameterAnnotations p)
   where
-    go annot = M.insertWith' (++) annot [p]
+    go annot m =
+      case annot `elem` ignored of
+        False -> M.insertWith' (++) annot [p] m
+        True -> m
 
-funcHasAnnotation :: ForeignFunction -> Bool
-funcHasAnnotation ff =
+funcHasAnnotation :: [ParamAnnotation] -> ForeignFunction -> Bool
+funcHasAnnotation ignored ff =
   not (null fannots) || any hasParamAnnotations params
   where
     fannots = foreignFunctionAnnotations ff
     params = foreignFunctionParameters ff
-    hasParamAnnotations = not . null . parameterAnnotations
+    hasParamAnnotations = not . null . filter notIgnored . parameterAnnotations
+    notIgnored = not . (`elem` ignored)

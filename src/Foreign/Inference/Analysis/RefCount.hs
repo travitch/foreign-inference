@@ -30,7 +30,6 @@ import Data.Map ( Map )
 import qualified Data.Map as M
 import Data.Maybe ( mapMaybe )
 import Data.Monoid
-import Debug.Trace.LocationTH
 
 import LLVM.Analysis
 import LLVM.Analysis.AccessPath

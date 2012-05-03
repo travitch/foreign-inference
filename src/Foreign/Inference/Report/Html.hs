@@ -65,7 +65,7 @@ htmlFunctionPage r f srcFile startLine functionText = H.docTypeHtml $ do
                                     , lineAnchors = True
                                     }
     K.formatHtmlBlock fmtOpts highlightedSrc
-    H.script ! A.type_ "text/javascript" $ H.preEscapedText (initialScript calledFunctions)
+    H.script ! A.type_ "text/javascript" $ H.preEscapedToMarkup (initialScript calledFunctions)
 
   where
     funcName = decodeUtf8 (identifierContent (functionName f))
@@ -128,7 +128,7 @@ initialScript calledFuncNames = mconcat [ "$(window).bind(\"load\", function () 
 drilldownArgumentEntry :: Int -> InterfaceReport -> Argument -> Html
 drilldownArgumentEntry startLine r arg = H.li $ do
   H.span ! A.class_ "code-type" $ toHtml (show (argumentType arg))
-  H.a ! A.href "#" ! A.onclick (H.preEscapedTextValue clickScript) $ toHtml argName
+  H.a ! A.href "#" ! A.onclick (H.preEscapedToValue clickScript) $ toHtml argName
   drilldownArgumentAnnotations startLine annots
   where
     argName = decodeUtf8 (identifierContent (argumentName arg))
@@ -147,7 +147,7 @@ drilldownArgumentAnnotations startLine annots = do
       case null witnessLines of
         True -> toHtml (show a)
         False ->
-          H.a ! A.href "#" ! A.onclick (H.preEscapedTextValue clickScript) $ toHtml (show a)
+          H.a ! A.href "#" ! A.onclick (H.preEscapedToValue clickScript) $ toHtml (show a)
       where
         clickScript = mconcat ["highlightLines("
                               , pack (show startLine)

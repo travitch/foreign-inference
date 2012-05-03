@@ -130,13 +130,7 @@ instance HasDiagnostics RefCountSummary where
 -- up with exactly one ref function, they are paired by name.  The
 -- code generator should deal with it appropriately.
 instance SummarizeModule RefCountSummary where
-  -- FIXME: Eventually remove FACondFinalizer from the output.  It
-  -- isn't useful for code generators (though it is nice for
-  -- debugging)
-  summarizeFunction f (RefCountSummary s _ _ _ _) = []
-    -- case HS.member f s of
-    --   True -> [FACondFinalizer]
-    --   False -> []
+  summarizeFunction _ _ = []
   summarizeArgument a (RefCountSummary _ unrefArgs refArgs _ _) =
     case HM.lookup a unrefArgs of
       Nothing ->
@@ -309,6 +303,7 @@ refCountTypes f = do
       rcTypes = map (id *** unaryFuncToCastedArgTypes) fptrFuncs
   return $ foldr (\(k, v) m -> HM.insertWith HS.union k v m) mempty rcTypes
   where
+    interfaceTypes = functionReturnType f : map argumentType (functionParameters f)
     identifyIndicatorFields ds i =
       case i of
         StoreInst { storeValue = (valueContent' -> FunctionC sv) } ->

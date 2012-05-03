@@ -100,11 +100,6 @@ instance SummarizeModule AllocatorSummary where
           -- There was more than one, can't guess
           _ -> [FAAllocator ""]
 
-functionReturnType :: Function -> Type
-functionReturnType f = ty
-  where
-    TypeFunction ty _ _ = functionType f
-
 identifyAllocators :: (FuncLike funcLike, HasFunction funcLike)
                       => DependencySummary
                       -> SingleInitializerSummary

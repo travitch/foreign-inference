@@ -56,7 +56,7 @@ library
                  -- For the reporting code
                  archive-inspection, directory, attoparsec >= 0.10 && < 1.0, ascii,
                  blaze-html >= 0.4, highlighting-kate >= 0.5, blaze-builder >= 0.3,
-                 parallel-io
+                 parallel-io, blaze-markup
   ghc-options: -Wall -funbox-strict-fields
   ghc-prof-options: -auto-all
 

@@ -12,7 +12,7 @@ import System.Console.CmdArgs.Text
 import System.Exit
 import Text.Blaze.Html5 ( Html, toHtml )
 import qualified Text.Blaze.Html5 as H
-import qualified Text.Blaze.Renderer.Text as T
+import Text.Blaze.Html.Renderer.Text as T
 
 import Foreign.Inference.Interface
 

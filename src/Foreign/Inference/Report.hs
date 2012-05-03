@@ -27,7 +27,7 @@ import Data.FileEmbed
 import qualified Data.Map as M
 import System.Directory ( createDirectoryIfMissing )
 import System.FilePath
-import Text.Blaze.Renderer.Utf8 ( renderHtml )
+import Text.Blaze.Html.Renderer.Utf8 ( renderHtml )
 
 import Codec.Archive
 import LLVM.Analysis

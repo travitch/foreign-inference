@@ -141,8 +141,13 @@ instance SummarizeModule RefCountSummary where
               Just fname -> [(PAAddRef fname, ws)]
       Just (UnrefData fieldPath fptrPaths ws) ->
         case matchingTypeAndPath (argumentType a) fieldPath fst refArgs of
-          Nothing -> [(PAUnref "" (mapMaybe externalizeAccessPath fptrPaths), ws)]
-          Just fname -> [(PAUnref fname (mapMaybe externalizeAccessPath fptrPaths), ws)]
+          Nothing -> [(PAUnref "" (mapMaybe externalizeAccessPath fptrPaths) [], ws)]
+          Just fname ->
+            let unrefFunc = argumentFunction a
+                unrefName = identifierAsString (functionName unrefFunc)
+                ssts = HS.toList $ argumentCastedTypes a
+                structuralSupertypes = mapMaybe (structTypeToName . stripPointerTypes) ssts
+            in [(PAUnref fname (mapMaybe externalizeAccessPath fptrPaths) structuralSupertypes, ws)]
   summarizeType t (RefCountSummary _ _ _ rcTypes _) =
     case t of
       CStruct n _ ->
@@ -272,9 +277,6 @@ refCountAnalysis (finSumm, seSumm) funcLike summ = do
   condFinData <- isConditionalFinalizer finSumm f
   rcTypes <- refCountTypes f
 
-  -- case HM.null rcTypes of
-  --   True -> return ()
-  --   False -> return () `debug` show rcTypes `debug` show (functionName f) -- `debug` show (summ' ^. refCountedTypes)
   let summ'' = (refCountedTypes ^!%= HM.unionWith HS.union rcTypes) summ'
 
   case condFinData of
@@ -291,7 +293,7 @@ refCountAnalysis (finSumm, seSumm) funcLike summ = do
               in HM.insert a ud
             _ -> id
           summWithUnref = (unrefArguments ^!%= newUnref) summWithCondFin
-      in return summWithUnref -- `debug` show (summWithUnref ^. refCountedTypes)
+      in return summWithUnref
   where
     f = getFunction funcLike
 
@@ -299,7 +301,9 @@ refCountTypes :: Function -> Analysis (HashMap (String, String) (HashSet Type))
 refCountTypes f = do
   ds <- asks dependencySummary
   let fptrFuncs = mapMaybe (identifyIndicatorFields ds) (functionInstructions f)
-      rcTypes = map (id *** unaryFuncToCastedArgTypes) fptrFuncs
+      rcTypesByField = map (id *** unaryFuncToCastedArgTypes) fptrFuncs
+      structuralRefTypes = mapMaybe (subtypeRefCountTypes ds) interfaceTypes
+      rcTypes = rcTypesByField ++ structuralRefTypes
   return $ foldr (\(k, v) m -> HM.insertWith HS.union k v m) mempty rcTypes
   where
     interfaceTypes = functionReturnType f : map argumentType (functionParameters f)
@@ -314,17 +318,45 @@ refCountTypes f = do
               return (refFuncs, sv)
         _ -> Nothing
 
+subtypeRefCountTypes :: DependencySummary
+                        -> Type
+                        -> Maybe ((String, String), HashSet Type)
+subtypeRefCountTypes ds t0 = go t1
+  where
+    t1 = stripPointerTypes t0
+    go t = case t of
+      TypeStruct _ (structuralParent:_) _ -> do
+        -- If this type is known to be ref counted, just return.
+        -- Otherwise, check if any structural parents of this type are
+        -- known to be ref counted.  We check this by considering the
+        -- constituent types of t.  If the first one is a struct type,
+        -- that is the structural parent (since they are
+        -- interchangable to code expecting the parent type).
+        case isRefCountedObject ds t of
+          Just rcFuncs -> return (rcFuncs, HS.singleton t1)
+          Nothing -> go structuralParent
+      TypeStruct _ _ _ -> do
+        rcFuncs <- isRefCountedObject ds t
+        return (rcFuncs, HS.singleton t1)
+      _ -> Nothing
+
+
 -- | If the function is unary, return a set with the type of that
 -- argument along with all of the types it is casted to in the body of
 -- the function
 unaryFuncToCastedArgTypes :: Function -> HashSet Type
 unaryFuncToCastedArgTypes f =
   case functionParameters f of
-    [p] ->
-      let s0 = (HS.singleton (argumentType p), HS.singleton (Value p))
-      in fst $ foldr captureCastedType s0 (functionInstructions f)
+    [p] -> argumentCastedTypes p
     _ -> mempty
+
+argumentCastedTypes :: Argument -> HashSet Type
+argumentCastedTypes a =
+  fst $ foldr captureCastedType s0 (functionInstructions f)
   where
+    f = argumentFunction a
+    s0 = (HS.singleton (argumentType a), HS.singleton (Value a))
+
     captureCastedType i acc@(ts, vs) =
       case i of
         BitcastInst { castedValue = cv } ->
@@ -332,6 +364,7 @@ unaryFuncToCastedArgTypes f =
             False -> acc
             True -> (HS.insert (valueType i) ts, HS.insert (Value i) vs)
         _ -> acc
+
 
 incRefAnalysis :: ScalarEffectSummary -> Function -> RefCountSummary -> RefCountSummary
 incRefAnalysis seSumm f summ =

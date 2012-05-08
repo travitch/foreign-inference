@@ -44,6 +44,7 @@ module Foreign.Inference.Interface (
   addLibraryAnnotations,
   loadAnnotations,
   refCountFunctionsForField,
+  isRefCountedObject,
   -- *
   userFunctionAnnotations,
   userParameterAnnotations
@@ -112,15 +113,27 @@ type DepMap = HashMap ByteString ForeignFunction
 -- | This index is a map from struct fields containing ref-counting
 -- finalizers to the associated ref/unref functions.
 type RefCountIndex = Map (String, [AccessType]) (String, String)
+type RefCountSuperclassIndex = Map String (String, String)
 
 -- | A summary of all of the functions that are dependencies of the
 -- current library.
 data DependencySummary =
   DependencySummary { depSummary :: DepMap
                     , libraryAnnotations :: LibraryAnnotations
-                    , refCountIndex :: RefCountIndex
+                    , refCountIndex :: RefCountIndex -- ^ The access paths that denote ref counted objects
+                    , refCountSuperclasses :: RefCountSuperclassIndex -- ^ Ref counted objects that can be identified via structural subtyping
                     }
   deriving (Show)
+
+-- | Determine if the given Type is ref counted.  Any non-struct type
+-- will return False.
+isRefCountedObject :: DependencySummary -> Type -> Maybe (String, String)
+isRefCountedObject ds t =
+  case t of
+    TypeStruct (Just _) _ _ -> do
+      let Just n = structTypeToName t
+      Map.lookup n (refCountSuperclasses ds)
+    _ -> Nothing
 
 refCountFunctionsForField :: DependencySummary -> AbstractAccessPath -> Maybe (String, String)
 refCountFunctionsForField ds accPath = do
@@ -130,7 +143,7 @@ refCountFunctionsForField ds accPath = do
 indexRefCounts :: DepMap -> RefCountIndex
 indexRefCounts = foldr indexForeignFunction mempty . M.elems
   where
-    unrefDetails (PAUnref refFunc fields) = Just (refFunc, fields)
+    unrefDetails (PAUnref refFunc fields _) = Just (refFunc, fields)
     unrefDetails _ = Nothing
     -- | Only want to index the unref functions with a single argument
     -- (otherwise we can't automatially call them anyway).
@@ -140,6 +153,21 @@ indexRefCounts = foldr indexForeignFunction mempty . M.elems
           case mapMaybe unrefDetails (parameterAnnotations p) of
             [(refFunc, fields)] ->
               foldl' (\a f -> Map.insert f (refFunc, (foreignFunctionName ff)) a) acc fields
+            _ -> acc
+        _ -> acc
+
+indexStructuralSuperclasses :: DepMap -> RefCountSuperclassIndex
+indexStructuralSuperclasses = foldr indexForeignFunction mempty . M.elems
+  where
+    unrefDetails (PAUnref refFunc _ superclasses) = Just (refFunc, superclasses)
+    unrefDetails _ = Nothing
+
+    indexForeignFunction ff acc =
+      case foreignFunctionParameters ff of
+        [p] ->
+          case mapMaybe unrefDetails (parameterAnnotations p) of
+            [(refFunc, types)] ->
+              foldl' (\a t -> Map.insert t (refFunc, (foreignFunctionName ff)) a) acc types
             _ -> acc
         _ -> acc
 
@@ -238,7 +266,9 @@ loadDependencies' :: [StdLib] -> [FilePath] -> [String] -> IO DependencySummary
 loadDependencies' includeStd summaryDirs deps = do
   let baseDeps = foldl' addStdlibDeps M.empty includeStd
   m <- loadTransDeps summaryDirs deps S.empty baseDeps
-  return $! DependencySummary m mempty $ indexRefCounts m
+  let rcIx = indexRefCounts m
+      rcObjs = indexStructuralSuperclasses m
+  return $! DependencySummary m mempty rcIx rcObjs
   where
     addStdlibDeps m CStdLib =
       let lc = decodeInterface libc

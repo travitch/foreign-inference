@@ -1,15 +1,25 @@
 {-# LANGUAGE TemplateHaskell, ViewPatterns #-}
-{-|
-
-1) Identify functions of 1 parameter that conditionally call a finalizer.
-
-2) The condition should compare a value reachable from the argument
-   against zero or one (record the access path)
-
-3) Identify functions of one parameter incrementing something
-   accessible via that same access path
-
--}
+-- | This analysis identifies the addRef and decRef functions for a library,
+-- along with the set of types that is reference counted.  This analysis is
+-- unsound and incomplete, but still useful.
+--
+-- It first identifies the decRef function with a heuristic:
+--
+--  1) Find a function that conditionally calls a finalizer
+--
+--  2) The finalizer call is guarded by a conditional check of an
+--     access path p (whose *base* is reachable from an argument to the
+--     function), and
+--
+--  3) That same access path p is decremented
+--
+-- The incRef function is simply the function that increments access
+-- path p
+--
+-- The set of types that are reference counted by a given
+-- incRef/decRef pair are those types that are structural subtypes of
+-- the argument to decRef (after derefencing the pointer, since all of
+-- these types are passed by pointer).
 module Foreign.Inference.Analysis.RefCount (
   RefCountSummary,
   identifyRefCounting,

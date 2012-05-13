@@ -1,3 +1,13 @@
+-- | This anaysis identifies functions that have scalar effects on
+-- their arguments.
+--
+-- This refers to functions that increment or decrement struct fields
+-- of pointer parameters.  It is mainly used by the reference counting
+-- analysis.  This is mostly useful for libraries that perform their
+-- increments and decrements via function calls instead of directly
+-- doing the operations in the incref/decref functions.  A few
+-- libraries (like dbus) do this to encapsulate the details of atomic
+-- increments.
 module Foreign.Inference.Analysis.ScalarEffects (
   ScalarEffectSummary,
   identifyScalarEffects,

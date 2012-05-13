@@ -1,7 +1,21 @@
 {-# LANGUAGE TypeSynonymInstances, FlexibleInstances, MultiParamTypeClasses #-}
-{-# LANGUAGE ViewPatterns #-}
-{-# LANGUAGE TemplateHaskell #-}
--- | FIXME: Implement interprocedural info prop
+{-# LANGUAGE ViewPatterns, TemplateHaskell #-}
+-- | This analysis identifies output parameters.
+--
+-- Output parameters are those pointer parameters whose target memory
+-- is never read from, only written to.  This implies that the value
+-- at the target of the pointer at the time of a call is irrelevant.
+-- Bindings can then automatically manage these parameters for
+-- callers.
+--
+-- It is a dataflow analysis that classifies pointer parameters as
+-- input, output, or both.  The initial value for each pointer
+-- parameter is unused and the meet operator is point-wise least upper
+-- bound (LUB).
+--
+-- Currently this analysis only deals with scalar types.  A very
+-- useful extension would be to cover aggregate types.  An aggregate
+-- is an output parameter if all of its fields are overwritten.
 module Foreign.Inference.Analysis.Output (
   -- * Interface
   OutputSummary,

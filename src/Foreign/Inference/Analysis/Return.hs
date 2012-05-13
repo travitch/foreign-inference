@@ -1,3 +1,9 @@
+-- | This analysis identifies functions that never return.
+--
+-- These are functions that are guaranteed to never return because
+-- they call exit on every path (or always go into an infinite loop).
+--
+-- This analysis is mostly used by the nullable pointer analysis.
 module Foreign.Inference.Analysis.Return (
   ReturnSummary,
   identifyReturns

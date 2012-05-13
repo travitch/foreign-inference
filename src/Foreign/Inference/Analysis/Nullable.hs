@@ -1,102 +1,49 @@
 {-# LANGUAGE ViewPatterns, MultiParamTypeClasses, TypeSynonymInstances, FlexibleInstances #-}
 {-# LANGUAGE TemplateHaskell #-}
--- | This module defines a Nullable pointer analysis
+-- | This module defines a Nullable pointer analysis.  It actually
+-- identifies non-nullable pointers (the rest are nullable).
 --
--- Nullable pointers are those pointers that are checked against NULL
--- before they are used.
+-- A non-nullable pointer parameter @p@ such that, if @p@ is NULL, the
+-- library will exhibit "undesirable" behavior.  Currently,
+-- undesirable behavior is a segfault or a call to exit/abort.  In the
+-- future, it will be extended to cover other types of error-reporting
+-- behavior.
 --
--- Questions:
+-- More precisely, a pseudo-algorithm for classifying pointers as
+-- non-nullable is as follows.  Assume @p@ is NULL.  If *any* path
+-- through the function reaches a return statement without executing
+-- undesirable code, @p@ is nullable.
 --
--- 1) How strict should this be? Must a non-nullable pointer be
---    referenced unchecked on *every* path, or does one suffice?
+-- Checking all paths is expensive, so we approximate with dataflow
+-- analysis:
 --
---    Just one is fine
+--  * The dataflow fact at each program point is the set of arguments
+--    that are NULL
 --
--- 2) How conservative should we be with regard to aliasing? Should a
---    may-alias unchecked dereference make the parameter non-nullable?
---    In theory letting may-alias relationships influence us could lead
---    to false positives that make some functions uncallable.  Is this a
---    problem in practice?
+--  * The meet operator is set union
 --
---    May alias is not sufficient - but SSA gives us a lot of
---    flow-sensitive precision.
+--  * On conditional branches, arguments that are known to be not-null
+--    on a branch (due to the branch condition) are removed from the
+--    set
 --
--- 3) Should we be tracking stores of arguments through globals?
---    Technically they could change out from under us in some
---    potential threaded interleavings, leaving us with incorrect
---    assumptions.  On the other hand, there are interleavings where
---    this gives us the correct answer and, as C doesn't really have
---    anything to say about threads, this is a legitimate
---    interpretation of the program.
---
--- # Observations on infeasible paths #
---
--- Consider code like
---
--- > if(x > 10) *p = 5;
---
--- If x can never be greater than 10, the path is infeasible and we
--- might conclude that p must not be NULL.  Even though this is not on
--- an infeasible path, this is a safe conclusion (assuming no other
--- references) because we do not lose any functionality by mandating
--- that p not be NULL.
---
--- We do lose functionality in the presence of conditions like:
---
--- > if(!p) ...
---
--- Often, this is error handling code.  Not always, though.  Tying in
--- the error handling code analysis will resolve these cases.
+--  * If undesirable code is executed (dereference null, call exit,
+--    etc), the argument that caused the error is removed from the
+--    set.
 --
 --
--- # Complex Dependence Analysis #
+-- This algorithm identifies those parameters whose NULL-ness *must*
+-- cause an error.  This is an under-approximation of all of the
+-- parameters we might like to be non-nullable, but it is a safe
+-- approximation.  The algorithm will never prevent a parameter from
+-- being NULL where that might permit some useful behavior (unless the
+-- caller expects to catch a segfault somehow).
 --
--- Consider the following code:
---
--- > extern int h(int * p);
--- >
--- > void e(int *p) {
--- >   if(p) *p = 0;
--- > }
--- >
--- > void f(int * p) {
--- >   int cond = 0;
--- >   if(h(p))
--- >     cond = 1;
--- >
--- >   if(!cond)
--- >     *p = 0;
--- > }
--- >
--- > void g(int * p) {
--- >   int cond = 0;
--- >   if(p)
--- >     cond = 1;
--- >
--- >   if(cond)
--- >     *p = 0;
--- > }
---
--- Without interprocedural analysis and expensive theorem prover
--- calls, we cannot track these side conditions (in the example @f@
--- and @g@, based on the @cond@ flag).  At the end of the day, we
--- cannot reason about pointer @p@ in *any* branch whose condition is
--- control- or data-dependent on @p@ (unless the condition is exactly
--- p==NULL or p!=NULL).  Call this property indirect dependence.
---
--- To implement this, augment the condition inspection code.  If the
--- condition is indirectly dependent on @p@, then generate a token
--- with the same ID as the cmp instruction driving the branch.  The
--- false branch gets a negative token and the true branch gets a
--- positive token.  Each token also gets a reference to @p@.  If a
--- token for @p@ is active on a branch, do not reason about @p@.
--- Tokens cancel each other out on control flow joins iff there is at
--- least one negative and at least one positive token and their ID and
--- variable match.
---
--- Alternate formulation: do not reason about @p@ when a read/write to
--- @p@ is control dependent on @p@ while not guarded by a @p!=NULL@ or
--- @p==NULL@ check.
+-- Infeasible paths are not a problem because, intuitively, the
+-- algorithm does not reason about paths that might not be taken, only
+-- the sum of the paths that MUST be taken.  Complex aliasing is also
+-- not a problem, since we cannot prove that paths with complex
+-- aliasing properties are taken we again do not bother reasoning
+-- about them.
 module Foreign.Inference.Analysis.Nullable (
   -- * Interface
   NullableSummary,

@@ -19,7 +19,10 @@
 module Foreign.Inference.Analysis.Output (
   -- * Interface
   OutputSummary,
-  identifyOutput
+  identifyOutput,
+
+  -- * Testing
+  outputSummaryToTestFormat
   ) where
 
 import Control.DeepSeq
@@ -27,6 +30,7 @@ import Data.HashSet ( HashSet )
 import qualified Data.HashSet as HS
 import Data.Lens.Common
 import Data.Lens.Template
+import Data.List ( groupBy )
 import Data.Map ( Map )
 import qualified Data.Map as M
 import Data.Set ( Set )
@@ -54,24 +58,40 @@ instance Show ArgumentDirection where
 
 instance NFData ArgumentDirection
 
+-- | Tracks the direction of each argument
 type SummaryType = Map Argument (ArgumentDirection, [Witness])
+-- | Tracks the direction of fields of pointer-to-struct arguments.
+-- If all of the fields of a struct argument are ArgOut, the struct
+-- argument is output.
+type FieldSummaryType = Map (Argument, Int) (ArgumentDirection, [Witness])
 data OutputSummary =
   OutputSummary { _outputSummary :: SummaryType
+                , _outputFieldSummary :: FieldSummaryType
                 , _outputDiagnostics :: Diagnostics
                 }
 
 $(makeLens ''OutputSummary)
 
+data OutInfo = OI { _outputInfo :: !(Map Argument (ArgumentDirection, Set Witness))
+                  , _outputFieldInfo :: !(Map (Argument, Int) (ArgumentDirection, Set Witness))
+                  , aggregates :: !(HashSet Argument)
+                  }
+             deriving (Eq, Show)
+
+$(makeLens ''OutInfo)
+
 instance Eq OutputSummary where
-  (OutputSummary s1 _) == (OutputSummary s2 _) = s1 == s2
+  (OutputSummary s1 fs1 _) == (OutputSummary s2 fs2 _) =
+    s1 == s2 && fs1 == fs2
 
 instance Monoid OutputSummary where
-  mempty = OutputSummary mempty mempty
-  mappend (OutputSummary s1 d1) (OutputSummary s2 d2) =
-    OutputSummary (M.union s1 s2) (mappend d1 d2)
+  mempty = OutputSummary mempty mempty mempty
+  mappend (OutputSummary s1 sf1 d1) (OutputSummary s2 sf2 d2) =
+    OutputSummary (M.union s1 s2) (M.union sf1 sf2) (mappend d1 d2)
 
 instance NFData OutputSummary where
-  rnf o@(OutputSummary s d) = s `deepseq` d `deepseq` o `seq` ()
+  rnf o@(OutputSummary s sf d) =
+    s `deepseq` sf `deepseq` d `deepseq` o `seq` ()
 
 instance HasDiagnostics OutputSummary where
   diagnosticLens = outputDiagnostics
@@ -81,12 +101,38 @@ instance SummarizeModule OutputSummary where
   summarizeArgument = summarizeOutArgument
 
 summarizeOutArgument :: Argument -> OutputSummary -> [(ParamAnnotation, [Witness])]
-summarizeOutArgument a (OutputSummary s _) =
-  case M.lookup a s of
-    Nothing -> []
-    Just (ArgIn, _) -> []
-    Just (ArgOut, ws) -> [(PAOut, ws)]
-    Just (ArgBoth, ws) -> [(PAInOut, ws)]
+summarizeOutArgument a (OutputSummary s sf _) =
+  case argumentFieldCount a of
+    Nothing ->
+      case M.lookup a s of
+        Nothing -> []
+        Just (ArgIn, _) -> []
+        Just (ArgOut, ws) -> [(PAOut, ws)]
+        Just (ArgBoth, ws) -> [(PAInOut, ws)]
+    Just flds ->
+      let argFieldDirs = filter (matchesArg a) $ M.toList sf
+      in case length argFieldDirs == flds && all isOutField argFieldDirs of
+        False -> []
+        True -> [(PAOut, combineWitnesses argFieldDirs)]
+
+matchesArg :: Argument -> ((Argument, a), b) -> Bool
+matchesArg a ((ma, _), _) = ma == a
+
+isOutField :: (a, (ArgumentDirection, b)) -> Bool
+isOutField (_, (ArgOut, _)) = True
+isOutField _ = False
+
+combineWitnesses :: [(a, (b, [Witness]))] -> [Witness]
+combineWitnesses = concatMap (snd . snd)
+
+
+-- | If the argument is a pointer to a struct, return the number of
+-- fields in the struct.  Otherwise, return Nothing.
+argumentFieldCount :: Argument -> Maybe Int
+argumentFieldCount a =
+  case argumentType a of
+    TypePointer (TypeStruct _ flds _) _ -> Just (length flds)
+    _ -> Nothing
 
 data OutData = OD { moduleSummary :: OutputSummary
                   , dependencySummary :: DependencySummary
@@ -105,10 +151,6 @@ identifyOutput ds lns =
     runner a = runAnalysis a constData ()
     constData = OD mempty ds
 
-data OutInfo = OI { outputInfo :: !(Map Argument (ArgumentDirection, Set Witness))
-                  , aggregates :: !(HashSet Argument)
-                  }
-             deriving (Eq, Show)
 
 instance MeetSemiLattice OutInfo where
   meet = meetOutInfo
@@ -122,11 +164,11 @@ instance MeetSemiLattice ArgumentDirection where
   meet _ ArgBoth = ArgBoth
 
 instance BoundedMeetSemiLattice OutInfo where
-  top = OI M.empty HS.empty
+  top = OI mempty mempty mempty
 
 meetOutInfo :: OutInfo -> OutInfo -> OutInfo
-meetOutInfo (OI m1 s1) (OI m2 s2) =
-  OI (M.unionWith meetWithWitness m1 m2) (s1 `HS.union` s2)
+meetOutInfo (OI m1 mf1 s1) (OI m2 mf2 s2) =
+  OI (M.unionWith meetWithWitness m1 m2) (M.unionWith meetWithWitness mf1 mf2) (s1 `HS.union` s2)
   where
     meetWithWitness (v1, w1) (v2, w2) = (meet v1 v2, S.union w1 w2)
 
@@ -137,17 +179,18 @@ type Analysis = AnalysisMonad OutData ()
 
 outAnalysis :: (FuncLike funcLike, HasFunction funcLike, HasCFG funcLike)
                => funcLike -> OutputSummary -> Analysis OutputSummary
-outAnalysis funcLike s@(OutputSummary summ _) = do
+outAnalysis funcLike s = do
   let envMod e = e { moduleSummary = s }
   funcInfo <- local envMod (forwardDataflow top funcLike)
   let exitInfo = map (dataflowResult funcInfo) (functionExitInstructions f)
-      OI exitInfo' aggArgs = meets exitInfo
+      OI exitInfo' fexitInfo' aggArgs = meets exitInfo
       exitInfo'' = M.filterWithKey (\k _ -> not (HS.member k aggArgs)) exitInfo'
       exitInfo''' = M.map (\(a, ws) -> (a, S.toList ws)) exitInfo''
+      fexitInfo'' = M.map (\(a, ws) -> (a, S.toList ws)) fexitInfo'
   -- Merge the local information we just computed with the global
   -- summary.  Prefer the locally computed info if there are
   -- collisions (could arise while processing SCCs).
-  return $! (outputSummary ^= M.union exitInfo''' summ) s
+  return $! (outputSummary ^!%= M.union exitInfo''') $ (outputFieldSummary ^!%= M.union fexitInfo'') s
   where
     f = getFunction funcLike
 
@@ -162,13 +205,42 @@ outTransfer :: OutInfo -> Instruction -> Analysis OutInfo
 outTransfer info i =
   case i of
     LoadInst { loadAddress = (valueContent -> ArgumentC ptr) } ->
-      return $! merge i ptr ArgIn info
+      return $! merge outputInfo i ptr ArgIn info
     StoreInst { storeAddress = (valueContent -> ArgumentC ptr) } ->
-      return $! merge i ptr ArgOut info
+      return $! merge outputInfo i ptr ArgOut info
     AtomicRMWInst { atomicRMWPointer = (valueContent -> ArgumentC ptr) } ->
-      return $! merge i ptr ArgIn info
+      return $! merge outputInfo i ptr ArgBoth info
     AtomicCmpXchgInst { atomicCmpXchgPointer = (valueContent -> ArgumentC ptr) } ->
-      return $! merge i ptr ArgIn info
+      return $! merge outputInfo i ptr ArgBoth info
+
+    LoadInst { loadAddress = (valueContent -> InstructionC
+      GetElementPtrInst { getElementPtrValue = (valueContent -> ArgumentC ptr)
+                        , getElementPtrIndices = [ (valueContent -> ConstantC (ConstantInt _ _ 0))
+                                                 , (valueContent -> ConstantC (ConstantInt _ _ fldNo))
+                                                 ]
+                        })} ->
+      return $! merge outputFieldInfo i (ptr, (fromIntegral fldNo)) ArgIn info
+    StoreInst { storeAddress = (valueContent -> InstructionC
+      GetElementPtrInst { getElementPtrValue = (valueContent -> ArgumentC ptr)
+                        , getElementPtrIndices = [ (valueContent -> ConstantC (ConstantInt _ _ 0))
+                                                 , (valueContent -> ConstantC (ConstantInt _ _ fldNo))
+                                                 ]
+                        })} ->
+      return $! merge outputFieldInfo i (ptr, (fromIntegral fldNo)) ArgOut info
+    AtomicRMWInst { atomicRMWPointer = (valueContent -> InstructionC
+      GetElementPtrInst { getElementPtrValue = (valueContent -> ArgumentC ptr)
+                        , getElementPtrIndices = [ (valueContent -> ConstantC (ConstantInt _ _ 0))
+                                                 , (valueContent -> ConstantC (ConstantInt _ _ fldNo))
+                                                 ]
+                        })} ->
+      return $! merge outputFieldInfo i (ptr, (fromIntegral fldNo)) ArgBoth info
+    AtomicCmpXchgInst { atomicCmpXchgPointer = (valueContent -> InstructionC
+      GetElementPtrInst { getElementPtrValue = (valueContent -> ArgumentC ptr)
+                        , getElementPtrIndices = [ (valueContent -> ConstantC (ConstantInt _ _ 0))
+                                                 , (valueContent -> ConstantC (ConstantInt _ _ fldNo))
+                                                 ]
+                        })} ->
+      return $! merge outputFieldInfo i (ptr, (fromIntegral fldNo)) ArgBoth info
 
     -- We don't want to treat any aggregates as output parameters yet.
     -- Record all arguments used as aggregates and filter them out at
@@ -204,28 +276,82 @@ callTransfer info i f args = do
               return acc
             Just attrs ->
               case PAOut `elem` attrs of
-                True -> return $! merge i a ArgOut acc
-                False -> return $! merge i a ArgIn acc
+                True -> return $! merge outputInfo i a ArgOut acc
+                False -> return $! merge outputInfo i a ArgIn acc
         _ -> return acc
 
-merge :: Instruction -> Argument -> ArgumentDirection -> OutInfo -> OutInfo
-merge i arg ArgBoth (OI oi a) =
+merge :: (Ord k)
+         => Lens info (Map k (ArgumentDirection, Set Witness))
+         -> Instruction -> k -> ArgumentDirection -> info -> info
+merge lns i arg ArgBoth info =
   let ws = S.singleton (Witness i (show ArgBoth))
-  in OI (M.insert arg (ArgBoth, ws) oi) a
-merge i arg newVal info@(OI oi a) =
-  case M.lookup arg oi of
+  in (lns ^!%= M.insert arg (ArgBoth, ws)) info
+merge lns i arg newVal info =
+  case M.lookup arg (info ^. lns) of
     Nothing ->
       let ws = S.singleton (Witness i (show newVal))
-      in OI (M.insert arg (newVal, ws) oi) a
+      in (lns ^!%= M.insert arg (newVal, ws)) info
     Just (ArgBoth, _) -> info
     Just (ArgOut, _) -> info
     Just (ArgIn, ws) ->
       case newVal of
         ArgOut ->
           let nw = Witness i (show ArgBoth)
-          in OI (M.insert arg (ArgBoth, S.insert nw ws) oi) a
+          in (lns ^!%= M.insert arg (ArgBoth, S.insert nw ws)) info
         ArgIn -> info
         ArgBoth -> $failure "Infeasible path"
 
 removeArrayPtr :: Argument -> OutInfo -> OutInfo
-removeArrayPtr a (OI oi ag) = OI (M.delete a oi) ag
+removeArrayPtr a (OI oi foi ag) = OI (M.delete a oi) foi ag
+
+-- Testing
+
+-- | Convert an Output summary to a format more suitable for
+-- testing
+outputSummaryToTestFormat :: OutputSummary -> Map String (Set (String, ParamAnnotation))
+outputSummaryToTestFormat (OutputSummary s sf _) =
+  M.union scalarParams aggregateParams
+  where
+    scalarParams = foldr collectArgs mempty (M.toList s)
+
+    aggList = groupBy sameArg (M.toList sf)
+    aggListByArg = map flattenArg aggList
+    aggregateParams = foldr collectAggArgs mempty aggListByArg
+
+    sameArg ((a, _), _) ((b, _), _) = a == b
+    flattenArg :: [((Argument, Int), (ArgumentDirection, [Witness]))]
+                  -> (Argument, [(Int, ArgumentDirection)])
+    flattenArg allFields@(((a, _), _) : _) =
+      (a, map flatten' allFields)
+    flatten' ((_, ix), (dir, _)) = (ix, dir)
+
+    dirToAnnot d =
+      case d of
+        ArgIn -> Nothing
+        ArgOut -> Just PAOut
+        ArgBoth -> Just PAInOut
+
+    isOut (_, argDir) = argDir == ArgOut
+
+    collectAggArgs (arg, fieldDirections) acc =
+      let func = argumentFunction arg
+          funcName = show (functionName func)
+          argName = show (argumentName arg)
+      in case argumentFieldCount arg of
+        Nothing -> error ("Expected aggregate type in field direction summary " ++ show arg)
+        Just fldCnt ->
+          case length fieldDirections == fldCnt && all isOut fieldDirections of
+            False -> acc
+            True ->
+              let nv = S.singleton (argName, PAOut)
+              in M.insertWith' S.union funcName nv acc
+
+    collectArgs (arg, (dir, _)) acc =
+      let func = argumentFunction arg
+          funcName = show (functionName func)
+          argName = show (argumentName arg)
+      in case dirToAnnot dir of
+        Nothing -> acc
+        Just annot ->
+          let nv = S.singleton (argName, annot)
+          in M.insertWith' S.union funcName nv acc

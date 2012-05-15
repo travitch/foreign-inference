@@ -1,0 +1,3 @@
+fromList [ ("@f", fromList [("%out", PAOut)])
+         , ("@g", fromList [("%out", PAOut)])
+         ]

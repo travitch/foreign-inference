@@ -102,18 +102,20 @@ instance SummarizeModule OutputSummary where
 
 summarizeOutArgument :: Argument -> OutputSummary -> [(ParamAnnotation, [Witness])]
 summarizeOutArgument a (OutputSummary s sf _) =
-  case argumentFieldCount a of
+  case M.lookup a s of
     Nothing ->
-      case M.lookup a s of
+      case argumentFieldCount a of
         Nothing -> []
-        Just (ArgIn, _) -> []
-        Just (ArgOut, ws) -> [(PAOut, ws)]
-        Just (ArgBoth, ws) -> [(PAInOut, ws)]
-    Just flds ->
-      let argFieldDirs = filter (matchesArg a) $ M.toList sf
-      in case length argFieldDirs == flds && all isOutField argFieldDirs of
-        False -> []
-        True -> [(PAOut, combineWitnesses argFieldDirs)]
+        Just flds ->
+          let argFieldDirs = filter (matchesArg a) $ M.toList sf
+          in case length argFieldDirs == flds && all isOutField argFieldDirs of
+            False -> []
+            True -> [(PAOut, combineWitnesses argFieldDirs)]
+
+    Just (ArgIn, _) -> []
+    Just (ArgOut, ws) -> [(PAOut, ws)]
+    Just (ArgBoth, ws) -> [(PAInOut, ws)]
+
 
 matchesArg :: Argument -> ((Argument, a), b) -> Bool
 matchesArg a ((ma, _), _) = ma == a
@@ -258,13 +260,22 @@ outTransfer info i =
 
     _ -> return info
 
+isMemcpy :: Value -> Bool
+isMemcpy v =
+  case valueContent' v of
+    ExternalFunctionC ExternalFunction { externalFunctionName = fname } ->
+      show fname == "@llvm.memcpy.p0i8.p0i8.i32" || show fname == "@llvm.memcpy.p0i8.p0i8.i64"
+    _ -> False
+
 callTransfer :: OutInfo -> Instruction -> Value -> [Value] -> Analysis OutInfo
 callTransfer info i f args = do
   let indexedArgs = zip [0..] args
   modSumm <- asks moduleSummary
   depSumm <- asks dependencySummary
-
-  foldM (checkArg depSumm modSumm) info indexedArgs
+  case (isMemcpy f, args) of
+    (True, [dest, src, bytes, _, _]) ->
+      memcpyTransfer info i dest src bytes
+    _ -> foldM (checkArg depSumm modSumm) info indexedArgs
   where
     checkArg ds ms acc (ix, arg) =
       case valueContent' arg of
@@ -279,6 +290,22 @@ callTransfer info i f args = do
                 True -> return $! merge outputInfo i a ArgOut acc
                 False -> return $! merge outputInfo i a ArgIn acc
         _ -> return acc
+
+-- | FIXME: Be more robust and actually use the byte count to ensure it is a
+-- full struct initialization.  In practice it probably always will be...
+memcpyTransfer :: OutInfo -> Instruction -> Value -> Value -> Value -> Analysis OutInfo
+memcpyTransfer info i dest src _ {-bytes-} =
+  case (isArgument dest, isArgument src) of
+    (Just darg, Just sarg) ->
+      return $! merge outputInfo i darg ArgOut $ merge outputInfo i sarg ArgIn info
+    (Just darg, Nothing) -> return $! merge outputInfo i darg ArgOut info
+    (Nothing, Just sarg) -> return $! merge outputInfo i sarg ArgIn info
+    _ -> return info
+  where
+    isArgument v =
+      case valueContent' v of
+        ArgumentC a -> Just a
+        _ -> Nothing
 
 merge :: (Ord k)
          => Lens info (Map k (ArgumentDirection, Set Witness))
@@ -323,6 +350,7 @@ outputSummaryToTestFormat (OutputSummary s sf _) =
                   -> (Argument, [(Int, ArgumentDirection)])
     flattenArg allFields@(((a, _), _) : _) =
       (a, map flatten' allFields)
+    flattenArg [] = $failure "groupBy made an empty group"
     flatten' ((_, ix), (dir, _)) = (ix, dir)
 
     dirToAnnot d =

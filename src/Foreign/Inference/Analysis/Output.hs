@@ -26,8 +26,6 @@ module Foreign.Inference.Analysis.Output (
   ) where
 
 import Control.DeepSeq
-import Data.HashSet ( HashSet )
-import qualified Data.HashSet as HS
 import Data.Lens.Common
 import Data.Lens.Template
 import Data.List ( groupBy )
@@ -74,7 +72,6 @@ $(makeLens ''OutputSummary)
 
 data OutInfo = OI { _outputInfo :: !(Map Argument (ArgumentDirection, Set Witness))
                   , _outputFieldInfo :: !(Map (Argument, Int) (ArgumentDirection, Set Witness))
-                  , aggregates :: !(HashSet Argument)
                   }
              deriving (Eq, Show)
 
@@ -166,11 +163,11 @@ instance MeetSemiLattice ArgumentDirection where
   meet _ ArgBoth = ArgBoth
 
 instance BoundedMeetSemiLattice OutInfo where
-  top = OI mempty mempty mempty
+  top = OI mempty mempty
 
 meetOutInfo :: OutInfo -> OutInfo -> OutInfo
-meetOutInfo (OI m1 mf1 s1) (OI m2 mf2 s2) =
-  OI (M.unionWith meetWithWitness m1 m2) (M.unionWith meetWithWitness mf1 mf2) (s1 `HS.union` s2)
+meetOutInfo (OI m1 mf1) (OI m2 mf2) =
+  OI (M.unionWith meetWithWitness m1 m2) (M.unionWith meetWithWitness mf1 mf2)
   where
     meetWithWitness (v1, w1) (v2, w2) = (meet v1 v2, S.union w1 w2)
 
@@ -185,14 +182,13 @@ outAnalysis funcLike s = do
   let envMod e = e { moduleSummary = s }
   funcInfo <- local envMod (forwardDataflow top funcLike)
   let exitInfo = map (dataflowResult funcInfo) (functionExitInstructions f)
-      OI exitInfo' fexitInfo' aggArgs = meets exitInfo
-      exitInfo'' = M.filterWithKey (\k _ -> not (HS.member k aggArgs)) exitInfo'
-      exitInfo''' = M.map (\(a, ws) -> (a, S.toList ws)) exitInfo''
+      OI exitInfo' fexitInfo' = meets exitInfo
+      exitInfo'' = M.map (\(a, ws) -> (a, S.toList ws)) exitInfo'
       fexitInfo'' = M.map (\(a, ws) -> (a, S.toList ws)) fexitInfo'
   -- Merge the local information we just computed with the global
   -- summary.  Prefer the locally computed info if there are
   -- collisions (could arise while processing SCCs).
-  return $! (outputSummary ^!%= M.union exitInfo''') $ (outputFieldSummary ^!%= M.union fexitInfo'') s
+  return $! (outputSummary ^!%= M.union exitInfo'') $ (outputFieldSummary ^!%= M.union fexitInfo'') s
   where
     f = getFunction funcLike
 
@@ -243,15 +239,6 @@ outTransfer info i =
                                                  ]
                         })} ->
       return $! merge outputFieldInfo i (ptr, (fromIntegral fldNo)) ArgBoth info
-
-    -- We don't want to treat any aggregates as output parameters yet.
-    -- Record all arguments used as aggregates and filter them out at
-    -- the end of the analysis.
-    --
-    -- Later, we want to expand the definition of output parameters to
-    -- cover structs where all fields are initialized.
-    GetElementPtrInst { getElementPtrValue = (valueContent' -> ArgumentC ptr) } ->
-      return $! info { aggregates = HS.insert ptr (aggregates info) }
 
     CallInst { callFunction = f, callArguments = args } ->
       callTransfer info i f (map fst args)
@@ -329,7 +316,7 @@ merge lns i arg newVal info =
         ArgBoth -> $failure "Infeasible path"
 
 removeArrayPtr :: Argument -> OutInfo -> OutInfo
-removeArrayPtr a (OI oi foi ag) = OI (M.delete a oi) foi ag
+removeArrayPtr a (OI oi foi) = OI (M.delete a oi) foi
 
 -- Testing
 

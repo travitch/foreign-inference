@@ -104,7 +104,7 @@ summarizeOutArgument a (OutputSummary s sf _) =
       case argumentFieldCount a of
         Nothing -> []
         Just flds ->
-          let argFieldDirs = filter (matchesArg a) $ M.toList sf
+          let argFieldDirs = M.toList (M.filterWithKey (matchesArg a) sf)
           in case length argFieldDirs == flds && all isOutField argFieldDirs of
             False -> []
             True -> [(PAOut, combineWitnesses argFieldDirs)]
@@ -114,8 +114,8 @@ summarizeOutArgument a (OutputSummary s sf _) =
     Just (ArgBoth, ws) -> [(PAInOut, ws)]
 
 
-matchesArg :: Argument -> ((Argument, a), b) -> Bool
-matchesArg a ((ma, _), _) = ma == a
+matchesArg :: Argument -> (Argument, a) -> b -> Bool
+matchesArg a (ma, _) _ = ma == a
 
 isOutField :: (a, (ArgumentDirection, b)) -> Bool
 isOutField (_, (ArgOut, _)) = True

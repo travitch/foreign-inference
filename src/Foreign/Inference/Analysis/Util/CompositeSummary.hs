@@ -31,8 +31,10 @@ import Data.Lens.Template
 import Data.Monoid
 
 import LLVM.Analysis
-import LLVM.Analysis.Types
+import LLVM.Analysis.Dominance
+import LLVM.Analysis.CDG
 import LLVM.Analysis.CFG
+import LLVM.Analysis.Types
 
 import Foreign.Inference.Analysis.Allocator
 import Foreign.Inference.Analysis.Array
@@ -51,6 +53,8 @@ import Foreign.Inference.Interface
 data FunctionMetadata =
   FunctionMetadata { functionOriginal :: Function
                    , functionCFG :: CFG
+                   , functionCDG :: CDG
+                   , functionDomTree :: DominatorTree
                    }
 
 instance HasFunction FunctionMetadata where
@@ -59,11 +63,21 @@ instance HasFunction FunctionMetadata where
 instance HasCFG FunctionMetadata where
   getCFG = functionCFG
 
+instance HasDomTree FunctionMetadata where
+  getDomTree = functionDomTree
+
 instance FuncLike FunctionMetadata where
   fromFunction f =
     FunctionMetadata { functionOriginal = f
-                     , functionCFG = mkCFG f
+                     , functionCFG = cfg
+                     , functionCDG = controlDependenceGraph cfg
+                     , functionDomTree = dominatorTree cfg
                      }
+    where
+      cfg = mkCFG f
+
+instance HasCDG FunctionMetadata where
+  getCDG = functionCDG
 
 -- | A type containing all of the sub-summaries.
 data AnalysisSummary =

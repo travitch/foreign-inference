@@ -116,7 +116,8 @@ summarizeNullArgument a (NullableSummary s _) =
     Nothing -> []
     Just ws -> [(PANotNull, ws)]
 
-identifyNullable :: (FuncLike funcLike, HasFunction funcLike, HasCFG funcLike)
+identifyNullable :: (FuncLike funcLike, HasFunction funcLike, HasCFG funcLike,
+                     HasCDG funcLike, HasDomTree funcLike)
                     => DependencySummary
                     -> Lens compositeSummary NullableSummary
                     -> Lens compositeSummary ReturnSummary
@@ -168,7 +169,9 @@ meetNullInfo ni1 ni2 =
 --
 -- This set of arguments is added to the global summary data (set of
 -- all non-nullable arguments).
-nullableAnalysis :: (FuncLike funcLike, HasCFG funcLike, HasFunction funcLike)
+nullableAnalysis :: (FuncLike funcLike, HasCFG funcLike,
+                     HasFunction funcLike, HasCDG funcLike,
+                     HasDomTree funcLike)
                     => ReturnSummary
                     -> funcLike
                     -> NullableSummary
@@ -182,8 +185,8 @@ nullableAnalysis retSumm funcLike s@(NullableSummary summ _) = do
   -- parameters are NULLable.
   let envMod e = e { moduleSummary = s
                    , returnSummary = retSumm
-                   , controlDepGraph = controlDependenceGraph cfg
-                   , domTree = dominatorTree cfg
+                   , controlDepGraph = getCDG funcLike
+                   , domTree = getDomTree funcLike
                    }
       args = filter isPointer (functionParameters f)
       fact0 = top { nullArguments = S.fromList args }
@@ -200,7 +203,6 @@ nullableAnalysis retSumm funcLike s@(NullableSummary summ _) = do
   let newSumm = foldr (\(a, ws) acc -> HM.insert a ws acc) summ argsAndWitnesses
   return $! (nullableSummary ^= newSumm) s
   where
-    cfg = getCFG funcLike
     f = getFunction funcLike
 
 attachWitness :: Map Argument (Set Witness)

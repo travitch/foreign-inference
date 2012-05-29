@@ -46,8 +46,14 @@ import LLVM.Analysis.AccessPath
 
 data SingleInitializerSummary =
   SIS { abstractPathInitializers :: !(Map AbstractAccessPath [Value])
+        -- ^ Function initializers assigned to fields of types
       , concreteValueInitializers :: !(Map GlobalVariable [Value])
+        -- ^ Explicit values assigned to global variables, either at
+        -- initialization time or through a later assignment.
       , argumentInitializers :: !(Map (Function, Int) [Value])
+        -- ^ A map of all of the known initializers (Functions or
+        -- External functions) passed as the ix'th argument of the
+        -- Function that is the key of the map.
       , fieldArgDependencies :: !(Map AbstractAccessPath [(Function, Int)])
       , globalArgDependencies :: !(Map GlobalVariable [(Function, Int)])
       }

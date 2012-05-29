@@ -890,7 +890,7 @@
           ]
         },
         { "foreignFunctionName": "realloc",
-          "foreignFunctionAnnotations": [],
+          "foreignFunctionAnnotations": [{"FAAllocator": "free"}],
           "foreignFunctionLinkage": { "LinkDefault": [] },
           "foreignFunctionReturnType": {"CPointer": {"CVoid": []}},
           "foreignFunctionParameters": [

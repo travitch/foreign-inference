@@ -13,9 +13,9 @@
 -- parameter is unused and the meet operator is point-wise least upper
 -- bound (LUB).
 --
--- Currently this analysis only deals with scalar types.  A very
--- useful extension would be to cover aggregate types.  An aggregate
--- is an output parameter if all of its fields are overwritten.
+-- This analysis only deals with pointers to scalar types and pointers
+-- to aggregates.  A pointer to an aggregate is an output parameter if
+-- all of the fields of the aggregate are overwritten.
 module Foreign.Inference.Analysis.Output (
   -- * Interface
   OutputSummary,

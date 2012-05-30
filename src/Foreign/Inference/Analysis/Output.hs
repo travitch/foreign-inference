@@ -242,8 +242,6 @@ isAllocatedValue storeInst calledFunc callInst = do
     Just annots ->
       case mapMaybe isAllocAnnot annots of
         [fin] ->
-          -- FIXME: Ensure that the value is also not WillEscape
-          -- (escape through return value)
           case instructionEscapesWith ignoreStore callInst esum of
             False -> return $! Just fin
             True -> return Nothing

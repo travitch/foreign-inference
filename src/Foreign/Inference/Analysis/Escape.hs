@@ -2,7 +2,8 @@
 module Foreign.Inference.Analysis.Escape (
   EscapeSummary,
   identifyEscapes,
-  instructionEscapes
+  instructionEscapes,
+  instructionEscapesWith
   ) where
 
 import Control.DeepSeq
@@ -13,7 +14,7 @@ import Debug.Trace.LocationTH
 
 import LLVM.Analysis
 import LLVM.Analysis.CallGraphSCCTraversal
-import LLVM.Analysis.Escape hiding ( instructionEscapes )
+import LLVM.Analysis.Escape hiding ( instructionEscapes, instructionEscapesWith )
 import qualified LLVM.Analysis.Escape as LLVM
 
 import Foreign.Inference.Diagnostics
@@ -81,8 +82,14 @@ identifyEscapes ds lns =
           return True
         Just annots -> return $ PAEscape `elem` annots
 
-instructionEscapes :: EscapeSummary -> Instruction -> Bool
-instructionEscapes (EscapeSummary er _) i =
-  case LLVM.instructionEscapes er i of
+instructionEscapes :: Instruction -> EscapeSummary -> Bool
+instructionEscapes i (EscapeSummary er _) =
+  case LLVM.instructionEscapes i er of
+    Nothing -> False
+    Just _ -> True
+
+instructionEscapesWith :: (Value -> Bool) -> Instruction -> EscapeSummary -> Bool
+instructionEscapesWith p i (EscapeSummary er _) =
+  case LLVM.instructionEscapesWith p i er of
     Nothing -> False
     Just _ -> True

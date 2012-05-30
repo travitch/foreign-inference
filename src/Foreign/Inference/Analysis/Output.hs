@@ -25,15 +25,18 @@ module Foreign.Inference.Analysis.Output (
   outputSummaryToTestFormat
   ) where
 
+import Control.Arrow ( (&&&) )
 import Control.DeepSeq
 import Data.Lens.Common
 import Data.Lens.Template
 import Data.List ( groupBy )
 import Data.Map ( Map )
 import qualified Data.Map as M
+import Data.Maybe ( mapMaybe )
 import Data.Set ( Set )
 import qualified Data.Set as S
 import Debug.Trace.LocationTH
+import Text.Printf
 
 import LLVM.Analysis
 import LLVM.Analysis.CFG
@@ -43,15 +46,21 @@ import LLVM.Analysis.Dataflow
 import Foreign.Inference.AnalysisMonad
 import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
+import Foreign.Inference.Analysis.Allocator
+import Foreign.Inference.Analysis.Escape
 
 data ArgumentDirection = ArgIn
                        | ArgOut
+                       | ArgOutAlloc (Set Instruction, Maybe String)
+                         -- ^ Instructions and their associated finalizer
                        | ArgBoth
                        deriving (Eq, Ord)
 
 instance Show ArgumentDirection where
   show ArgIn = "in"
   show ArgOut = "out"
+  show (ArgOutAlloc (_, Just fin)) = printf "out[%s]" fin
+  show (ArgOutAlloc (_, Nothing)) = "out[]"
   show ArgBoth = "both"
 
 instance NFData ArgumentDirection
@@ -111,6 +120,7 @@ summarizeOutArgument a (OutputSummary s sf _) =
 
     Just (ArgIn, _) -> []
     Just (ArgOut, ws) -> [(PAOut, ws)]
+    Just (ArgOutAlloc (_, fin), ws) -> [(PAOutAlloc (maybe "" id fin), ws)]
     Just (ArgBoth, ws) -> [(PAInOut, ws)]
 
 
@@ -119,6 +129,7 @@ matchesArg a (ma, _) _ = ma == a
 
 isOutField :: (a, (ArgumentDirection, b)) -> Bool
 isOutField (_, (ArgOut, _)) = True
+isOutField (_, (ArgOutAlloc _, _)) = True
 isOutField _ = False
 
 combineWitnesses :: [(a, (b, [Witness]))] -> [Witness]
@@ -135,6 +146,8 @@ argumentFieldCount a =
 
 data OutData = OD { moduleSummary :: OutputSummary
                   , dependencySummary :: DependencySummary
+                  , allocatorSummary :: AllocatorSummary
+                  , escapeSummary :: EscapeSummary
                   }
 
 -- | Note that array parameters are not out parameters, so we rely on
@@ -143,12 +156,17 @@ data OutData = OD { moduleSummary :: OutputSummary
 identifyOutput :: (FuncLike funcLike, HasCFG funcLike, HasFunction funcLike)
                   => DependencySummary
                   -> Lens compositeSummary OutputSummary
+                  -> Lens compositeSummary AllocatorSummary
+                  -> Lens compositeSummary EscapeSummary
                   -> ComposableAnalysis compositeSummary funcLike
-identifyOutput ds lns =
-  composableAnalysisM runner outAnalysis lns
+identifyOutput ds lns allocLens escapeLens =
+  composableDependencyAnalysisM runner outAnalysis lns depLens
   where
     runner a = runAnalysis a constData ()
-    constData = OD mempty ds
+    constData = OD mempty ds undefined undefined
+    readerL = getL allocLens &&& getL escapeLens
+    writerL (a, e) = setL allocLens a . setL escapeLens e
+    depLens = lens readerL writerL
 
 
 instance MeetSemiLattice OutInfo where
@@ -157,8 +175,20 @@ instance MeetSemiLattice OutInfo where
 instance MeetSemiLattice ArgumentDirection where
   meet ArgIn ArgIn = ArgIn
   meet ArgOut ArgOut = ArgOut
+  meet ArgOut (ArgOutAlloc _) = ArgOut
+  meet (ArgOutAlloc _) ArgOut = ArgOut
   meet ArgIn ArgOut = ArgBoth
   meet ArgOut ArgIn = ArgBoth
+  meet ArgIn (ArgOutAlloc _) = ArgBoth
+  meet (ArgOutAlloc _) ArgIn = ArgBoth
+  meet (ArgOutAlloc (is1, fin1)) (ArgOutAlloc (is2, fin2)) =
+    -- If the finalizers are different, consider this to just be a
+    -- normal out parameter since we can't say which finalizer is
+    -- involved.  We could possibly change this to at least tell the
+    -- user that ownership is transfered but the finalizer is unknown.
+    case fin1 == fin2 of
+      False -> ArgOutAlloc (S.union is1 is2, Nothing)
+      True -> ArgOutAlloc (S.union is1 is2, fin1)
   meet ArgBoth _ = ArgBoth
   meet _ ArgBoth = ArgBoth
 
@@ -177,9 +207,15 @@ instance DataflowAnalysis Analysis OutInfo where
 type Analysis = AnalysisMonad OutData ()
 
 outAnalysis :: (FuncLike funcLike, HasFunction funcLike, HasCFG funcLike)
-               => funcLike -> OutputSummary -> Analysis OutputSummary
-outAnalysis funcLike s = do
-  let envMod e = e { moduleSummary = s }
+               => (AllocatorSummary, EscapeSummary)
+               -> funcLike
+               -> OutputSummary
+               -> Analysis OutputSummary
+outAnalysis (allocSumm, escSumm) funcLike s = do
+  let envMod e = e { moduleSummary = s
+                   , allocatorSummary = allocSumm
+                   , escapeSummary = escSumm
+                   }
   funcInfo <- local envMod (forwardDataflow top funcLike)
   let exitInfo = map (dataflowResult funcInfo) (functionExitInstructions f)
       OI exitInfo' fexitInfo' = meets exitInfo
@@ -191,6 +227,31 @@ outAnalysis funcLike s = do
   return $! (outputSummary ^!%= M.union exitInfo'') $ (outputFieldSummary ^!%= M.union fexitInfo'') s
   where
     f = getFunction funcLike
+
+-- | If the given @callInst@ is an allocated value (i.e., call to an
+-- allocator) and it does not escape via any means other than the
+-- given @storeInst@ (which stored it into an 'Argument'), return the
+-- name of its associated finalizer.
+isAllocatedValue :: Instruction -> Value -> Instruction -> Analysis (Maybe String)
+isAllocatedValue storeInst calledFunc callInst = do
+  asum <- asks allocatorSummary
+  ds <- asks dependencySummary
+  esum <- asks escapeSummary
+  case lookupFunctionSummary ds asum calledFunc of
+    Nothing -> return Nothing
+    Just annots ->
+      case mapMaybe isAllocAnnot annots of
+        [fin] ->
+          -- FIXME: Ensure that the value is also not WillEscape
+          -- (escape through return value)
+          case instructionEscapesWith ignoreStore callInst esum of
+            False -> return $! Just fin
+            True -> return Nothing
+        _ -> return Nothing
+  where
+    ignoreStore = (== Value storeInst)
+    isAllocAnnot (FAAllocator fin) = Just fin
+    isAllocAnnot _ = Nothing
 
 -- | This transfer function only needs to be concerned with Load and
 -- Store instructions (for now).  Loads add in an ArgIn value. Stores
@@ -204,6 +265,13 @@ outTransfer info i =
   case i of
     LoadInst { loadAddress = (valueContent -> ArgumentC ptr) } ->
       return $! merge outputInfo i ptr ArgIn info
+    StoreInst { storeAddress = (valueContent' -> ArgumentC ptr)
+              , storeValue = (valueContent' -> InstructionC ci@CallInst {
+                                 callFunction = f})} -> do
+      allocFinalizer <- isAllocatedValue i f ci
+      case allocFinalizer of
+        Nothing -> return $! merge outputInfo i ptr ArgOut info
+        Just fin -> return $! merge outputInfo i ptr (ArgOutAlloc (S.singleton ci, Just fin)) info
     StoreInst { storeAddress = (valueContent -> ArgumentC ptr) } ->
       return $! merge outputInfo i ptr ArgOut info
     AtomicRMWInst { atomicRMWPointer = (valueContent -> ArgumentC ptr) } ->
@@ -302,14 +370,31 @@ merge lns i arg ArgBoth info =
   in (lns ^!%= M.insert arg (ArgBoth, ws)) info
 merge lns i arg newVal info =
   case M.lookup arg (info ^. lns) of
+    -- No old value, so take the new one
     Nothing ->
       let ws = S.singleton (Witness i (show newVal))
       in (lns ^!%= M.insert arg (newVal, ws)) info
+    -- The old value was Both, so just keep it
     Just (ArgBoth, _) -> info
+    -- Since the new value is not Both, we can't advance from Out with
+    -- linear control flow (only at control flow join points).
     Just (ArgOut, _) -> info
+    -- We can actually override an OutAlloc with an Out if it comes
+    -- later...  then the OutAlloc value is lost to the caller
+    Just (ArgOutAlloc _, ws) ->
+      case newVal of
+        ArgOut ->
+          let nw = Witness i (show ArgOut)
+          in (lns ^!%= M.insert arg (ArgOut, S.singleton nw)) info
+        ArgIn -> info
+        ArgOutAlloc _ -> info -- FIXME: This should probably merge the two... or take newval
+        ArgBoth -> $failure "Infeasible path"
     Just (ArgIn, ws) ->
       case newVal of
         ArgOut ->
+          let nw = Witness i (show ArgBoth)
+          in (lns ^!%= M.insert arg (ArgBoth, S.insert nw ws)) info
+        ArgOutAlloc _ ->
           let nw = Witness i (show ArgBoth)
           in (lns ^!%= M.insert arg (ArgBoth, S.insert nw ws)) info
         ArgIn -> info
@@ -344,6 +429,7 @@ outputSummaryToTestFormat (OutputSummary s sf _) =
       case d of
         ArgIn -> Nothing
         ArgOut -> Just PAOut
+        ArgOutAlloc (_, fin) -> Just (PAOutAlloc (maybe "" id fin))
         ArgBoth -> Just PAInOut
 
     isOut (_, argDir) = argDir == ArgOut

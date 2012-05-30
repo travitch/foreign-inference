@@ -25,6 +25,8 @@ import LLVM.Analysis.AccessPath
 -- Other annotations:
 data ParamAnnotation = PAArray !Int
                      | PAOut
+                     | PAOutAlloc String
+                       -- ^ Allocator through an out parameter, with finalizer
                      | PAInOut
                      | PANotNull
                      | PAString

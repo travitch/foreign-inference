@@ -16,7 +16,11 @@ import LLVM.Parse
 
 import Foreign.Inference.Interface
 import Foreign.Inference.Preprocessing
+import Foreign.Inference.Analysis.Allocator
+import Foreign.Inference.Analysis.Escape
+import Foreign.Inference.Analysis.Finalize
 import Foreign.Inference.Analysis.Output
+import Foreign.Inference.Analysis.SingleInitializer
 import Foreign.Inference.Analysis.Util.CompositeSummary
 
 main :: IO ()
@@ -43,8 +47,12 @@ analyzeOutput ds m =
   where
     pta = runPointsToAnalysis m
     cg = mkCallGraph m pta []
+    sis = identifySingleInitializers m
     analyses :: [ComposableAnalysis AnalysisSummary FunctionMetadata]
-    analyses = [ identifyOutput ds outputSummary
+    analyses = [ identifyEscapes ds escapeSummary
+               , identifyFinalizers ds sis finalizerSummary
+               , identifyAllocators ds sis allocatorSummary escapeSummary finalizerSummary
+               , identifyOutput ds outputSummary allocatorSummary escapeSummary
                ]
     analysisFunc = callGraphComposeAnalysis analyses
     res = callGraphSCCTraversal cg analysisFunc mempty

@@ -28,6 +28,7 @@ import Data.Lens.Common
 import Data.Lens.Template
 import Data.Map ( Map )
 import qualified Data.Map as M
+import Data.Monoid
 import Data.Set ( Set )
 import qualified Data.Set as S
 
@@ -139,7 +140,7 @@ instance MeetSemiLattice FinalizerInfo where
                   }
 
 instance BoundedMeetSemiLattice FinalizerInfo where
-  top = FinalizerInfo HS.empty HM.empty
+  top = FinalizerInfo mempty mempty
 
 type Analysis = AnalysisMonad FinalizerData ()
 
@@ -155,7 +156,7 @@ finalizerAnalysis funcLike s@(FinalizerSummary summ _) = do
   -- this in the Reader environment
   let envMod e = e { moduleSummary = s }
       set0 = HS.fromList $ filter isPointer (functionParameters f)
-      fact0 = FinalizerInfo set0 HM.empty
+      fact0 = FinalizerInfo set0 mempty
 
   funcInfo <- local envMod (forwardDataflow fact0 funcLike)
 
@@ -166,7 +167,7 @@ finalizerAnalysis funcLike s@(FinalizerSummary summ _) = do
   -- at the return instruction
       finalizedOrNull = set0 `HS.difference` notFinalized
       attachWitness a m = HM.insert a (S.toList (HM.lookupDefault S.empty a witnesses)) m
-      newInfo = HS.foldr attachWitness HM.empty finalizedOrNull
+      newInfo = HS.foldr attachWitness mempty finalizedOrNull
   -- Note, we perform the union with newInfo first so that any
   -- repeated keys take their value from what we just computed.  This
   -- is important for processing SCCs in the call graph, where a
@@ -268,7 +269,7 @@ isPointer v =
 finalizerSummaryToTestFormat :: FinalizerSummary -> Map String (Set String)
 finalizerSummaryToTestFormat (FinalizerSummary m _) = convert m
   where
-    convert = foldr addElt M.empty . map toFuncNamePair . HM.keys
+    convert = foldr addElt mempty . map toFuncNamePair . HM.keys
     addElt (f, a) = M.insertWith' S.union f (S.singleton a)
     toFuncNamePair arg =
       let f = argumentFunction arg

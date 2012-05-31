@@ -166,7 +166,7 @@ finalizerAnalysis funcLike s@(FinalizerSummary summ _) = do
   -- The finalized parameters are those that are *NOT* in our fact set
   -- at the return instruction
       finalizedOrNull = set0 `HS.difference` notFinalized
-      attachWitness a m = HM.insert a (S.toList (HM.lookupDefault S.empty a witnesses)) m
+      attachWitness a m = HM.insert a (S.toList (HM.lookupDefault mempty a witnesses)) m
       newInfo = HS.foldr attachWitness mempty finalizedOrNull
   -- Note, we perform the union with newInfo first so that any
   -- repeated keys take their value from what we just computed.  This

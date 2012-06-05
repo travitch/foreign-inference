@@ -1,0 +1,3 @@
+fromList [ ("@outAlloc", fromList [("%arr", PAOutAlloc "free")])
+         , ("@outAllocWrapper", fromList [("%arr", PAOutAlloc "free")])
+         ]

@@ -29,10 +29,11 @@ import Control.Arrow ( (&&&) )
 import Control.DeepSeq
 import Data.Lens.Common
 import Data.Lens.Template
-import Data.List ( groupBy )
+import Data.List ( find, groupBy )
 import Data.Map ( Map )
 import qualified Data.Map as M
 import Data.Maybe ( mapMaybe )
+import Data.Monoid
 import Data.Set ( Set )
 import qualified Data.Set as S
 import Debug.Trace.LocationTH
@@ -49,9 +50,17 @@ import Foreign.Inference.Interface
 import Foreign.Inference.Analysis.Allocator
 import Foreign.Inference.Analysis.Escape
 
+-- | Either the finalizer for an output argument, a token indicating
+-- that the output argument was a NULL pointer, or a token indicating
+-- that more than one out finalizer is involved.
+data OutFinalizer = OutFinalizer String
+                  | OutFinalizerNull
+                  | OutFinalizerConflict
+                  deriving (Eq, Ord)
+
 data ArgumentDirection = ArgIn
                        | ArgOut
-                       | ArgOutAlloc (Set Instruction, Maybe String)
+                       | ArgOutAlloc (Set Instruction, OutFinalizer)
                          -- ^ Instructions and their associated finalizer
                        | ArgBoth
                        deriving (Eq, Ord)
@@ -59,8 +68,9 @@ data ArgumentDirection = ArgIn
 instance Show ArgumentDirection where
   show ArgIn = "in"
   show ArgOut = "out"
-  show (ArgOutAlloc (_, Just fin)) = printf "out[%s]" fin
-  show (ArgOutAlloc (_, Nothing)) = "out[]"
+  show (ArgOutAlloc (_, OutFinalizer fin)) = printf "out[%s]" fin
+  show (ArgOutAlloc (_, OutFinalizerNull)) = "out"
+  show (ArgOutAlloc (_, OutFinalizerConflict)) = "out[?]"
   show ArgBoth = "both"
 
 instance NFData ArgumentDirection
@@ -120,7 +130,9 @@ summarizeOutArgument a (OutputSummary s sf _) =
 
     Just (ArgIn, _) -> []
     Just (ArgOut, ws) -> [(PAOut, ws)]
-    Just (ArgOutAlloc (_, fin), ws) -> [(PAOutAlloc (maybe "" id fin), ws)]
+    Just (ArgOutAlloc (_, OutFinalizer fin), ws) -> [(PAOutAlloc fin, ws)]
+    Just (ArgOutAlloc (_, OutFinalizerNull), ws) -> [(PAOut, ws)]
+    Just (ArgOutAlloc (_, OutFinalizerConflict), ws) -> [(PAOut, ws)]
     Just (ArgBoth, ws) -> [(PAInOut, ws)]
 
 
@@ -187,8 +199,15 @@ instance MeetSemiLattice ArgumentDirection where
     -- involved.  We could possibly change this to at least tell the
     -- user that ownership is transfered but the finalizer is unknown.
     case fin1 == fin2 of
-      False -> ArgOutAlloc (S.union is1 is2, Nothing)
       True -> ArgOutAlloc (S.union is1 is2, fin1)
+      False ->
+        case (fin1, fin2) of
+          (OutFinalizerConflict, _) -> ArgOutAlloc (S.union is1 is2, OutFinalizerConflict)
+          (_, OutFinalizerConflict) -> ArgOutAlloc (S.union is1 is2, OutFinalizerConflict)
+          (OutFinalizerNull, OutFinalizerNull) -> ArgOutAlloc (mempty, OutFinalizerNull)
+          (OutFinalizerNull, OutFinalizer f) -> ArgOutAlloc (is2, OutFinalizer f)
+          (OutFinalizer f, OutFinalizerNull) -> ArgOutAlloc (is1, OutFinalizer f)
+          _ -> ArgOutAlloc (S.union is1 is2, OutFinalizerConflict)
   meet ArgBoth _ = ArgBoth
   meet _ ArgBoth = ArgBoth
 
@@ -269,7 +288,10 @@ outTransfer info i =
       allocFinalizer <- isAllocatedValue i f ci
       case allocFinalizer of
         Nothing -> return $! merge outputInfo i ptr ArgOut info
-        Just fin -> return $! merge outputInfo i ptr (ArgOutAlloc (S.singleton ci, Just fin)) info
+        Just fin -> return $! merge outputInfo i ptr (ArgOutAlloc (S.singleton ci, OutFinalizer fin)) info
+    StoreInst { storeAddress = (valueContent' -> ArgumentC ptr)
+              , storeValue = (valueContent' -> ConstantC ConstantPointerNull {})} ->
+      return $! merge outputInfo i ptr (ArgOutAlloc (mempty, OutFinalizerNull)) info
     StoreInst { storeAddress = (valueContent -> ArgumentC ptr) } ->
       return $! merge outputInfo i ptr ArgOut info
     AtomicRMWInst { atomicRMWPointer = (valueContent -> ArgumentC ptr) } ->
@@ -341,8 +363,19 @@ callTransfer info i f args = do
             Just attrs ->
               case PAOut `elem` attrs of
                 True -> return $! merge outputInfo i a ArgOut acc
-                False -> return $! merge outputInfo i a ArgIn acc
+                False ->
+                  case find isOutAllocAnnot attrs of
+                    Just (PAOutAlloc "") ->
+                      return $! merge outputInfo i a (ArgOutAlloc (mempty, OutFinalizerConflict)) acc
+                    Just (PAOutAlloc fin) ->
+                      return $! merge outputInfo i a (ArgOutAlloc (mempty, OutFinalizer fin)) acc
+                    Just _ -> return $! merge outputInfo i a ArgIn acc
+                    Nothing -> return $! merge outputInfo i a ArgIn acc
         _ -> return acc
+
+isOutAllocAnnot :: ParamAnnotation -> Bool
+isOutAllocAnnot (PAOutAlloc _) = True
+isOutAllocAnnot _ = False
 
 -- | FIXME: Be more robust and actually use the byte count to ensure it is a
 -- full struct initialization.  In practice it probably always will be...
@@ -427,7 +460,11 @@ outputSummaryToTestFormat (OutputSummary s sf _) =
       case d of
         ArgIn -> Nothing
         ArgOut -> Just PAOut
-        ArgOutAlloc (_, fin) -> Just (PAOutAlloc (maybe "" id fin))
+        -- If the only out alloc case is a NULL pointer, treat it as a
+        -- normal Out param
+        ArgOutAlloc (_, OutFinalizerNull) -> Just PAOut
+        ArgOutAlloc (_, OutFinalizer f) -> Just (PAOutAlloc f)
+        ArgOutAlloc (_, OutFinalizerConflict) -> Just (PAOutAlloc "")
         ArgBoth -> Just PAInOut
 
     isOut (_, argDir) = argDir == ArgOut

@@ -26,7 +26,6 @@ import Data.HashMap.Strict ( HashMap )
 import qualified Data.HashMap.Strict as HM
 import Data.List ( find, foldl' )
 import Debug.Trace.LocationTH
-import Text.Regex.TDFA
 
 import LLVM.Analysis
 
@@ -135,11 +134,11 @@ retainedTypeSearch = go HS.empty . HS.fromList
 
 -- | Top level term creator; this only works for named structs.
 toTerm :: HashMap Type TTerm -> Type -> TTerm
-toTerm m ty@(TypeStruct (Just name) members _) =
+toTerm m ty@(TypeStruct (Just _) members _) =
   typeTerm sname (svar : map (toTerm' m) members)
   where
     Just svar = HM.lookup ty m
-    sname = structBaseName name
+    Just sname = structTypeToName ty
 toTerm _ ty = $failure $ "Expected struct type: " ++ show ty
 
 -- | Inner term creator; for structs, just return the variable
@@ -175,21 +174,10 @@ assignVars = foldM assignVarL HM.empty . HM.toList
 groupByBaseName :: [Type] -> HashMap String [Type]
 groupByBaseName = foldr addToMap HM.empty
   where
-    addToMap ty@(TypeStruct (Just name) _ _) m =
-      HM.insertWith (++) (structBaseName name) [ty] m
-    addToMap ty _ = $failure $ "Expected TypeStruct, got " ++ show ty
-
--- | Strip any trailing .NNN suffix from the string.
-structBaseName :: String -> String
-structBaseName n =
-  case captures of
-    [] -> $failure $ "Unexpected undecomposable struct name: " ++ n
-    [pfx] -> pfx
-    [pfx,_] -> pfx
-    _ -> $failure $ "Unexpected undecomposable struct name: " ++ n
-  where
-    m :: (String, String, String, [String])
-    m@(_, _, _, captures) = n =~ "([[:alpha:]]+\\.[[:alnum:]_]+)(\\.[[:digit:]]+)?"
+    addToMap ty m =
+      case structTypeToName ty of
+        Nothing -> m
+        Just n -> HM.insertWith (++) n [ty] m
 
 -- | Unify a list of terms
 unifies :: (Functor (e m), BindingMonad t v m, MonadTrans e, MonadError (UnificationFailure t v) (e m))

@@ -43,22 +43,6 @@ import LLVM.Analysis.PointsTo
 -- import Debug.Trace
 -- debug = flip trace
 
--- FIXME: Assignments of struct pointers with field initializers
--- to fields of parent structures should propagate initializers.
---
--- > vtbl->a = foo;
--- > vtbl->b = bar;
--- > obj->vtbl = vtbl;
---
--- Asking queries about @obj->vtbl->a@ yields [], when it should yield
--- [foo].  Adding a dependency between obj.vtbl and vtbl.* would let
--- us connect these after every assignment is processed and we can
--- construct these extended results.
-
--- FIXME: Have this implement the PointsTo analysis interface and then
--- use it to construct the call graphs for all analyses.  This way
--- indirect calls can be resolved and functions analyzed in order.
-
 -- FIXME Rename to IndirectCallResolver
 
 -- | This isn't a true points-to analysis because it is an

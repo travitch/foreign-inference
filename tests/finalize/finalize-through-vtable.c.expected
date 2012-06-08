@@ -1,0 +1,3 @@
+fromList [ ("@userFinish", fromList ["%foo"])
+         , ("@realFinish", fromList ["%foo"])
+         ]

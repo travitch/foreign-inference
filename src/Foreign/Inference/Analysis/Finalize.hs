@@ -42,6 +42,8 @@ import Foreign.Inference.Analysis.SingleInitializer
 import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
 
+-- import LLVM.Analysis.AccessPath
+-- import Data.Maybe ( fromJust )
 -- import Text.Printf
 -- import Debug.Trace
 -- debug = flip trace
@@ -199,7 +201,15 @@ callTransfer i v as info =
       case singleInitializer sis v of
         [] -> return info
         [singleInit] -> callTransfer i singleInit as info
-        _ -> return info
+        allInits -> do
+          -- If there is more than one static initializer for the
+          -- function pointer being called, treat it as a finalizer
+          -- IFF all of the initializers agree and finalize the same
+          -- argument.
+          info1:infos <- mapM (\si -> callTransfer i si as info) allInits
+          case all (==info1) infos of
+            True -> return info1
+            False -> return info
     _ -> do
       modSumm <- asks moduleSummary
       depSumm <- asks dependencySummary

@@ -26,17 +26,20 @@
 module Foreign.Inference.Analysis.SingleInitializer (
   SingleInitializerSummary,
   identifySingleInitializers,
-  singleInitializer
+  singleInitializer,
+  indirectCallInitializer
   ) where
 
 import Data.List ( elemIndex, find, foldl', intercalate )
 import Data.List.Ordered ( union )
 import Data.Map ( Map )
 import qualified Data.Map as M
+import Data.Maybe ( mapMaybe )
 import Data.Monoid
 
 import LLVM.Analysis
 import LLVM.Analysis.AccessPath
+import LLVM.Analysis.ClassHierarchy
 import LLVM.Analysis.PointsTo
 
 -- import Text.Printf
@@ -50,6 +53,7 @@ import LLVM.Analysis.PointsTo
 instance PointsToAnalysis SingleInitializerSummary where
   mayAlias _ _ _ = True
   pointsTo = singleInitializer
+  resolveIndirectCall = indirectCallInitializer
 
 data SingleInitializerSummary =
   SIS { abstractPathInitializers :: !(Map AbstractAccessPath [Value])
@@ -64,22 +68,25 @@ data SingleInitializerSummary =
       , fieldArgDependencies :: !(Map AbstractAccessPath [(Function, Int)])
       , globalArgDependencies :: !(Map GlobalVariable [(Function, Int)])
       , canonicalTypeMap :: Map Type Type
+      , resolverCHA :: CHA
       }
-  deriving (Eq)
 
 instance Show SingleInitializerSummary where
-  show (SIS api cbi _ _ _ _) = concat [ "Abstract Path Initializers\n"
-                                      , unlines $ map showAPI (M.toList api)
-                                      , "\nConcrete Value Initializers\n"
-                                      , unlines $ map showCBI (M.toList cbi)
-                                      ]
+  show (SIS api cbi _ _ _ _ _) = concat [ "Abstract Path Initializers\n"
+                                        , unlines $ map showAPI (M.toList api)
+                                        , "\nConcrete Value Initializers\n"
+                                        , unlines $ map showCBI (M.toList cbi)
+                                        ]
     where
       showAPI (aap, vs) = concat [ " * ", show aap, ": ", intercalate ", " (map (show . valueName) vs)]
       showCBI (gv, vs) = concat [ " * ", show (globalVariableName gv), ": ", intercalate ", " (map (show . valueName) vs)]
 
 emptyInitializerSummary :: Module -> Map GlobalVariable [Value] -> SingleInitializerSummary
 emptyInitializerSummary m cvis =
-  SIS mempty cvis mempty mempty mempty (makeCanonicalTypeMap (moduleRetainedTypes m))
+  SIS mempty cvis mempty mempty mempty ctm cha
+  where
+    ctm = makeCanonicalTypeMap (moduleRetainedTypes m)
+    cha = runCHA m
 
 makeCanonicalTypeMap :: [Type] -> Map Type Type
 makeCanonicalTypeMap ts =
@@ -113,6 +120,18 @@ canonicalizeType sis (TypeFunction r ts v) =
   TypeFunction (canonicalizeType sis r) (map (canonicalizeType sis) ts) v
 canonicalizeType _ t = t
 
+
+-- | Canonicalize types in all abstract access paths.  Computed AAPs
+-- in the lookup step will also need to canonicalize.  Just assume
+-- that types sharing the same name are all the same and ignore .NNN
+-- variants.
+--
+-- With the canonicalization, initializations from different
+-- compilation units can be merged even if the LLVM linker was unable
+-- to unify all variants of a type.
+--
+-- The mangled types coming from clang are strange and I haven't had time
+-- to track down the root cause yet.
 canonicalizeAccessPath :: SingleInitializerSummary
                           -> AbstractAccessPath
                           -> AbstractAccessPath
@@ -137,6 +156,29 @@ singleInitializer s v =
         _ -> return $! absPathLookup s cabsPath
     _ -> []
 
+-- | Resolve the targets of an indirect call instruction.  This works
+-- with both C++ virtual function dispatch and some other common
+-- function pointer call patterns.  It is unsound and incomplete.
+--
+-- FIXME: Make this capable of returning external functions...
+-- expected value is low.
+indirectCallInitializer :: SingleInitializerSummary -> Instruction -> [Function]
+indirectCallInitializer sis i =
+  case resolveVirtualCallee (resolverCHA sis) i of
+    Just fs -> fs
+    Nothing ->
+      case i of
+        CallInst { callFunction = f } ->
+          mapMaybe toFunction $ singleInitializer sis f
+        InvokeInst { invokeFunction = f } ->
+          mapMaybe toFunction $ singleInitializer sis f
+        _ -> []
+  where
+    toFunction v =
+      case valueContent' v of
+        FunctionC f -> Just f
+        _ -> Nothing
+
 -- | Look up the initializers for this abstract access path.  The key
 -- here is that we get both the initializers we know for this path,
 -- along with initializers for *suffixes* of the path.  For example,
@@ -160,12 +202,6 @@ globalVarLookup s gv = concreteInits `union` argInits
     concreteInits = M.findWithDefault [] gv (concreteValueInitializers s)
     argDeps = M.findWithDefault [] gv (globalArgDependencies s)
     argInits = concatMap (\x -> M.findWithDefault [] x (argumentInitializers s)) argDeps
-
-
--- canonicalize types in all abstract access paths.  computed AAPs in
--- the lookup step will also need to canonicalize.  Just assume that
--- types sharing the same name are all the same and ignore .NNN
--- variants.
 
 -- | Run the initializer analysis: a cheap pass to identify a subset
 -- of possible function pointers that object fields can point to.

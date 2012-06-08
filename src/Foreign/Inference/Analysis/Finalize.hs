@@ -194,19 +194,19 @@ finalizerTransfer info i =
     _ -> return info
 
 callTransfer :: Instruction -> Value -> [Value] -> FinalizerInfo -> Analysis FinalizerInfo
-callTransfer i v as info =
+callTransfer callInst v as info =
   case valueContent' v of
     InstructionC LoadInst { } -> do
       sis <- asks singleInitSummary
-      case singleInitializer sis v of
+      case indirectCallInitializer sis callInst of
         [] -> return info
-        [singleInit] -> callTransfer i singleInit as info
+        [singleInit] -> callTransfer callInst (Value singleInit) as info
         allInits -> do
           -- If there is more than one static initializer for the
           -- function pointer being called, treat it as a finalizer
           -- IFF all of the initializers agree and finalize the same
           -- argument.
-          info1:infos <- mapM (\si -> callTransfer i si as info) allInits
+          info1:infos <- mapM (\si -> callTransfer callInst si as info) (map Value allInits)
           case all (==info1) infos of
             True -> return info1
             False -> return info
@@ -225,7 +225,7 @@ callTransfer i v as info =
         Just attrs ->
           case PAFinalize `elem` attrs of
             False -> return acc
-            True -> return $! removeArgWithWitness a i "finalized" acc
+            True -> return $! removeArgWithWitness a callInst "finalized" acc
     checkArg _ _ acc _ = return acc
 
 removeArgWithWitness :: Argument -> Instruction -> String -> FinalizerInfo -> FinalizerInfo

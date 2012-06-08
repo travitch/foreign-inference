@@ -44,6 +44,24 @@
 -- not a problem, since we cannot prove that paths with complex
 -- aliasing properties are taken we again do not bother reasoning
 -- about them.
+--
+-- TODO: If a function can return without having *any* side effects
+-- while a parameter is NULL, that parameter is not nullable.
+--
+-- > void bzero(char* p, int n) {
+-- >   for(int i = 0; i < n; ++i ) {
+-- >     p[i] = 0;
+-- >   }
+-- > }
+--
+-- In fact, passing NULL for p and 0 for n allows this function to be
+-- called safely.  However, doing so has no value and it would be fair
+-- to at least warn about seeing NULL passed for p here.
+--
+-- Possible implementation strategy: add a side-effect dataflow bit.
+-- Merging the bits is an && operation.  If the bit is set at the end
+-- of the function, there is a path with no side effects?  This
+-- doesn't seem sufficient
 module Foreign.Inference.Analysis.Nullable (
   -- * Interface
   NullableSummary,

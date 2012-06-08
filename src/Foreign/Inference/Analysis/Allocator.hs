@@ -49,7 +49,7 @@ import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
 import Foreign.Inference.Analysis.Escape
 import Foreign.Inference.Analysis.Finalize
-import Foreign.Inference.Analysis.SingleInitializer
+import Foreign.Inference.Analysis.IndirectCallResolver
 import Foreign.Inference.Internal.FlattenValue
 
 -- import Text.Printf
@@ -81,7 +81,7 @@ instance HasDiagnostics AllocatorSummary where
 
 data AllocatorData =
   AllocatorData { dependencySummary :: DependencySummary
-                , singleInitSummary :: SingleInitializerSummary
+                , indirectCallSummary :: IndirectCallSummary
                 }
 
 type Analysis = AnalysisMonad AllocatorData ()
@@ -102,16 +102,16 @@ instance SummarizeModule AllocatorSummary where
 
 identifyAllocators :: (FuncLike funcLike, HasFunction funcLike)
                       => DependencySummary
-                      -> SingleInitializerSummary
+                      -> IndirectCallSummary
                       -> Lens compositeSummary AllocatorSummary
                       -> Lens compositeSummary EscapeSummary
                       -> Lens compositeSummary FinalizerSummary
                       -> ComposableAnalysis compositeSummary funcLike
-identifyAllocators ds sis lns escLens finLens =
+identifyAllocators ds ics lns escLens finLens =
   composableDependencyAnalysisM runner allocatorAnalysis lns depLens
   where
     runner a = runAnalysis a readOnlyData ()
-    readOnlyData = AllocatorData ds sis
+    readOnlyData = AllocatorData ds ics
     depLens = lens (getL escLens &&& getL finLens) (\(e, f) -> setL escLens e . setL finLens f)
 
 -- | If the function returns a pointer, it is a candidate for an
@@ -198,8 +198,8 @@ checkFunctionIsAllocator :: Value -> AllocatorSummary -> [Instruction] -> Analys
 checkFunctionIsAllocator v summ is =
   case valueContent' v of
     InstructionC LoadInst { } -> do
-      sis <- asks singleInitSummary
-      case singleInitializer sis v of
+      sis <- asks indirectCallSummary
+      case indirectCallInitializers sis v of
         [] -> return []
         [i] -> checkFunctionIsAllocator i summ is
         _ -> return []

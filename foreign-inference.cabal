@@ -34,7 +34,7 @@ library
                    Foreign.Inference.Analysis.RefCount,
                    Foreign.Inference.Analysis.Return,
                    Foreign.Inference.Analysis.ScalarEffects,
-                   Foreign.Inference.Analysis.SingleInitializer,
+                   Foreign.Inference.Analysis.IndirectCallResolver,
                    Foreign.Inference.Analysis.Util.CompositeSummary,
                    Foreign.Inference.AnalysisMonad,
                    Foreign.Inference.Preprocessing,

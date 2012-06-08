@@ -38,7 +38,7 @@ import LLVM.Analysis.CallGraphSCCTraversal
 import LLVM.Analysis.Dataflow
 
 import Foreign.Inference.AnalysisMonad
-import Foreign.Inference.Analysis.SingleInitializer
+import Foreign.Inference.Analysis.IndirectCallResolver
 import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
 
@@ -90,19 +90,19 @@ summarizeFinalizerArgument a (FinalizerSummary m _) =
 data FinalizerData =
   FinalizerData { moduleSummary :: FinalizerSummary
                 , dependencySummary :: DependencySummary
-                , singleInitSummary :: SingleInitializerSummary
+                , singleInitSummary :: IndirectCallSummary
                 }
 
 identifyFinalizers :: (FuncLike funcLike, HasFunction funcLike, HasCFG funcLike)
                       => DependencySummary
-                      -> SingleInitializerSummary
+                      -> IndirectCallSummary
                       -> Lens compositeSummary FinalizerSummary
                       -> ComposableAnalysis compositeSummary funcLike
-identifyFinalizers ds sis lns =
+identifyFinalizers ds ics lns =
   composableAnalysisM runner finalizerAnalysis lns
   where
     runner a = runAnalysis a constData ()
-    constData = FinalizerData mempty ds sis
+    constData = FinalizerData mempty ds ics
 
 -- | Find all functions of one parameter that finalize the given type.
 automaticFinalizersForType :: FinalizerSummary -> Type -> [Function]
@@ -198,7 +198,7 @@ callTransfer callInst v as info =
   case valueContent' v of
     InstructionC LoadInst { } -> do
       sis <- asks singleInitSummary
-      case indirectCallInitializer sis callInst of
+      case indirectCallTargets sis callInst of
         [] -> return info
         [singleInit] -> callTransfer callInst (Value singleInit) as info
         allInits -> do

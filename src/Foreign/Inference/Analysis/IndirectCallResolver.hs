@@ -23,11 +23,11 @@
 -- Run this analysis after or before constructing the call graph and
 -- initialize the whole-program summary with it.  It doesn't need to
 -- be computed bottom up as part of the call graph traversal.
-module Foreign.Inference.Analysis.SingleInitializer (
-  SingleInitializerSummary,
-  identifySingleInitializers,
-  singleInitializer,
-  indirectCallInitializer
+module Foreign.Inference.Analysis.IndirectCallResolver (
+  IndirectCallSummary,
+  identifyIndirectCallTargets,
+  indirectCallInitializers,
+  indirectCallTargets
   ) where
 
 import Data.List ( elemIndex, find, foldl', intercalate )
@@ -42,21 +42,15 @@ import LLVM.Analysis.AccessPath
 import LLVM.Analysis.ClassHierarchy
 import LLVM.Analysis.PointsTo
 
--- import Text.Printf
--- import Debug.Trace
--- debug = flip trace
-
--- FIXME Rename to IndirectCallResolver
-
 -- | This isn't a true points-to analysis because it is an
 -- under-approximation.  However, that is sufficient for this library.
-instance PointsToAnalysis SingleInitializerSummary where
+instance PointsToAnalysis IndirectCallSummary where
   mayAlias _ _ _ = True
-  pointsTo = singleInitializer
-  resolveIndirectCall = indirectCallInitializer
+  pointsTo = indirectCallInitializers
+  resolveIndirectCall = indirectCallTargets
 
-data SingleInitializerSummary =
-  SIS { abstractPathInitializers :: !(Map AbstractAccessPath [Value])
+data IndirectCallSummary =
+  ICS { abstractPathInitializers :: !(Map AbstractAccessPath [Value])
         -- ^ Function initializers assigned to fields of types
       , concreteValueInitializers :: !(Map GlobalVariable [Value])
         -- ^ Explicit values assigned to global variables, either at
@@ -68,11 +62,15 @@ data SingleInitializerSummary =
       , fieldArgDependencies :: !(Map AbstractAccessPath [(Function, Int)])
       , globalArgDependencies :: !(Map GlobalVariable [(Function, Int)])
       , canonicalTypeMap :: Map Type Type
+        -- ^ A map of all struct types to their canonical
+        -- representative.  This choice can be arbitrary but is in
+        -- practice the one with no .NNN suffix.
       , resolverCHA :: CHA
+        -- ^ The class hierarchy analysis
       }
 
-instance Show SingleInitializerSummary where
-  show (SIS api cbi _ _ _ _ _) = concat [ "Abstract Path Initializers\n"
+instance Show IndirectCallSummary where
+  show (ICS api cbi _ _ _ _ _) = concat [ "Abstract Path Initializers\n"
                                         , unlines $ map showAPI (M.toList api)
                                         , "\nConcrete Value Initializers\n"
                                         , unlines $ map showCBI (M.toList cbi)
@@ -81,9 +79,9 @@ instance Show SingleInitializerSummary where
       showAPI (aap, vs) = concat [ " * ", show aap, ": ", intercalate ", " (map (show . valueName) vs)]
       showCBI (gv, vs) = concat [ " * ", show (globalVariableName gv), ": ", intercalate ", " (map (show . valueName) vs)]
 
-emptyInitializerSummary :: Module -> Map GlobalVariable [Value] -> SingleInitializerSummary
-emptyInitializerSummary m cvis =
-  SIS mempty cvis mempty mempty mempty ctm cha
+emptySummary :: Module -> Map GlobalVariable [Value] -> IndirectCallSummary
+emptySummary m cvis =
+  ICS mempty cvis mempty mempty mempty ctm cha
   where
     ctm = makeCanonicalTypeMap (moduleRetainedTypes m)
     cha = runCHA m
@@ -111,7 +109,7 @@ makeCanonicalTypeMap ts =
     nameHasOneDot (TypeStruct (Just n) _ _) = length (filter (=='.') n) == 1
     nameHasOneDot _ = False
 
-canonicalizeType :: SingleInitializerSummary -> Type -> Type
+canonicalizeType :: IndirectCallSummary -> Type -> Type
 canonicalizeType sis ty@(TypeStruct _ _ _) =
   M.findWithDefault ty ty (canonicalTypeMap sis)
 canonicalizeType sis (TypePointer t' a) =
@@ -132,7 +130,7 @@ canonicalizeType _ t = t
 --
 -- The mangled types coming from clang are strange and I haven't had time
 -- to track down the root cause yet.
-canonicalizeAccessPath :: SingleInitializerSummary
+canonicalizeAccessPath :: IndirectCallSummary
                           -> AbstractAccessPath
                           -> AbstractAccessPath
 canonicalizeAccessPath s (AbstractAccessPath bt et cs) =
@@ -141,8 +139,8 @@ canonicalizeAccessPath s (AbstractAccessPath bt et cs) =
                      , abstractAccessPathComponents = cs
                      }
 
-singleInitializer :: SingleInitializerSummary -> Value -> [Value]
-singleInitializer s v =
+indirectCallInitializers :: IndirectCallSummary -> Value -> [Value]
+indirectCallInitializers s v =
   case valueContent' v of
     InstructionC i -> maybe [] id $ do
       accPath <- accessPath i
@@ -162,16 +160,16 @@ singleInitializer s v =
 --
 -- FIXME: Make this capable of returning external functions...
 -- expected value is low.
-indirectCallInitializer :: SingleInitializerSummary -> Instruction -> [Function]
-indirectCallInitializer sis i =
-  case resolveVirtualCallee (resolverCHA sis) i of
+indirectCallTargets :: IndirectCallSummary -> Instruction -> [Function]
+indirectCallTargets ics i =
+  case resolveVirtualCallee (resolverCHA ics) i of
     Just fs -> fs
     Nothing ->
       case i of
         CallInst { callFunction = f } ->
-          mapMaybe toFunction $ singleInitializer sis f
+          mapMaybe toFunction $ indirectCallInitializers ics f
         InvokeInst { invokeFunction = f } ->
-          mapMaybe toFunction $ singleInitializer sis f
+          mapMaybe toFunction $ indirectCallInitializers ics f
         _ -> []
   where
     toFunction v =
@@ -185,7 +183,7 @@ indirectCallInitializer sis i =
 -- if the path is a.b.c.d, we also care about initializers for b.c.d
 -- (and c.d).  The recursive walk is in the reducedPathResults
 -- segment.
-absPathLookup :: SingleInitializerSummary -> AbstractAccessPath -> [Value]
+absPathLookup :: IndirectCallSummary -> AbstractAccessPath -> [Value]
 absPathLookup s absPath = storeInits `union` argInits `union` reducedPathResults
   where
     storeInits = M.findWithDefault [] absPath (abstractPathInitializers s)
@@ -196,7 +194,7 @@ absPathLookup s absPath = storeInits `union` argInits `union` reducedPathResults
         Nothing -> []
         Just rpath -> absPathLookup s rpath
 
-globalVarLookup :: SingleInitializerSummary -> GlobalVariable -> [Value]
+globalVarLookup :: IndirectCallSummary -> GlobalVariable -> [Value]
 globalVarLookup s gv = concreteInits `union` argInits
   where
     concreteInits = M.findWithDefault [] gv (concreteValueInitializers s)
@@ -205,11 +203,11 @@ globalVarLookup s gv = concreteInits `union` argInits
 
 -- | Run the initializer analysis: a cheap pass to identify a subset
 -- of possible function pointers that object fields can point to.
-identifySingleInitializers :: Module -> SingleInitializerSummary
-identifySingleInitializers m =
+identifyIndirectCallTargets :: Module -> IndirectCallSummary
+identifyIndirectCallTargets m =
   foldl' (flip recordInitializers) s0 allInsts
   where
-    s0 = emptyInitializerSummary m (M.fromList globalsWithInits)
+    s0 = emptySummary m (M.fromList globalsWithInits)
     allBlocks = concatMap functionBody $ moduleDefinedFunctions m
     allInsts = concatMap basicBlockInstructions allBlocks
     globalsWithInits = foldr extractGlobalsWithInits [] (moduleGlobalVariables m)
@@ -222,7 +220,7 @@ extractGlobalsWithInits gv acc =
     Nothing -> acc
     Just i -> (gv, [i]) : acc
 
-recordInitializers :: Instruction -> SingleInitializerSummary -> SingleInitializerSummary
+recordInitializers :: Instruction -> IndirectCallSummary -> IndirectCallSummary
 recordInitializers i s =
   case i of
     StoreInst { storeValue = sv, storeAddress = sa } ->
@@ -250,9 +248,9 @@ recordInitializers i s =
 -- value, record that as a value as associated with the ix'th argument
 -- of the callee.
 recordArgFuncInit :: Function
-                     -> SingleInitializerSummary
+                     -> IndirectCallSummary
                      -> (Int, Value)
-                     -> SingleInitializerSummary
+                     -> IndirectCallSummary
 recordArgFuncInit f s (ix, arg) =
   case valueContent' arg of
     FunctionC _ ->
@@ -269,8 +267,8 @@ recordArgInitializer :: Instruction
                         -> Function
                         -> Int
                         -> Value
-                        -> SingleInitializerSummary
-                        -> SingleInitializerSummary
+                        -> IndirectCallSummary
+                        -> IndirectCallSummary
 recordArgInitializer i f ix sa s =
   case valueContent' sa of
     GlobalVariableC gv ->
@@ -289,8 +287,8 @@ recordArgInitializer i f ix sa s =
 
 -- | Initializers here (sv) are only functions (external or otherwise)
 maybeRecordInitializer :: Instruction -> Value -> Value
-                          -> SingleInitializerSummary
-                          -> SingleInitializerSummary
+                          -> IndirectCallSummary
+                          -> IndirectCallSummary
 maybeRecordInitializer i sv sa s =
   case valueContent' sa of
     GlobalVariableC gv ->

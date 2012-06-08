@@ -8,13 +8,13 @@ import Test.HUnit ( assertEqual )
 import LLVM.Analysis
 import LLVM.Analysis.CallGraph
 import LLVM.Analysis.CallGraphSCCTraversal
-import LLVM.Analysis.PointsTo.TrivialFunction
 import LLVM.Analysis.Util.Testing
 import LLVM.Parse
 
 import Foreign.Inference.Interface
 import Foreign.Inference.Preprocessing
 import Foreign.Inference.Analysis.Array
+import Foreign.Inference.Analysis.IndirectCallResolver
 import Foreign.Inference.Analysis.Util.CompositeSummary
 
 main :: IO ()
@@ -37,7 +37,7 @@ main = do
 analyzeArrays ds m =
   arraySummaryToTestFormat (_arraySummary res)
   where
-    pta = runPointsToAnalysis m
+    pta = identifyIndirectCallTargets m
     cg = mkCallGraph m pta []
     analyses :: [ComposableAnalysis AnalysisSummary FunctionMetadata]
     analyses = [ identifyArrays ds arraySummary ]

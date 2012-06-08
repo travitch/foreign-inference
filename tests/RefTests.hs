@@ -11,7 +11,6 @@ import LLVM.Analysis
 import LLVM.Analysis.CallGraph
 import LLVM.Analysis.CallGraphSCCTraversal
 import LLVM.Analysis.PointsTo
-import LLVM.Analysis.PointsTo.TrivialFunction
 import LLVM.Analysis.Util.Testing
 import LLVM.Parse
 
@@ -20,7 +19,7 @@ import Foreign.Inference.Preprocessing
 import Foreign.Inference.Analysis.Finalize
 import Foreign.Inference.Analysis.RefCount
 import Foreign.Inference.Analysis.ScalarEffects
-import Foreign.Inference.Analysis.SingleInitializer
+import Foreign.Inference.Analysis.IndirectCallResolver
 import Foreign.Inference.Analysis.Util.CompositeSummary
 
 main :: IO ()
@@ -43,11 +42,10 @@ main = do
 analyzeRefCounts ds m =
   refCountSummaryToTestFormat (_refCountSummary res)
   where
-    sis = identifySingleInitializers m
-    pta = runPointsToAnalysis m
-    cg = mkCallGraph m pta []
+    ics = identifyIndirectCallTargets m
+    cg = mkCallGraph m ics []
     analyses :: [ComposableAnalysis AnalysisSummary FunctionMetadata]
-    analyses = [ identifyFinalizers ds sis finalizerSummary
+    analyses = [ identifyFinalizers ds ics finalizerSummary
                , identifyScalarEffects scalarEffectSummary
                , identifyRefCounting ds refCountSummary finalizerSummary scalarEffectSummary
                ]

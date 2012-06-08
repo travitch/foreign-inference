@@ -10,7 +10,6 @@ import Test.HUnit ( assertEqual )
 import LLVM.Analysis
 import LLVM.Analysis.CallGraph
 import LLVM.Analysis.CallGraphSCCTraversal
-import LLVM.Analysis.PointsTo.TrivialFunction
 import LLVM.Analysis.Util.Testing
 import LLVM.Parse
 
@@ -20,7 +19,7 @@ import Foreign.Inference.Analysis.Allocator
 import Foreign.Inference.Analysis.Escape
 import Foreign.Inference.Analysis.Finalize
 import Foreign.Inference.Analysis.Output
-import Foreign.Inference.Analysis.SingleInitializer
+import Foreign.Inference.Analysis.IndirectCallResolver
 import Foreign.Inference.Analysis.Util.CompositeSummary
 
 main :: IO ()
@@ -45,13 +44,12 @@ analyzeOutput :: DependencySummary -> Module -> Map String (Set (String, ParamAn
 analyzeOutput ds m =
   outputSummaryToTestFormat (_outputSummary res)
   where
-    pta = runPointsToAnalysis m
-    cg = mkCallGraph m pta []
-    sis = identifySingleInitializers m
+    cg = mkCallGraph m ics []
+    ics = identifyIndirectCallTargets m
     analyses :: [ComposableAnalysis AnalysisSummary FunctionMetadata]
     analyses = [ identifyEscapes ds escapeSummary
-               , identifyFinalizers ds sis finalizerSummary
-               , identifyAllocators ds sis allocatorSummary escapeSummary finalizerSummary
+               , identifyFinalizers ds ics finalizerSummary
+               , identifyAllocators ds ics allocatorSummary escapeSummary finalizerSummary
                , identifyOutput ds outputSummary allocatorSummary escapeSummary
                ]
     analysisFunc = callGraphComposeAnalysis analyses

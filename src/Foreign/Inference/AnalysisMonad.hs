@@ -10,10 +10,10 @@ import Data.Lens.Common
 
 import Foreign.Inference.Diagnostics
 
-newtype AnalysisMonad env state a =
-  AnalysisMonad { unAnalysis :: RWS env Diagnostics state a }
+newtype AnalysisMonad env st a =
+  AnalysisMonad { unAnalysis :: RWS env Diagnostics st a }
   deriving (Monad,
-            MonadState state,
+            MonadState st,
             MonadReader env,
             MonadWriter Diagnostics)
 

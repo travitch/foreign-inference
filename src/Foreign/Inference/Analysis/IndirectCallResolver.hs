@@ -30,7 +30,7 @@ module Foreign.Inference.Analysis.IndirectCallResolver (
   indirectCallTargets
   ) where
 
-import Data.List ( elemIndex, find, foldl', intercalate )
+import Data.List ( elemIndex, foldl', intercalate )
 import Data.List.Ordered ( union )
 import Data.Map ( Map )
 import qualified Data.Map as M
@@ -61,16 +61,12 @@ data IndirectCallSummary =
         -- Function that is the key of the map.
       , fieldArgDependencies :: !(Map AbstractAccessPath [(Function, Int)])
       , globalArgDependencies :: !(Map GlobalVariable [(Function, Int)])
-      , canonicalTypeMap :: Map Type Type
-        -- ^ A map of all struct types to their canonical
-        -- representative.  This choice can be arbitrary but is in
-        -- practice the one with no .NNN suffix.
       , resolverCHA :: CHA
         -- ^ The class hierarchy analysis
       }
 
 instance Show IndirectCallSummary where
-  show (ICS api cbi _ _ _ _ _) = concat [ "Abstract Path Initializers\n"
+  show (ICS api cbi _ _ _ _) = concat [ "Abstract Path Initializers\n"
                                         , unlines $ map showAPI (M.toList api)
                                         , "\nConcrete Value Initializers\n"
                                         , unlines $ map showCBI (M.toList cbi)
@@ -81,63 +77,9 @@ instance Show IndirectCallSummary where
 
 emptySummary :: Module -> Map GlobalVariable [Value] -> IndirectCallSummary
 emptySummary m cvis =
-  ICS mempty cvis mempty mempty mempty ctm cha
+  ICS mempty cvis mempty mempty mempty cha
   where
-    ctm = makeCanonicalTypeMap (moduleRetainedTypes m)
     cha = runCHA m
-
-makeCanonicalTypeMap :: [Type] -> Map Type Type
-makeCanonicalTypeMap ts =
-  foldr canonicalize mempty (M.toList typesByName)
-  where
-    typesByName = foldr addTypeByName mempty ts
-    addTypeByName t m =
-      case t of
-        TypeStruct _ _ _ ->
-          case structTypeToName t of
-            Nothing -> m
-            Just tn -> M.insertWith' (++) tn [t] m
-        _ -> m
-    canonicalize (_, gts) acc =
-      case find nameHasOneDot gts of
-        Nothing -> acc
-        Just ctype -> foldr (insertCanonical ctype) acc gts
-    insertCanonical ctype t = M.insert t ctype
-    -- Struct names with one dot are of the form struct.name -- they
-    -- have no numeric suffix.  These are the types we are taking as
-    -- canonical
-    nameHasOneDot (TypeStruct (Just n) _ _) = length (filter (=='.') n) == 1
-    nameHasOneDot _ = False
-
-canonicalizeType :: IndirectCallSummary -> Type -> Type
-canonicalizeType sis ty@(TypeStruct _ _ _) =
-  M.findWithDefault ty ty (canonicalTypeMap sis)
-canonicalizeType sis (TypePointer t' a) =
-  TypePointer (canonicalizeType sis t') a
-canonicalizeType sis (TypeFunction r ts v) =
-  TypeFunction (canonicalizeType sis r) (map (canonicalizeType sis) ts) v
-canonicalizeType _ t = t
-
-
--- | Canonicalize types in all abstract access paths.  Computed AAPs
--- in the lookup step will also need to canonicalize.  Just assume
--- that types sharing the same name are all the same and ignore .NNN
--- variants.
---
--- With the canonicalization, initializations from different
--- compilation units can be merged even if the LLVM linker was unable
--- to unify all variants of a type.
---
--- The mangled types coming from clang are strange and I haven't had time
--- to track down the root cause yet.
-canonicalizeAccessPath :: IndirectCallSummary
-                          -> AbstractAccessPath
-                          -> AbstractAccessPath
-canonicalizeAccessPath s (AbstractAccessPath bt et cs) =
-  AbstractAccessPath { abstractAccessPathBaseType = canonicalizeType s bt
-                     , abstractAccessPathEndType = canonicalizeType s et
-                     , abstractAccessPathComponents = cs
-                     }
 
 indirectCallInitializers :: IndirectCallSummary -> Value -> [Value]
 indirectCallInitializers s v =
@@ -145,13 +87,12 @@ indirectCallInitializers s v =
     InstructionC i -> maybe [] id $ do
       accPath <- accessPath i
       let absPath = abstractAccessPath accPath
-          cabsPath = canonicalizeAccessPath s absPath
       case valueContent' (accessPathBaseValue accPath) of
         GlobalVariableC gv@GlobalVariable { globalVariableInitializer = Just initVal } ->
-          case followAccessPath cabsPath initVal of
+          case followAccessPath absPath initVal of
             Nothing -> return $! globalVarLookup s gv
             accPathVal -> fmap return accPathVal
-        _ -> return $! absPathLookup s cabsPath
+        _ -> return $! absPathLookup s absPath
     _ -> []
 
 -- | Resolve the targets of an indirect call instruction.  This works
@@ -280,9 +221,8 @@ recordArgInitializer i f ix sa s =
         Nothing -> s
         Just accPath ->
           let absPath = abstractAccessPath accPath
-              cabsPath = canonicalizeAccessPath s absPath
           in s { fieldArgDependencies =
-                    M.insertWith' union cabsPath [(f, ix)] (fieldArgDependencies s)
+                    M.insertWith' union absPath [(f, ix)] (fieldArgDependencies s)
                }
 
 -- | Initializers here (sv) are only functions (external or otherwise)
@@ -300,7 +240,6 @@ maybeRecordInitializer i sv sa s =
         Nothing -> s
         Just accPath ->
           let absPath = abstractAccessPath accPath
-              cabsPath = canonicalizeAccessPath s absPath
           in s { abstractPathInitializers =
-                    M.insertWith' union cabsPath [sv] (abstractPathInitializers s)
+                    M.insertWith' union absPath [sv] (abstractPathInitializers s)
                }

@@ -9,7 +9,6 @@ module Foreign.Inference.Interface.Metadata (
   ) where
 
 import Control.Arrow ( (&&&) )
-import qualified Data.ByteString.Char8 as SBS
 import Data.HashMap.Strict ( HashMap )
 import qualified Data.HashMap.Strict as M
 import Data.HashSet ( HashSet )
@@ -17,6 +16,7 @@ import qualified Data.HashSet as HS
 import qualified Data.Set as S
 import Data.Maybe ( catMaybes, mapMaybe )
 import Data.Monoid
+import qualified Data.Text as T
 import Debug.Trace.LocationTH
 
 import LLVM.Analysis
@@ -97,20 +97,20 @@ collectEnums = go Nothing
                            , metaDerivedTypeTag = DW_TAG_typedef
                            , metaDerivedTypeParent = Just parent
                            } acc =
-      go (Just (SBS.unpack bsname)) parent acc
+      go (Just (T.unpack bsname)) parent acc
     go name MetaDWDerivedType { metaDerivedTypeParent = Just parent } acc =
       go name parent acc
     go name MetaDWCompositeType { metaCompositeTypeTag = DW_TAG_enumeration_type
                                 , metaCompositeTypeName = bsname
                                 , metaCompositeTypeMembers = Just (MetadataList _ enums)
                                 } acc =
-      case SBS.null bsname of
+      case T.null bsname of
         True ->
           CEnum { enumName = maybe "" id name
                 , enumValues = mapMaybe toEnumeratorValue enums
                 } : acc
         False ->
-          CEnum { enumName = SBS.unpack bsname
+          CEnum { enumName = T.unpack bsname
                 , enumValues = mapMaybe toEnumeratorValue enums
                 } : acc
     go _ _ acc = acc
@@ -119,7 +119,7 @@ toEnumeratorValue :: Maybe Metadata -> Maybe (String, Int)
 toEnumeratorValue (Just MetaDWEnumerator { metaEnumeratorName = ename
                                          , metaEnumeratorValue = eval
                                          }) =
-  Just (SBS.unpack ename, fromIntegral eval)
+  Just (T.unpack ename, fromIntegral eval)
 toEnumeratorValue _ = Nothing
 
 extractInterfaceStructTypes :: Function
@@ -175,7 +175,7 @@ metadataStructTypeToCType (TypeStruct (Just name) members _,
     trNameAndType (llvmType, Just MetaDWDerivedType { metaDerivedTypeName = memberName
                                                }) = do
       realType <- structMemberToCType llvmType
-      return (SBS.unpack memberName, realType)
+      return (T.unpack memberName, realType)
     trNameAndType _ = Nothing
 -- If there were no members in the metadata, this is an opaque type
 metadataStructTypeToCType (TypeStruct (Just name) _ _, _) =

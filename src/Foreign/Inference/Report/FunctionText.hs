@@ -11,12 +11,13 @@ module Foreign.Inference.Report.FunctionText (
 
 import Blaze.ByteString.Builder
 import Control.Applicative ( many )
+import Data.Ascii ( ascii )
 import Data.Attoparsec.ByteString.Lazy ( Parser )
 import qualified Data.Attoparsec.ByteString.Lazy as P
 import Data.ByteString.Lazy.Char8 ( ByteString )
 import qualified Data.ByteString.Char8 as BSC
-import Data.Ascii ( ascii )
 import Data.Monoid
+import qualified Data.Text as T
 import System.FilePath
 
 import Codec.Archive
@@ -99,7 +100,7 @@ getFunctionText a func = do
 
       let f = metaFileSourceFile ctxt
           d = metaFileSourceDir ctxt
-          absSrcFile = BSC.unpack d </> BSC.unpack f
+          absSrcFile = T.unpack d </> T.unpack f
 
       bs <- entryContentSuffix a absSrcFile
       let functionText = P.parse (isolator (fromIntegral line)) bs

@@ -107,7 +107,7 @@ writeFunctionBodyPage :: InterfaceReport
                          -> (Function, (FilePath, Int, ByteString))
                          -> IO ()
 writeFunctionBodyPage r dir (f, (srcFile, startLine, body)) = do
-  let funcName = BS8.unpack (identifierContent (functionName f))
+  let funcName = identifierAsString (functionName f)
       filename = dir </> "functions" </> funcName <.> "html"
       functionPage = htmlFunctionPage r f srcFile startLine body
 

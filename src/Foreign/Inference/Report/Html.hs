@@ -14,7 +14,6 @@ import Data.Maybe ( mapMaybe )
 import qualified Data.Map as M
 import Data.Monoid
 import Data.Text ( Text, pack )
-import Data.Text.Encoding ( decodeUtf8 )
 import qualified Data.Text as T
 import Debug.Trace.LocationTH
 import System.FilePath
@@ -68,7 +67,7 @@ htmlFunctionPage r f srcFile startLine functionText = H.docTypeHtml $ do
     H.script ! A.type_ "text/javascript" $ H.preEscapedToMarkup (initialScript calledFunctions)
 
   where
-    funcName = decodeUtf8 (identifierContent (functionName f))
+    funcName = identifierContent (functionName f)
     pageTitle = funcName `mappend` " [function breakdown]"
     allInstructions = concatMap basicBlockInstructions (functionBody f)
     calledFunctions = foldr extractCalledFunctionNames [] allInstructions
@@ -107,9 +106,7 @@ extractCalledFunctionNames i acc =
   where
     maybeExtract cv names =
       case valueContent cv of
-        FunctionC f ->
-          let fname = decodeUtf8 $ identifierContent (functionName f)
-          in fname : names
+        FunctionC f -> identifierContent (functionName f) : names
         _ -> names
 
 initialScript :: [Text] -> Text
@@ -131,7 +128,7 @@ drilldownArgumentEntry startLine r arg = H.li $ do
   H.a ! A.href "#" ! A.onclick (H.preEscapedToValue clickScript) $ toHtml argName
   drilldownArgumentAnnotations startLine annots
   where
-    argName = decodeUtf8 (identifierContent (argumentName arg))
+    argName = identifierContent (argumentName arg)
     clickScript = mconcat [ "highlight('", argName, "');" ]
     annots = concatMap (summarizeArgument arg) (reportSummaries r)
 
@@ -188,7 +185,7 @@ htmlIndexPage r opts = H.docTypeHtml $ do
   H.body $ do
     H.h1 "Module Information"
     H.div ! A.id "module-info" $ do
-      "Name: " >> toHtml (decodeUtf8 (moduleIdentifier m))
+      "Name: " >> toHtml (moduleIdentifier m)
     H.h1 "Exposed Functions"
     indexPageFunctionListing r (LinkDrilldowns `elem` opts) "exposed-functions" externs
     H.h1 "Private Functions"
@@ -197,7 +194,7 @@ htmlIndexPage r opts = H.docTypeHtml $ do
     indexPageTypeListing r ts
   where
     pageTitle :: Text
-    pageTitle = decodeUtf8 (moduleIdentifier m) `mappend` " summary report"
+    pageTitle = (moduleIdentifier m) `mappend` " summary report"
     m = reportModule r
     ts = moduleInterfaceStructTypes m
     (externs, privates) = partition isExtern (moduleDefinedFunctions m)
@@ -258,7 +255,7 @@ indexPageFunctionEntry r linkFunc f = do
     fannots = concat [ userFunctionAnnotations allAnnots f
                      , concatMap (summarizeFunction f) (reportSummaries r)
                      ]
-    fname = decodeUtf8 (identifierContent (functionName f))
+    fname = identifierContent (functionName f)
     -- Use a bit of trickery to flag when we need to insert commas
     -- after arguments (so we don't end up with a trailing comma in
     -- the argument list)
@@ -274,7 +271,7 @@ indexPageArgument r (ix, arg) = do
   " " >> toHtml paramName >> " " >> indexArgumentAnnotations annots
   where
     paramType = show (argumentType arg)
-    paramName = decodeUtf8 (identifierContent (argumentName arg))
+    paramName = identifierContent (argumentName arg)
     allAnnots = libraryAnnotations $ reportDependencies r
     annots = concat [ userParameterAnnotations allAnnots (argumentFunction arg) ix
                     , concatMap (map fst . summarizeArgument arg) (reportSummaries r)

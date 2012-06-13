@@ -56,7 +56,6 @@ import Control.Arrow
 import Control.DeepSeq
 import Control.Exception
 import Data.Aeson
-import Data.ByteString.Char8 ( ByteString )
 import qualified Data.ByteString.Char8 as SBS
 import qualified Data.ByteString.Lazy as LBS
 import Data.Data
@@ -71,6 +70,8 @@ import Data.Maybe ( mapMaybe )
 import Data.Monoid
 import Data.Set ( Set )
 import qualified Data.Set as S
+import Data.Text ( Text )
+import qualified Data.Text as T
 import Data.Foldable ( foldl' )
 import Debug.Trace.LocationTH
 import System.FilePath
@@ -107,8 +108,8 @@ data InterfaceException = DependencyMissing FilePath
 instance Exception InterfaceException
 
 
-type LibraryAnnotations = Map ByteString ([FuncAnnotation], IntMap [ParamAnnotation])
-type DepMap = HashMap ByteString ForeignFunction
+type LibraryAnnotations = Map Text ([FuncAnnotation], IntMap [ParamAnnotation])
+type DepMap = HashMap Text ForeignFunction
 
 -- | This index is a map from struct fields containing ref-counting
 -- finalizers to the associated ref/unref functions.
@@ -325,7 +326,7 @@ mergeFunction m f = case M.lookup fn m of
         False ->
           $failure ("Functions with overlapping linkage: " ++ show f ++ " and " ++ show f')
   where
-    fn = SBS.pack $ foreignFunctionName f
+    fn = T.pack $ foreignFunctionName f
 
 -- | This is a low-level helper to load a LibraryInterface from a
 -- location on disk.
@@ -432,7 +433,7 @@ paramToExternal :: [ModuleSummary] -> LibraryAnnotations -> (Int, Argument) -> M
 paramToExternal summaries annots (ix, arg) = do
   ptype <- typeToCType (paramMetaUnsigned arg) (argumentType arg)
   return Parameter { parameterType = ptype
-                   , parameterName = SBS.unpack (identifierContent (argumentName arg))
+                   , parameterName = identifierAsString (argumentName arg)
                    , parameterAnnotations =
                      concat [ userParameterAnnotations annots f ix
                               -- The map fst here drops witness information -

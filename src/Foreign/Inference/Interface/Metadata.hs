@@ -140,12 +140,12 @@ extractInterfaceStructTypes f (typeMDMap, opaqueTypes) =
 toStructType :: (Type, Maybe Metadata)
                 -> ([(Type, Metadata)], HashSet Type)
                 -> ([(Type, Metadata)], HashSet Type)
-toStructType (t@(TypeStruct _ _ _),
+toStructType (t@(TypeStruct (Just _) _ _),
               Just MetaDWDerivedType { metaDerivedTypeTag = DW_TAG_typedef
                                 , metaDerivedTypeParent = parent
                                 }) acc =
   toStructType (t, parent) acc
-toStructType (t@(TypeStruct _ _ _), Just a) (tms, ts) = ((t, a) : tms, ts)
+toStructType (t@(TypeStruct (Just _) _ _), Just a) (tms, ts) = ((t, a) : tms, ts)
 toStructType (TypePointer inner _,
               Just MetaDWDerivedType { metaDerivedTypeTag = DW_TAG_pointer_type
                                 , metaDerivedTypeParent = parent

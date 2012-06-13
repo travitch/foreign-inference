@@ -15,7 +15,6 @@ import qualified Data.HashMap.Strict as M
 import Data.HashSet ( HashSet )
 import qualified Data.HashSet as HS
 import qualified Data.Set as S
-import Data.List ( stripPrefix )
 import Data.Maybe ( catMaybes, mapMaybe )
 import Data.Monoid
 import Debug.Trace.LocationTH
@@ -26,7 +25,6 @@ import Data.Graph.Interface
 import Data.Graph.PatriciaTree
 import Data.Graph.Algorithms.Matching.DFS
 
-import Foreign.Inference.Internal.TypeUnification
 import Foreign.Inference.Interface.Types
 
 -- import Text.Printf
@@ -44,13 +42,13 @@ moduleInterfaceStructTypes m = opaqueTypes ++ concreteTypes
   where
     defFuncs = moduleDefinedFunctions m
     (interfaceTypeMap, noMDTypes) = foldr extractInterfaceStructTypes (mempty, mempty) defFuncs
-    (unifiedTypes, ununifiedTypes) = unifyTypes (M.keys interfaceTypeMap)
+    unifiedTypes = M.keys interfaceTypeMap
     unifiedMDTypes = map (findTypeMD interfaceTypeMap) unifiedTypes
     sortedUnifiedMDTypes = typeSort unifiedMDTypes
     concreteTypes = map metadataStructTypeToCType sortedUnifiedMDTypes
     concreteNameSet = S.fromList $ mapMaybe ctypeStructName concreteTypes
 
-    opaqueLLVMTypes = ununifiedTypes ++ HS.toList noMDTypes
+    opaqueLLVMTypes = HS.toList noMDTypes
     uniqueOpaqueTypeNames = HS.toList $ HS.fromList $ map structTypeName opaqueLLVMTypes
     opaqueTypes0 = map toOpaqueCType uniqueOpaqueTypeNames
     opaqueTypes = filter nameNotConcrete opaqueTypes0
@@ -163,14 +161,7 @@ toStructType (t@TypeStruct {}, Nothing) (tms, ts) =
 toStructType _ acc = acc
 
 sanitizeStructName :: String -> String
-sanitizeStructName name = takeWhile (/= '.') name'
-  where
-    name' = case stripPrefix "struct." name of
-      Nothing ->
-        case stripPrefix "union." name of
-          Nothing -> name
-          Just x -> x
-      Just x -> x
+sanitizeStructName = structBaseName
 
 metadataStructTypeToCType :: (Type, Metadata) -> CType
 metadataStructTypeToCType (TypeStruct (Just name) members _,

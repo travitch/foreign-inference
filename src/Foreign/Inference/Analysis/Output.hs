@@ -266,7 +266,7 @@ isAllocatedValue storeInst calledFunc callInst = do
             True -> return Nothing
         _ -> return Nothing
   where
-    ignoreStore = (== Value storeInst)
+    ignoreStore = (== storeInst)
     isAllocAnnot (FAAllocator fin) = Just fin
     isAllocAnnot _ = Nothing
 

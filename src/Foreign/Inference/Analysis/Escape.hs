@@ -88,7 +88,7 @@ instructionEscapes i (EscapeSummary er _) =
     Nothing -> False
     Just _ -> True
 
-instructionEscapesWith :: (Value -> Bool) -> Instruction -> EscapeSummary -> Bool
+instructionEscapesWith :: (Instruction -> Bool) -> Instruction -> EscapeSummary -> Bool
 instructionEscapesWith p i (EscapeSummary er _) =
   case LLVM.instructionEscapesWith p i er of
     Nothing -> False

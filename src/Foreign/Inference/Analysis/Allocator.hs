@@ -213,7 +213,13 @@ checkFunctionIsAllocator v summ is =
             True -> return is
 
 noneEscape :: EscapeSummary -> [Instruction] -> Bool
-noneEscape escSumm is = not (any (flip instructionEscapes escSumm) is)
+noneEscape escSumm is = not (any (flip escapeTest escSumm) is)
+  where
+    escapeTest = instructionEscapesWith ignoreReturn
+    ignoreReturn i =
+      case i of
+        RetInst {} -> True
+        _ -> False
 
 -- Helpers
 

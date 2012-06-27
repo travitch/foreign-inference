@@ -67,7 +67,7 @@ import Data.HashMap.Strict ( HashMap )
 import qualified Data.HashMap.Strict as HM
 import Data.Map ( Map )
 import qualified Data.Map as M
-import Data.Maybe ( mapMaybe )
+import Data.Maybe ( fromMaybe, listToMaybe, mapMaybe )
 import Data.Ord ( comparing )
 import Data.Set ( Set )
 import qualified Data.Set as S
@@ -383,9 +383,7 @@ summarizeArgumentEscapes g n summ =
               in (escapeArguments ^!%= HM.insert a w) summ
             FieldSource _ fsi _ ->
               let ws = mapMaybe isStore $ map (safeLab $__LOCATION__ g) $ sp (const 1) (unlabelNode n) (unlabelNode sink) g
-                  w = case ws of
-                    ws1 : _ -> ws1
-                    _ -> fsi
+                  w = fromMaybe fsi (listToMaybe ws)
               in (escapeArguments ^!%= HM.insert a w) summ
             _ -> (escapeArguments ^!%= HM.insert a (sinkInstruction (nodeLabel sink))) summ
         Nothing -> case find nodeIsFptrSink reached of
@@ -403,9 +401,7 @@ summarizeArgumentEscapes g n summ =
               in (escapeFields ^!%= HM.insertWith S.union a (S.singleton (absPath, w))) summ
             FieldSource _ fsi _ ->
               let ws = mapMaybe isStore $ map (safeLab $__LOCATION__ g) $ sp (const 1) (unlabelNode n) (unlabelNode sink) g
-                  w = case ws of
-                    ws1 : _ -> ws1
-                    _ -> fsi
+                  w = fromMaybe fsi (listToMaybe ws)
               in (escapeFields ^!%= HM.insertWith S.union a (S.singleton (absPath, w))) summ
             _ -> (escapeFields ^!%= HM.insertWith S.union a (S.singleton (absPath, sinkInstruction (nodeLabel sink)))) summ
         Nothing -> case find nodeIsFptrSink reached of

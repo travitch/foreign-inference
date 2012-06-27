@@ -372,52 +372,52 @@ identifyEscapes ds lns =
 summarizeArgumentEscapes :: EscapeGraph -> EscapeNode -> EscapeSummary -> EscapeSummary
 summarizeArgumentEscapes g n summ =
   case nodeLabel n of
-    ArgumentSource a ->
-      case argumentType a of
-        TypePointer _ _ ->
-          let loopFilter = removeValueIfNotInLoop a g
-              reached = reachableValues $__LOCATION__ loopFilter (unlabelNode n) g
-          in case find nodeIsSink reached of
-            Just sink ->
-              case nodeLabel sink of
-                ArgumentSource _ ->
-                  let w:_ = mapMaybe isStore $ map (safeLab $__LOCATION__ g) $ sp (const 1) (unlabelNode n) (unlabelNode sink) g
-                  in (escapeArguments ^!%= HM.insert a w) summ
-                FieldSource _ fsi _ ->
-                  let ws = mapMaybe isStore $ map (safeLab $__LOCATION__ g) $ sp (const 1) (unlabelNode n) (unlabelNode sink) g
-                      w = case ws of
-                        ws1 : _ -> ws1
-                        _ -> fsi
-                  in (escapeArguments ^!%= HM.insert a w) summ
-                _ -> (escapeArguments ^!%= HM.insert a (sinkInstruction (nodeLabel sink))) summ
-            Nothing -> case find nodeIsFptrSink reached of
-              Nothing -> summ
-              -- This can't be an argument sink
-              Just fsink -> (fptrEscapeArguments ^!%= HM.insert a (sinkInstruction (nodeLabel fsink))) summ
-        _ -> summ
-    FieldSource a i absPath ->
-      case argumentType a of
-        TypePointer _ _ ->
-          let loopFilter = removeValueIfNotInLoop i g
-              reached = reachableValues $__LOCATION__ loopFilter (unlabelNode n) g
-          in case find nodeIsSink reached of
-            Just sink ->
-              case nodeLabel sink of
-                ArgumentSource _ ->
-                  let w:_ = mapMaybe isStore $ map (safeLab $__LOCATION__ g) $ sp (const 1) (unlabelNode n) (unlabelNode sink) g
-                  in (escapeFields ^!%= HM.insertWith S.union a (S.singleton (absPath, w))) summ
-                FieldSource _ fsi _ ->
-                  let ws = mapMaybe isStore $ map (safeLab $__LOCATION__ g) $ sp (const 1) (unlabelNode n) (unlabelNode sink) g
-                      w = case ws of
-                        ws1 : _ -> ws1
-                        _ -> fsi
-                  in (escapeFields ^!%= HM.insertWith S.union a (S.singleton (absPath, w))) summ
-                _ -> (escapeFields ^!%= HM.insertWith S.union a (S.singleton (absPath, sinkInstruction (nodeLabel sink)))) summ
-            Nothing -> case find nodeIsFptrSink reached of
-              Nothing -> summ
-              Just fsink -> (fptrEscapeFields ^!%= HM.insertWith S.union a (S.singleton (absPath, sinkInstruction (nodeLabel fsink)))) summ
-        _ -> summ
+    ArgumentSource a -> ifPointer a summ $
+      let loopFilter = removeValueIfNotInLoop a g
+          reached = reachableValues $__LOCATION__ loopFilter (unlabelNode n) g
+      in case find nodeIsSink reached of
+        Just sink ->
+          case nodeLabel sink of
+            ArgumentSource _ ->
+              let w:_ = mapMaybe isStore $ map (safeLab $__LOCATION__ g) $ sp (const 1) (unlabelNode n) (unlabelNode sink) g
+              in (escapeArguments ^!%= HM.insert a w) summ
+            FieldSource _ fsi _ ->
+              let ws = mapMaybe isStore $ map (safeLab $__LOCATION__ g) $ sp (const 1) (unlabelNode n) (unlabelNode sink) g
+                  w = case ws of
+                    ws1 : _ -> ws1
+                    _ -> fsi
+              in (escapeArguments ^!%= HM.insert a w) summ
+            _ -> (escapeArguments ^!%= HM.insert a (sinkInstruction (nodeLabel sink))) summ
+        Nothing -> case find nodeIsFptrSink reached of
+          Nothing -> summ
+          -- This can't be an argument sink
+          Just fsink -> (fptrEscapeArguments ^!%= HM.insert a (sinkInstruction (nodeLabel fsink))) summ
+    FieldSource a i absPath -> ifPointer a summ $
+      let loopFilter = removeValueIfNotInLoop i g
+          reached = reachableValues $__LOCATION__ loopFilter (unlabelNode n) g
+      in case find nodeIsSink reached of
+        Just sink ->
+          case nodeLabel sink of
+            ArgumentSource _ ->
+              let w:_ = mapMaybe isStore $ map (safeLab $__LOCATION__ g) $ sp (const 1) (unlabelNode n) (unlabelNode sink) g
+              in (escapeFields ^!%= HM.insertWith S.union a (S.singleton (absPath, w))) summ
+            FieldSource _ fsi _ ->
+              let ws = mapMaybe isStore $ map (safeLab $__LOCATION__ g) $ sp (const 1) (unlabelNode n) (unlabelNode sink) g
+                  w = case ws of
+                    ws1 : _ -> ws1
+                    _ -> fsi
+              in (escapeFields ^!%= HM.insertWith S.union a (S.singleton (absPath, w))) summ
+            _ -> (escapeFields ^!%= HM.insertWith S.union a (S.singleton (absPath, sinkInstruction (nodeLabel sink)))) summ
+        Nothing -> case find nodeIsFptrSink reached of
+          Nothing -> summ
+          Just fsink -> (fptrEscapeFields ^!%= HM.insertWith S.union a (S.singleton (absPath, sinkInstruction (nodeLabel fsink)))) summ
     _ -> summ
+
+ifPointer :: IsValue v => v -> a -> a -> a
+ifPointer v defVal isPtrVal =
+  case valueType v of
+    TypePointer _ _ -> isPtrVal
+    _ -> defVal
 
 removeValueIfNotInLoop :: IsValue v => v -> EscapeGraph -> [EscapeNode] -> [EscapeNode]
 removeValueIfNotInLoop v g reached =
@@ -588,13 +588,11 @@ collectEdges callEscapes acc@(ns, es) i =
     -- the returned value is a pointer type (to keep graph sizes
     -- smaller)
     RetInst { retInstValue = Just rv } ->
-      case valueType rv of
-        TypePointer _ _ ->
-          let newNode = LNode (instructionUniqueId i) (WillEscapeSink i)
-              rnode = toInternalNode i rv
-              e = LEdge (Edge (valueUniqueId rv) (instructionUniqueId i)) ()
-          in (newNode : rnode : ns, e : es)
-        _ -> acc
+      ifPointer rv acc $
+        let newNode = LNode (instructionUniqueId i) (WillEscapeSink i)
+            rnode = toInternalNode i rv
+            e = LEdge (Edge (valueUniqueId rv) (instructionUniqueId i)) ()
+        in (newNode : rnode : ns, e : es)
 
     -- This is a load of a field of an argument (from a pointer to a
     -- struct).  These are important FieldSinks.  Note that argument
@@ -603,71 +601,55 @@ collectEdges callEscapes acc@(ns, es) i =
     -- bother tracking non-pointer fields.
     LoadInst { loadAddress = (valueContent' -> InstructionC
       GetElementPtrInst { getElementPtrValue = (valueContent' -> ArgumentC a)})} ->
-      case valueType i of
-        TypePointer _ _ ->
-          let Just apath = accessPath i
-              absPath = abstractAccessPath apath
-              newNode = LNode (instructionUniqueId i) (FieldSource a i absPath)
-          in (newNode : ns, es)
-        _ -> acc
+      ifPointer i acc $
+        let Just apath = accessPath i
+            absPath = abstractAccessPath apath
+            newNode = LNode (instructionUniqueId i) (FieldSource a i absPath)
+        in (newNode : ns, es)
 
     LoadInst { } ->
-      case valueType i of
-        TypePointer _ _ ->
-          let newNode = toInternalNode i (Value i)
-          in (newNode : ns, es)
-        _ -> acc
+      ifPointer i acc $
+        let newNode = toInternalNode i (Value i)
+        in (newNode : ns, es)
 
     -- A store to a global generates a sink (the global) and an edge
     -- from the store value to the sink
     StoreInst { storeValue = sv, storeAddress = (valueContent' -> GlobalVariableC _) } ->
-      case valueType sv of
-        TypePointer _ _ ->
-          let newNode = LNode (valueUniqueId i) (EscapeSink i)
-              newEdge = LEdge (Edge (valueUniqueId sv) (valueUniqueId i)) ()
-          in (newNode : ns, newEdge : es)
-        _ -> acc
+      ifPointer sv acc $
+        let newNode = LNode (valueUniqueId i) (EscapeSink i)
+            newEdge = LEdge (Edge (valueUniqueId sv) (valueUniqueId i)) ()
+        in (newNode : ns, newEdge : es)
     StoreInst { storeValue = sv, storeAddress = (valueContent' -> ExternalValueC _) } ->
-      case valueType sv of
-        TypePointer _ _ ->
-          let newNode = LNode (valueUniqueId i) (EscapeSink i)
-              newEdge = LEdge (Edge (valueUniqueId sv) (valueUniqueId i)) ()
-          in (newNode : ns, newEdge : es)
-        _ -> acc
+      ifPointer sv acc $
+        let newNode = LNode (valueUniqueId i) (EscapeSink i)
+            newEdge = LEdge (Edge (valueUniqueId sv) (valueUniqueId i)) ()
+        in (newNode : ns, newEdge : es)
     StoreInst { storeValue = sv, storeAddress = (valueContent' -> ArgumentC _) } ->
-      case valueType sv of
-        TypePointer _ _ ->
-          let newNode = LNode (valueUniqueId i) (EscapeSink i)
-              newEdge = LEdge (Edge (valueUniqueId sv) (valueUniqueId i)) ()
-          in (newNode : ns, newEdge : es)
-        _ -> acc
+      ifPointer sv acc $
+        let newNode = LNode (valueUniqueId i) (EscapeSink i)
+            newEdge = LEdge (Edge (valueUniqueId sv) (valueUniqueId i)) ()
+        in (newNode : ns, newEdge : es)
 
 
     -- In this case, we have a store to a field of a global (also an escape)
     StoreInst { storeValue = sv, storeAddress = (valueContent' -> InstructionC
       GetElementPtrInst { getElementPtrValue = (valueContent' -> GlobalVariableC _)})} ->
-      case valueType sv of
-        TypePointer _ _ ->
-          let newNode = LNode (valueUniqueId i) (EscapeSink i)
-              newEdge = LEdge (Edge (valueUniqueId sv) (valueUniqueId i)) ()
-          in (newNode : ns, newEdge : es)
-        _ -> acc
+      ifPointer sv acc $
+        let newNode = LNode (valueUniqueId i) (EscapeSink i)
+            newEdge = LEdge (Edge (valueUniqueId sv) (valueUniqueId i)) ()
+        in (newNode : ns, newEdge : es)
     StoreInst { storeValue = sv, storeAddress = (valueContent' -> InstructionC
       GetElementPtrInst { getElementPtrValue = (valueContent' -> ExternalValueC _)})} ->
-      case valueType sv of
-        TypePointer _ _ ->
-          let newNode = LNode (valueUniqueId i) (EscapeSink i)
-              newEdge = LEdge (Edge (valueUniqueId sv) (valueUniqueId i)) ()
-          in (newNode : ns, newEdge : es)
-        _ -> acc
+      ifPointer sv acc $
+        let newNode = LNode (valueUniqueId i) (EscapeSink i)
+            newEdge = LEdge (Edge (valueUniqueId sv) (valueUniqueId i)) ()
+        in (newNode : ns, newEdge : es)
     StoreInst { storeValue = sv, storeAddress = (valueContent' -> InstructionC
       GetElementPtrInst { getElementPtrValue = (valueContent' -> ArgumentC _)})} ->
-      case valueType sv of
-        TypePointer _ _ ->
-          let newNode = LNode (valueUniqueId i) (EscapeSink i)
-              newEdge = LEdge (Edge (valueUniqueId sv) (valueUniqueId i)) ()
-          in (newNode : ns, newEdge : es)
-        _ -> acc
+      ifPointer sv acc $
+        let newNode = LNode (valueUniqueId i) (EscapeSink i)
+            newEdge = LEdge (Edge (valueUniqueId sv) (valueUniqueId i)) ()
+        in (newNode : ns, newEdge : es)
 
     -- Another interesting case is if the store address is a GEP whose
     -- base is in the callEscapes map (noted as escaping via function
@@ -680,62 +662,57 @@ collectEdges callEscapes acc@(ns, es) i =
     -- FIXME: If base is a global or argument, this can use a plain EscapeSink
     StoreInst { storeValue = sv, storeAddress = (valueContent' -> InstructionC
       GetElementPtrInst { getElementPtrValue = base })} ->
-      case valueType sv of
-        TypePointer _ _ ->
-          case valueContent' base of
-            ArgumentC _ ->
-              let newNode = LNode (valueUniqueId i) (EscapeSink i)
-                  newEdge = LEdge (Edge (valueUniqueId sv) (valueUniqueId i)) ()
-              in (newNode : ns, newEdge : es)
-            GlobalVariableC _ ->
-              let newNode = LNode (valueUniqueId i) (EscapeSink i)
-                  newEdge = LEdge (Edge (valueUniqueId sv) (valueUniqueId i)) ()
-              in (newNode : ns, newEdge : es)
-            ExternalValueC _ ->
-              let newNode = LNode (valueUniqueId i) (EscapeSink i)
-                  newEdge = LEdge (Edge (valueUniqueId sv) (valueUniqueId i)) ()
-              in (newNode : ns, newEdge : es)
-            _ ->
-              case HM.lookup base (callEscapes ^. fieldEscapes) of
-                Nothing -> -- Just create an edge because this store into a
-                          -- GEP doesn't escape here
-                  let newNode = toInternalNode i (Value i)
-                      newEdge1 = LEdge (Edge (valueUniqueId sv) (valueUniqueId i)) ()
-                      newEdge2 = LEdge (Edge (valueUniqueId i) (valueUniqueId base)) ()
-                  in (newNode : ns, newEdge1 : newEdge2 : es)
-                Just paths ->
-                  let Just cpath = accessPath i
-                      absPath = abstractAccessPath cpath
-                  in case absPath `elem` paths of
-                    False ->
-                      -- This field does *not* escape in a callee, so do
-                      -- not add an edge (note, sv could still escape via
-                      -- something else).
-                      acc
-                    True ->
-                      -- This field being stored to escapes in a callee,
-                      -- so the stored value escapes
-                      let newNode = LNode (valueUniqueId i) (EscapeSink i)
-                          newEdge = LEdge (Edge (valueUniqueId sv) (valueUniqueId i)) ()
-                      in (newNode : ns, newEdge : es)
-        _ -> acc -- Not a pointer, so it can't escape
-
+      ifPointer sv acc $
+        case valueContent' base of
+          ArgumentC _ ->
+            let newNode = LNode (valueUniqueId i) (EscapeSink i)
+                newEdge = LEdge (Edge (valueUniqueId sv) (valueUniqueId i)) ()
+            in (newNode : ns, newEdge : es)
+          GlobalVariableC _ ->
+            let newNode = LNode (valueUniqueId i) (EscapeSink i)
+                newEdge = LEdge (Edge (valueUniqueId sv) (valueUniqueId i)) ()
+            in (newNode : ns, newEdge : es)
+          ExternalValueC _ ->
+            let newNode = LNode (valueUniqueId i) (EscapeSink i)
+                newEdge = LEdge (Edge (valueUniqueId sv) (valueUniqueId i)) ()
+            in (newNode : ns, newEdge : es)
+          _ ->
+            case HM.lookup base (callEscapes ^. fieldEscapes) of
+              Nothing -> -- Just create an edge because this store into a
+                        -- GEP doesn't escape here
+                let newNode = toInternalNode i (Value i)
+                    newEdge1 = LEdge (Edge (valueUniqueId sv) (valueUniqueId i)) ()
+                    newEdge2 = LEdge (Edge (valueUniqueId i) (valueUniqueId base)) ()
+                in (newNode : ns, newEdge1 : newEdge2 : es)
+              Just paths ->
+                let Just cpath = accessPath i
+                    absPath = abstractAccessPath cpath
+                in case absPath `elem` paths of
+                  False ->
+                    -- This field does *not* escape in a callee, so do
+                    -- not add an edge (note, sv could still escape via
+                    -- something else).
+                    acc
+                  True ->
+                    -- This field being stored to escapes in a callee,
+                    -- so the stored value escapes
+                    let newNode = LNode (valueUniqueId i) (EscapeSink i)
+                        newEdge = LEdge (Edge (valueUniqueId sv) (valueUniqueId i)) ()
+                    in (newNode : ns, newEdge : es)
 
     -- Other stores add edges but not sinks.  Other sinks may become
     -- reachable.
     StoreInst { storeValue = sv, storeAddress = sa } ->
-      case valueType sv of
-        TypePointer _ _ ->
-          -- FIXME: This probably needs a node for the address, but we
-          -- have to be careful to allow that node to be superceded by
-          -- a more specific type of node if we happen to find one.
-          -- This will require post-processing at graph creation time
-          -- to select the most specific node type with a given ID
-          let newNode = toInternalNode i (Value i)
-              newEdge1 = LEdge (Edge (valueUniqueId sv) (valueUniqueId i)) ()
-              newEdge2 = LEdge (Edge (valueUniqueId i) (valueUniqueId sa)) ()
-          in (newNode : ns, newEdge1 : newEdge2 : es)
-        _ -> acc
+      ifPointer sv acc $
+        -- FIXME: This probably needs a node for the address, but we
+        -- have to be careful to allow that node to be superceded by
+        -- a more specific type of node if we happen to find one.
+        -- This will require post-processing at graph creation time
+        -- to select the most specific node type with a given ID
+        let newNode = toInternalNode i (Value i)
+            newEdge1 = LEdge (Edge (valueUniqueId sv) (valueUniqueId i)) ()
+            newEdge2 = LEdge (Edge (valueUniqueId i) (valueUniqueId sa)) ()
+        in (newNode : ns, newEdge1 : newEdge2 : es)
 
     -- FIXME: We could treat PtrToInt casts as escaping, but that
     -- seems overly strict.  Maybe track all int types too?
@@ -755,24 +732,28 @@ collectEdges callEscapes acc@(ns, es) i =
     -- Note, we use the un-negated ID here to treat call instructions
     -- as sources.  When treating them as escape sinks, negate the ID.
     CallInst {} ->
-      let newNode = LNode (valueUniqueId i) (EscapeSink i)
-      in (newNode : ns, es)
+      ifPointer i acc $
+        let newNode = LNode (valueUniqueId i) (EscapeSink i)
+        in (newNode : ns, es)
     InvokeInst {} ->
-      let newNode = LNode (valueUniqueId i) (EscapeSink i)
-      in (newNode : ns, es)
+      ifPointer i acc $
+        let newNode = LNode (valueUniqueId i) (EscapeSink i)
+        in (newNode : ns, es)
 
     -- Instructions representing more than one value get their own
     -- node with an edge from each of their possible values.
     SelectInst { selectTrueValue = tv, selectFalseValue = fv } ->
-      let tn = toInternalNode i tv
-          fn = toInternalNode i fv
-          te = toInternalEdge i tv
-          fe = toInternalEdge i fv
-      in (tn : fn : ns, te : fe : es)
+      ifPointer i acc $
+        let tn = toInternalNode i tv
+            fn = toInternalNode i fv
+            te = toInternalEdge i tv
+            fe = toInternalEdge i fv
+        in (tn : fn : ns, te : fe : es)
     PhiNode { phiIncomingValues = ivs } ->
-      let newNodes = map (toInternalNode i) (map fst ivs)
-          newEdges = map (toInternalEdge i) (map fst ivs)
-      in (newNodes ++ ns, newEdges ++ es)
+      ifPointer i acc $
+        let newNodes = map (toInternalNode i) (map fst ivs)
+            newEdges = map (toInternalEdge i) (map fst ivs)
+        in (newNodes ++ ns, newEdges ++ es)
 
     -- InsertElementInst {} -> undefined
     -- InsertValueInst {} -> undefined

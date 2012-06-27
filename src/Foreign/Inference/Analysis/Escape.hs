@@ -379,10 +379,10 @@ summarizeArgumentEscapes g n summ =
         Just sink ->
           case nodeLabel sink of
             ArgumentSource _ ->
-              let w:_ = mapMaybe isStore $ map (safeLab $__LOCATION__ g) $ sp (const 1) (unlabelNode n) (unlabelNode sink) g
+              let w:_ = storesInPath $__LOCATION__ n sink g
               in (escapeArguments ^!%= HM.insert a w) summ
             FieldSource _ fsi _ ->
-              let ws = mapMaybe isStore $ map (safeLab $__LOCATION__ g) $ sp (const 1) (unlabelNode n) (unlabelNode sink) g
+              let ws = storesInPath $__LOCATION__ n sink g
                   w = fromMaybe fsi (listToMaybe ws)
               in (escapeArguments ^!%= HM.insert a w) summ
             _ -> (escapeArguments ^!%= HM.insert a (sinkInstruction (nodeLabel sink))) summ
@@ -397,10 +397,10 @@ summarizeArgumentEscapes g n summ =
         Just sink ->
           case nodeLabel sink of
             ArgumentSource _ ->
-              let w:_ = mapMaybe isStore $ map (safeLab $__LOCATION__ g) $ sp (const 1) (unlabelNode n) (unlabelNode sink) g
+              let w:_ = storesInPath $__LOCATION__ n sink g
               in (escapeFields ^!%= HM.insertWith S.union a (S.singleton (absPath, w))) summ
             FieldSource _ fsi _ ->
-              let ws = mapMaybe isStore $ map (safeLab $__LOCATION__ g) $ sp (const 1) (unlabelNode n) (unlabelNode sink) g
+              let ws = storesInPath $__LOCATION__ n sink g
                   w = fromMaybe fsi (listToMaybe ws)
               in (escapeFields ^!%= HM.insertWith S.union a (S.singleton (absPath, w))) summ
             _ -> (escapeFields ^!%= HM.insertWith S.union a (S.singleton (absPath, sinkInstruction (nodeLabel sink)))) summ
@@ -408,6 +408,14 @@ summarizeArgumentEscapes g n summ =
           Nothing -> summ
           Just fsink -> (fptrEscapeFields ^!%= HM.insertWith S.union a (S.singleton (absPath, sinkInstruction (nodeLabel fsink)))) summ
     _ -> summ
+
+
+
+storesInPath :: String -> EscapeNode -> EscapeNode -> EscapeGraph -> [Instruction]
+storesInPath loc n sink g =
+  mapMaybe isStore $ map (safeLab loc g) path
+  where
+    path = sp (const 1) (unlabelNode n) (unlabelNode sink) g
 
 ifPointer :: IsValue v => v -> a -> a -> a
 ifPointer v defVal isPtrVal =

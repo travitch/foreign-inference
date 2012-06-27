@@ -375,8 +375,8 @@ summarizeArgumentEscapes g n summ =
     ArgumentSource a -> ifPointer a summ $
       let loopFilter = removeValueIfNotInLoop a g
           reached = reachableValues $__LOCATION__ loopFilter (unlabelNode n) g
-      in case find nodeIsSink reached of
-        Just sink ->
+      in case sinkType reached of
+        SinkNormal sink ->
           case nodeLabel sink of
             ArgumentSource _ ->
               let w:_ = storesInPath $__LOCATION__ n sink g
@@ -386,15 +386,15 @@ summarizeArgumentEscapes g n summ =
                   w = fromMaybe fsi (listToMaybe ws)
               in (escapeArguments ^!%= HM.insert a w) summ
             _ -> (escapeArguments ^!%= HM.insert a (sinkInstruction (nodeLabel sink))) summ
-        Nothing -> case find nodeIsFptrSink reached of
-          Nothing -> summ
-          -- This can't be an argument sink
-          Just fsink -> (fptrEscapeArguments ^!%= HM.insert a (sinkInstruction (nodeLabel fsink))) summ
+        SinkFptr fsink ->
+          (fptrEscapeArguments ^!%= HM.insert a (sinkInstruction (nodeLabel fsink))) summ
+        SinkNone -> summ
+
     FieldSource a i absPath -> ifPointer a summ $
       let loopFilter = removeValueIfNotInLoop i g
           reached = reachableValues $__LOCATION__ loopFilter (unlabelNode n) g
-      in case find nodeIsSink reached of
-        Just sink ->
+      in case sinkType reached of
+        SinkNormal sink ->
           case nodeLabel sink of
             ArgumentSource _ ->
               let w:_ = storesInPath $__LOCATION__ n sink g
@@ -404,12 +404,23 @@ summarizeArgumentEscapes g n summ =
                   w = fromMaybe fsi (listToMaybe ws)
               in (escapeFields ^!%= HM.insertWith S.union a (S.singleton (absPath, w))) summ
             _ -> (escapeFields ^!%= HM.insertWith S.union a (S.singleton (absPath, sinkInstruction (nodeLabel sink)))) summ
-        Nothing -> case find nodeIsFptrSink reached of
-          Nothing -> summ
-          Just fsink -> (fptrEscapeFields ^!%= HM.insertWith S.union a (S.singleton (absPath, sinkInstruction (nodeLabel fsink)))) summ
+        SinkFptr fsink ->
+          (fptrEscapeFields ^!%= HM.insertWith S.union a (S.singleton (absPath, sinkInstruction (nodeLabel fsink)))) summ
+        SinkNone -> summ
     _ -> summ
 
+data SinkType = SinkNormal EscapeNode
+              | SinkFptr EscapeNode
+              | SinkNone
 
+sinkType :: [EscapeNode] -> SinkType
+sinkType reached =
+  case find nodeIsSink reached of
+    Just sink -> SinkNormal sink
+    Nothing ->
+      case find nodeIsFptrSink reached of
+        Just fsink -> SinkFptr fsink
+        Nothing -> SinkNone
 
 storesInPath :: String -> EscapeNode -> EscapeNode -> EscapeGraph -> [Instruction]
 storesInPath loc n sink g =

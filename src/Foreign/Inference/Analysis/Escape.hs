@@ -303,7 +303,9 @@ instructionEscapeCore ignoreValue i er = do
     f = basicBlockFunction bb
     errMsg = $failure ("Expected escape graph for " ++ show (functionName f))
     g = HM.lookupDefault errMsg f (er ^. escapeGraphs)
-    reached = filter notIgnoredSink $ reachableValues i g
+    instFilter = filter ((/= valueUniqueId i) . unlabelNode)
+    reached0 = reachableValues $__LOCATION__ instFilter (valueUniqueId i) g
+    reached = filter notIgnoredSink reached0
     notIgnoredSink nt =
       case nodeLabel nt of
         FptrSink sink -> not (ignoreValue sink)
@@ -321,11 +323,12 @@ instructionEscapeCore ignoreValue i er = do
 --
 -- We can always remove the node because call escape nodes have
 -- negated ids?
-reachableValues :: Instruction -> EscapeGraph -> [EscapeNode]
-reachableValues i g =
-  let reached = filter (/= valueUniqueId i) $ dfs [instructionUniqueId i] g
-  in map (safeLab $__LOCATION__ g) reached
-
+reachableValues :: String -> ([EscapeNode] -> [EscapeNode])
+                   -> Node EscapeGraph -> EscapeGraph -> [EscapeNode]
+reachableValues loc filt n g =
+  filt reached
+  where
+    reached = map (safeLab loc g) $ dfs [n] g
 
 -- | This is the underlying bottom-up analysis to identify which
 -- arguments escape.  It builds an EscapeGraph for the function
@@ -372,8 +375,8 @@ summarizeArgumentEscapes g n summ =
     ArgumentSource a ->
       case argumentType a of
         TypePointer _ _ ->
-          let reached0 = dfs [unlabelNode n] g
-              reached = map (safeLab $__LOCATION__ g) $ removeValueIfNotInLoop a reached0 g
+          let loopFilter = removeValueIfNotInLoop a g
+              reached = reachableValues $__LOCATION__ loopFilter (unlabelNode n) g
           in case find nodeIsSink reached of
             Just sink ->
               case nodeLabel sink of
@@ -395,8 +398,8 @@ summarizeArgumentEscapes g n summ =
     FieldSource a i absPath ->
       case argumentType a of
         TypePointer _ _ ->
-          let reached0 = dfs [unlabelNode n] g
-              reached = map (safeLab $__LOCATION__ g) $ removeValueIfNotInLoop i reached0 g
+          let loopFilter = removeValueIfNotInLoop i g
+              reached = reachableValues $__LOCATION__ loopFilter (unlabelNode n) g
           in case find nodeIsSink reached of
             Just sink ->
               case nodeLabel sink of
@@ -416,11 +419,11 @@ summarizeArgumentEscapes g n summ =
         _ -> summ
     _ -> summ
 
-removeValueIfNotInLoop :: IsValue v => v -> [Int] -> EscapeGraph -> [Int]
-removeValueIfNotInLoop v reached g =
+removeValueIfNotInLoop :: IsValue v => v -> EscapeGraph -> [EscapeNode] -> [EscapeNode]
+removeValueIfNotInLoop v g reached =
   case valueInLoop v g of
     True -> reached
-    False -> filter (/= valueUniqueId v) reached
+    False -> filter ((/= valueUniqueId v) . unlabelNode) reached
 
 isStore :: EscapeNode -> Maybe Instruction
 isStore v =

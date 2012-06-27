@@ -201,7 +201,7 @@ instance Monoid EscapeSummary where
 
 instance NFData EscapeSummary where
   rnf r@(EscapeSummary gs as fs was faf d) =
-    gs `deepseq` as `deepseq` was `deepseq` fs `deepseq` faf `deepseq` r `deepseq` d `seq` ()
+    gs `deepseq` as `deepseq` was `deepseq` fs `deepseq` faf `deepseq` d `deepseq` r `seq` ()
 
 instance HasDiagnostics EscapeSummary where
   diagnosticLens = escapeDiagnostics

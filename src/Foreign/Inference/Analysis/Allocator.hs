@@ -40,6 +40,7 @@ import Data.Map ( Map )
 import qualified Data.Map as M
 import Data.HashSet ( HashSet )
 import qualified Data.HashSet as HS
+import Data.Maybe ( isJust )
 
 import LLVM.Analysis
 import LLVM.Analysis.CallGraphSCCTraversal
@@ -213,7 +214,7 @@ checkFunctionIsAllocator v summ is =
             True -> return is
 
 noneEscape :: EscapeSummary -> [Instruction] -> Bool
-noneEscape escSumm is = not (any (flip escapeTest escSumm) is)
+noneEscape escSumm is = not (any (isJust . flip escapeTest escSumm) is)
   where
     escapeTest = instructionEscapesWith ignoreReturn
     ignoreReturn i =

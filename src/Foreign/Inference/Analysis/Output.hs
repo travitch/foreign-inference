@@ -262,8 +262,8 @@ isAllocatedValue storeInst calledFunc callInst = do
       case mapMaybe isAllocAnnot annots of
         [fin] ->
           case instructionEscapesWith ignoreStore callInst esum of
-            False -> return $! Just fin
-            True -> return Nothing
+            Nothing -> return $! Just fin
+            Just _ -> return Nothing
         _ -> return Nothing
   where
     ignoreStore = (== storeInst)

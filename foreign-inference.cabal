@@ -50,7 +50,7 @@ library
                  aeson >= 0.4.0.0, loch-th >= 0.2, temporary, process, data-ordlist,
                  llvm-analysis, deepseq, data-lens >= 2, data-lens-template,
                  failure >= 0.2, regex-tdfa, transformers >= 0.2 && < 0.4, hbgl,
-                 file-embed >= 0.0.4.2, hjsmin,
+                 file-embed >= 0.0.4.2, hjsmin, graphviz, data-default,
                  -- For the reporting code
                  archive-inspection, directory, attoparsec >= 0.10 && < 1.0, ascii,
                  blaze-html >= 0.5, highlighting-kate >= 0.5, blaze-builder >= 0.3,
@@ -108,4 +108,13 @@ test-suite OutputTests
   main-is: OutputTests.hs
   build-depends: llvm-analysis, llvm-data-interop, foreign-inference,
                  base == 4.*, filepath, HUnit, containers
+  ghc-options: -Wall -rtsopts
+
+test-suite EscapeTests
+  default-language: Haskell2010
+  type: exitcode-stdio-1.0
+  main-is: EscapeTests.hs
+  hs-source-dirs: tests
+  build-depends: llvm-analysis, llvm-data-interop, bytestring, mtl,
+                 base > 3 && < 5, filepath, containers, HUnit, foreign-inference
   ghc-options: -Wall -rtsopts

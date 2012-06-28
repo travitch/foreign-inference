@@ -48,7 +48,7 @@ main = do
 
 
 
-analyzeEscapes :: DependencySummary -> Module -> Map String (Set String)
+analyzeEscapes :: DependencySummary -> Module -> Map String (Set (EscapeClass, String))
 analyzeEscapes ds m =
   escapeResultToTestFormat (_escapeSummary res)
   where

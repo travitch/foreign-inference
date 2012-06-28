@@ -933,28 +933,28 @@ safeLab loc g n =
 --
 -- For actual use in a program, use one of 'functionEscapeArguments',
 -- 'functionWillEscapeArguments', or 'instructionEscapes' instead.
-escapeResultToTestFormat :: EscapeSummary -> Map String (Set String)
+escapeResultToTestFormat :: EscapeSummary -> Map String (Set (EscapeClass, String))
 escapeResultToTestFormat er =
   foldr fieldTransform directEscapes (HM.toList fm)
   where
-    directEscapes = foldr transform mempty (HM.keys m)
-    m = (er ^. escapeArguments) -- `HM.union` (er ^. fptrEscapeArguments)
-    fm = (er ^. escapeFields) -- `HM.union` (er ^. fptrEscapeFields)
-    transform a acc =
+    directEscapes = foldr transform mempty (HM.toList m)
+    m = er ^. escapeArguments
+    fm = er ^. escapeFields
+    transform (a, (tag, _)) acc =
       let f = argumentFunction a
           fname = show (functionName f)
           aname = show (argumentName a)
-      in M.insertWith' S.union fname (S.singleton aname) acc
+      in M.insertWith' S.union fname (S.singleton (tag, aname)) acc
     fieldTransform (a, fieldsAndInsts) acc =
       let f = argumentFunction a
           fname = show (functionName f)
           aname = show (argumentName a)
-          fields = S.toList $ S.map (\(_, fld, _) -> fld) fieldsAndInsts
-          newEntries = S.fromList $ mapMaybe (toFieldRef aname) fields
+          tagsAndFields = S.toList $ S.map (\(tag, fld, _) -> (tag, fld)) fieldsAndInsts
+          newEntries = S.fromList $ mapMaybe (toFieldRef aname) tagsAndFields
       in M.insertWith' S.union fname newEntries acc
-    toFieldRef aname fld =
+    toFieldRef aname (tag, fld) =
       case abstractAccessPathComponents fld of
-        [AccessField ix] -> Just $ printf "%s.<%d>" aname ix
+        [AccessField ix] -> Just $ (tag, printf "%s.<%d>" aname ix)
         _ -> Nothing
 
 

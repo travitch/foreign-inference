@@ -41,6 +41,46 @@
 --
 -- With simple optimizations (-mem2reg and -basicaa) it will be very
 -- precise.
+--
+--
+-- Algorithm:
+--
+-- 1) Collect a @Map Instruction [AccessPath]@ that describes the fields
+-- of each alloca instruction passed to them that escapes.  Entries in
+-- this map are made for each call instruction argument that allows a(t
+-- least one) field to escape.
+--
+-- > call void @fldEsc(%struct.S* %s)
+--
+-- If this call allows the sP field of %s to escape, the resuling Map
+-- entry is:
+--
+-- > %s -> [Field 0]
+--
+-- Also collect a set of values passed to escaping function arguments.
+--
+-- 2) Populate the escape graph.  Arguments get ArgSrc nodes.  Loads of
+-- GEPs (rooted at arguments) get FieldSource nodes.  All other
+-- instructions that are pointer-typed get SimpleSrc nodes.  If the base
+-- of a GEP Load is in the field escape map AND the field matches one of
+-- the access paths in the map, make an edge from the src to a
+-- FieldEscapeSink.
+--
+-- For each value in the normal escape set, make an edge from the source
+-- to the appropriate escapesink node.
+--
+-- Stores add edges, loads add internal nodes.
+--
+-- 3) All ArgumentSource nodes that reach a Sink escape.  If the sink is
+-- a FieldEscapeSink, they escape through a field (though the distinction
+-- doesn't really matter).
+--
+-- Later queries will similarly only check to see if the instruction can
+-- reach a sink.  There will need to be a bit of filtering done on sinks
+-- in the same way as now, but the filtering now has to unwrap the node
+-- type instead of being able to just look directly at the node Value.
+-- If the only reachable sink is a FptrSink, treat this as we do in the
+-- case where the Value is tupled with True now.
 module Foreign.Inference.Analysis.Escape (
   EscapeSummary,
   identifyEscapes,
@@ -86,54 +126,6 @@ import LLVM.Analysis.CallGraphSCCTraversal
 import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
 
-{-
-
-Algorithm:
-
-1) Collect a @Map Instruction [AccessPath]@ that describes the fields
-of each alloca instruction passed to them that escapes.  Entries in
-this map are made for each call instruction argument that allows a(t
-least one) field to escape.
-
-> call void @fldEsc(%struct.S* %s)
-
-If this call allows the sP field of %s to escape, the resuling Map
-entry is:
-
-> %s -> [Field 0]
-
-Also collect a set of values passed to escaping function arguments.
-
-2) Populate the escape graph.  Arguments get ArgSrc nodes.  Loads of
-GEPs (rooted at arguments) get FieldSource nodes.  All other
-instructions that are pointer-typed get SimpleSrc nodes.  If the base
-of a GEP Load is in the field escape map AND the field matches one of
-the access paths in the map, make an edge from the src to a
-FieldEscapeSink.
-
-For each value in the normal escape set, make an edge from the source
-to the appropriate escapesink node.
-
-Stores add edges, loads add internal nodes.
-
-3) All ArgumentSource nodes that reach a Sink escape.  If the sink is
-a FieldEscapeSink, they escape through a field (though the distinction
-doesn't really matter).
-
-Later queries will similarly only check to see if the instruction can
-reach a sink.  There will need to be a bit of filtering done on sinks
-in the same way as now, but the filtering now has to unwrap the node
-type instead of being able to just look directly at the node Value.
-If the only reachable sink is a FptrSink, treat this as we do in the
-case where the Value is tupled with True now.
-
--}
-
--- FIXME: Collapse some of these fields; just have a HashMap Argument
--- (EscapeClass, (Set Instruction))
-
--- FIXME: Add a test for an indirect escape via an address-taken operation
-
 
 -- | The acctual graph type
 type EscapeGraph = Gr NodeType ()
@@ -170,6 +162,9 @@ data NodeType = ArgumentSource Argument
                 -- actually matter for this analysis)
               deriving (Eq, Ord, Show)
 
+
+-- FIXME: Collapse some of these fields; just have a HashMap Argument
+-- (EscapeClass, (Set Instruction))
 data EscapeSummary =
   EscapeSummary { _escapeGraphs :: HashMap Function EscapeGraph
                 , _escapeArguments :: HashMap Argument Instruction
@@ -206,6 +201,12 @@ instance NFData EscapeSummary where
 instance HasDiagnostics EscapeSummary where
   diagnosticLens = escapeDiagnostics
 
+-- | An object to hold information about which values in a function
+-- are used in call argument positions that let them escape (both
+-- directly and via fields).  We also store information about the
+-- arguments passed to indirect function calls.
+--
+-- This is built up in a preprocessing step.
 data CallEscapes = CallEscapes { _fieldEscapes :: HashMap Value [AbstractAccessPath]
                                , _valueEscapes :: HashMap Value Instruction
                                , _fptrEscapes :: HashMap Value Instruction
@@ -244,6 +245,8 @@ instance Labellable NodeType where
 argumentEscapes :: EscapeSummary -> Argument -> Maybe Instruction
 argumentEscapes er a = HM.lookup a (er ^. escapeArguments)
 
+-- | If the given argument escapes through a call to a function pointer,
+-- return the indirect call responsible
 argumentFptrEscapes :: EscapeSummary -> Argument -> Maybe Instruction
 argumentFptrEscapes er a = HM.lookup a (er ^. fptrEscapeArguments)
 
@@ -291,6 +294,9 @@ instructionEscapesWith = instructionEscapeCore
 instructionEscapes :: Instruction -> EscapeSummary -> Maybe Instruction
 instructionEscapes = instructionEscapeCore (const False)
 
+-- | This is shared code for all of the instruction escape queries.
+--
+-- Most of the description is on 'instructionEscapesWith'
 instructionEscapeCore :: (Instruction -> Bool)
                          -> Instruction
                          -> EscapeSummary
@@ -314,15 +320,12 @@ instructionEscapeCore ignoreValue i er = do
         _ -> True
 
 -- | Get the list of values reachable from the given instruction in
--- the use graph.  An instruction is not reachable from itself unless
--- it is in a cycle.
+-- the use graph.
 --
--- Sinks are the only things that allow escaping, and the filtering
--- step here only need to worry about those.  Sinks are always store
--- instructions or call instructions
---
--- We can always remove the node because call escape nodes have
--- negated ids?
+-- This function takes a custom filter function to transform the list
+-- of reachable nodes.  The idea is that some uses need to remove the
+-- input node (or other nodes depending on the context).  This
+-- encapsulates the reachability and re-labeling computations.
 reachableValues :: String -> ([EscapeNode] -> [EscapeNode])
                    -> Node EscapeGraph -> EscapeGraph -> [EscapeNode]
 reachableValues loc filt n g =
@@ -372,6 +375,9 @@ identifyEscapes ds lns =
 summarizeArgumentEscapes :: EscapeGraph -> EscapeNode -> EscapeSummary -> EscapeSummary
 summarizeArgumentEscapes g n summ =
   case nodeLabel n of
+    -- In this case, the input node is a normal argument so we are
+    -- using the normal escape lenses (escapeArguments and
+    -- fptrEscapeArguments).
     ArgumentSource a -> ifPointer a summ $
       let loopFilter = removeValueIfNotInLoop a g
           reached = reachableValues $__LOCATION__ loopFilter (unlabelNode n) g
@@ -379,9 +385,12 @@ summarizeArgumentEscapes g n summ =
         SinkNormal sink ->
           case nodeLabel sink of
             ArgumentSource _ ->
+              -- The argument for this node is escaping into another argument
               let w:_ = storesInPath $__LOCATION__ n sink g
               in (escapeArguments ^!%= HM.insert a w) summ
             FieldSource _ fsi _ ->
+              -- The argument for this node is escaping into the field
+              -- of an argument
               let ws = storesInPath $__LOCATION__ n sink g
                   w = fromMaybe fsi (listToMaybe ws)
               in (escapeArguments ^!%= HM.insert a w) summ
@@ -390,6 +399,8 @@ summarizeArgumentEscapes g n summ =
           (fptrEscapeArguments ^!%= HM.insert a (sinkInstruction (nodeLabel fsink))) summ
         SinkNone -> summ
 
+    -- In this case, the field of an argument is escaping somewhere.
+    -- This is what gives us field sensitivity.
     FieldSource a i absPath -> ifPointer a summ $
       let loopFilter = removeValueIfNotInLoop i g
           reached = reachableValues $__LOCATION__ loopFilter (unlabelNode n) g
@@ -409,6 +420,8 @@ summarizeArgumentEscapes g n summ =
         SinkNone -> summ
     _ -> summ
 
+-- A throwaway data type to encode the different types of escape sink
+-- results from a search of the reached nodes.
 data SinkType = SinkNormal EscapeNode
               | SinkFptr EscapeNode
               | SinkNone
@@ -422,23 +435,46 @@ sinkType reached =
         Just fsink -> SinkFptr fsink
         Nothing -> SinkNone
 
+-- | Given a query node and the sink it escaped to, determine the
+-- shortest path between them in the escape graph and extract all of
+-- the store instructions to be used as witnesses
 storesInPath :: String -> EscapeNode -> EscapeNode -> EscapeGraph -> [Instruction]
 storesInPath loc n sink g =
   mapMaybe isStore $ map (safeLab loc g) path
   where
     path = sp (const 1) (unlabelNode n) (unlabelNode sink) g
 
+-- | A helper to abstract the pointer type tests.  If the value @v@ is
+-- not a pointer, return @defVal@.  Otherwise, return @isPtrVal@.
+-- This helps remove a level of nested (and repetitive) pattern
+-- matching.
 ifPointer :: IsValue v => v -> a -> a -> a
 ifPointer v defVal isPtrVal =
   case valueType v of
     TypePointer _ _ -> isPtrVal
     _ -> defVal
 
+-- | @reached@ is the list of nodes reachable from @v@.  If @v@ is not
+-- in a loop in the escape graph, remove it from @reached@.  This is
+-- necessary because the reaching computation considers @v@ to be
+-- trivially reachable from itself and we don't want to count that as
+-- an escape sink (unless it really does escape into itself).
 removeValueIfNotInLoop :: IsValue v => v -> EscapeGraph -> [EscapeNode] -> [EscapeNode]
 removeValueIfNotInLoop v g reached =
   case valueInLoop v g of
     True -> reached
     False -> filter ((/= valueUniqueId v) . unlabelNode) reached
+
+-- | Return True if the given instruction is in a cycle in the use
+-- graph
+valueInLoop :: IsValue v => v -> EscapeGraph -> Bool
+valueInLoop v g = any (valueInNonSingleton v) (scc g)
+  where
+    valueInNonSingleton val component =
+      case length component > 1 of
+        False -> False
+        True -> valueUniqueId val `elem` component
+
 
 isStore :: EscapeNode -> Maybe Instruction
 isStore v =
@@ -461,15 +497,6 @@ the witness.
 
 Collect *all* of the stores as witnesses
 -}
--- | Return True if the given instruction is in a cycle in the use
--- graph
-valueInLoop :: IsValue v => v -> EscapeGraph -> Bool
-valueInLoop v g = any (valueInNonSingleton v) (scc g)
-  where
-    valueInNonSingleton val component =
-      case length component > 1 of
-        False -> False
-        True -> valueUniqueId val `elem` component
 
 nodeIsSink :: EscapeNode -> Bool
 nodeIsSink t =
@@ -495,6 +522,12 @@ nodeIsAnySink t =
     FieldSource _ _ _ -> True
     _ -> False
 
+-- | Given the set of escapes via function call parameters (computed
+-- in a preprocessing pass), construct the full escape graph.
+--
+-- This does a pass over the Function instructions to inspect
+-- load/store instructions (along with a few others) to add nodes and
+-- edges.
 buildEscapeGraph :: CallEscapes -> Function -> EscapeGraph
 buildEscapeGraph callEscapes f =
   mkGraph (uniqueNodes) (callEdges ++ escapeEdges)
@@ -507,8 +540,6 @@ buildEscapeGraph callEscapes f =
     -- sinks (which will be useful).
     (callArgNodes, callEdges) = buildCallEscapeSubgraph callEscapes
     allNodes = concat [ argNodes, callArgNodes, bodyNodes ]
-    nodeId = comparing unlabelNode
-
 
     -- To unique the nodes, first sortBy on the node ID, then use
     -- groupBy on the same nodeid.  This will yield lists of lists;
@@ -516,8 +547,49 @@ buildEscapeGraph callEscapes f =
     -- most specific node available (mostly discarding generic
     -- InternalNodes).  Edges do not need to be fixed at all since
     -- they are only keyed on ID
-    uniqueNodeGroups = groupBy (on (==) unlabelNode) $ sortBy nodeId allNodes
-    uniqueNodes = foldr takeMostSpecific [] uniqueNodeGroups
+    uniqueNodes = uniqueEscapeGraphNodes allNodes
+
+    toArgumentNode :: Argument -> EscapeNode
+    toArgumentNode a = LNode (argumentUniqueId a) (ArgumentSource a)
+
+-- | When generating nodes for instruction operands, we can sometimes
+-- have more than one node for the same operand (e.g., if a value is
+-- stored and used as a call argument, we'll generate a SinkNode for
+-- the store and a possible sink node for the argument position).
+--
+-- This function chooses the most specific node for each value.  In
+-- particular, this means that Sink nodes take precedence over all
+-- (and fptr escapes take precedence over internal nodes).
+uniqueEscapeGraphNodes :: [EscapeNode] -> [EscapeNode]
+uniqueEscapeGraphNodes =
+  foldr takeMostSpecificNodeForValue [] . doGroup . doSort
+  where
+    doGroup = groupBy ((==) `on` unlabelNode)
+    doSort = sortBy (comparing unlabelNode)
+
+    unique = S.toList . S.fromList
+
+    takeMostSpecificNodeForValue :: [EscapeNode] -> [EscapeNode] -> [EscapeNode]
+    takeMostSpecificNodeForValue ens acc =
+      case ens of
+        [] -> $failure "groupBy produced an empty group"
+        [elt] -> elt : acc
+        elts -> maximumBy escapeStrengthOrder (unique elts) : acc
+      where
+        -- Anything has higher precedence than an internal node.  Also,
+        -- fptrescape can be superceded by any other sink.  Source nodes
+        -- are superceded by sinks, though that should only happen for
+        -- CallSource, but the call sinks have negated IDs
+        escapeStrengthOrder nt1 nt2 =
+          case (nodeLabel nt1, nodeLabel nt2) of
+            (InternalNode _ _, InternalNode _ _) -> EQ
+            (InternalNode _ _, _) -> LT
+            (_, InternalNode _ _) -> GT
+            (FptrSink _, FptrSink _) -> EQ
+            (FptrSink _, _) -> LT
+            (_, FptrSink _) -> GT
+            _ -> $failure ("Unexpected escape order overlap " ++ show nt1 ++ " and " ++ show nt2)
+
 
 -- | This helper needs to traverse valueEscapes and fptrEscapes and
 -- make appropriate sink nodes (and edges).  fieldEscapes are taken
@@ -539,6 +611,8 @@ buildEscapeGraph callEscapes f =
 buildCallEscapeSubgraph :: CallEscapes -> ([EscapeNode], [EscapeEdge])
 buildCallEscapeSubgraph callEscapes = snd s1
   where
+    -- The first element of the tuple is the list of unique IDs for
+    -- escaping arguments.  Note that they are all negative.
     initVal = ([-1,-2..], ([], []))
     s0 = foldr (makeCallEscape FptrSink) initVal $ HM.toList $ callEscapes ^. fptrEscapes
     s1 = foldr (makeCallEscape EscapeSink) s0 $ HM.toList $ callEscapes ^. valueEscapes
@@ -547,34 +621,9 @@ buildCallEscapeSubgraph callEscapes = snd s1
           newEdge = LEdge (Edge (valueUniqueId val) eid) ()
       in (rest, (newNode : ns, newEdge : es))
 
-takeMostSpecific :: [EscapeNode] -> [EscapeNode] -> [EscapeNode]
-takeMostSpecific ens acc =
-  case ens of
-    [] -> $failure "groupBy produced an empty group"
-    [elt] -> elt : acc
-    elts -> maximumBy escapeStrengthOrder (unique elts) : acc
-  where
-    unique = S.toList . S.fromList
-    -- Anything has higher precedence than an internal node.  Also,
-    -- fptrescape can be superceded by any other sink.  Source nodes
-    -- are superceded by sinks, though that should only happen for
-    -- CallSource, but the call sinks have negated IDs
-    escapeStrengthOrder nt1 nt2 =
-      case (nodeLabel nt1, nodeLabel nt2) of
-        (InternalNode _ _, InternalNode _ _) -> EQ
-        (InternalNode _ _, _) -> LT
-        (_, InternalNode _ _) -> GT
-        (FptrSink _, FptrSink _) -> EQ
-        (FptrSink _, _) -> LT
-        (_, FptrSink _) -> GT
-        _ -> $failure ("Unexpected escape order overlap " ++ show nt1 ++ " and " ++ show nt2)
 
 
-toArgumentNode :: Argument -> EscapeNode
-toArgumentNode a = LNode (argumentUniqueId a) (ArgumentSource a)
-
-
--- | Build nodes an edges in the escape graph.  Note that we have a
+-- | Build nodes and edges for the escape graph.  Note that we have a
 -- very specific notion of escape here.  The following constructs
 -- cause pointers to escape:
 --
@@ -583,6 +632,8 @@ toArgumentNode a = LNode (argumentUniqueId a) (ArgumentSource a)
 --  * stores into arguments
 --
 --  * stores into globals
+--
+--  * stores into the return values of function calls
 --
 --  * passing a value as an argument that is known to escape
 --
@@ -781,7 +832,10 @@ toInternalNode i v = LNode (valueUniqueId v) (InternalNode i v)
 toInternalEdge :: (IsValue a, IsValue b) => a -> b -> EscapeEdge
 toInternalEdge i v = LEdge (Edge (valueUniqueId v) (valueUniqueId i)) ()
 
-
+-- | This is the pre-processing pass that builds the 'CallEscapes' summary for
+-- the function.  That is, it identifies all of the values used in argument
+-- positions to calls that escape (or may escape via function pointer).
+--
 -- FIXME: It could increase precision to add another parameter
 --
 -- > (ExternalFunction -> Int -> m [AbstractAccessPath]

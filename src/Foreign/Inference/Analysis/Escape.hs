@@ -89,6 +89,7 @@ module Foreign.Inference.Analysis.Escape (
 
   -- * Testing
   EscapeGraph,
+  EscapeClass(..),
   escapeResultToTestFormat,
   escapeUseGraphs,
   useGraphvizRepr
@@ -162,41 +163,42 @@ data NodeType = ArgumentSource Argument
                 -- actually matter for this analysis)
               deriving (Eq, Ord, Show)
 
+-- | The ways a value can escape from a function
+data EscapeClass = DirectEscape
+                 | BrokenContractEscape
+                 | IndirectEscape
+                 deriving (Eq, Ord, Read, Show)
 
--- FIXME: Collapse some of these fields; just have a HashMap Argument
--- (EscapeClass, (Set Instruction))
+instance NFData EscapeClass
+
 data EscapeSummary =
   EscapeSummary { _escapeGraphs :: HashMap Function EscapeGraph
-                , _escapeArguments :: HashMap Argument Instruction
-                , _fptrEscapeArguments :: HashMap Argument Instruction
-                , _escapeFields :: HashMap Argument (Set (AbstractAccessPath, Instruction))
-                , _fptrEscapeFields :: HashMap Argument (Set (AbstractAccessPath, Instruction))
+                , _escapeArguments :: HashMap Argument (EscapeClass, Instruction)
+                , _escapeFields :: HashMap Argument (Set (EscapeClass, AbstractAccessPath, Instruction))
                 , _escapeDiagnostics :: Diagnostics
                 }
 
 $(makeLens ''EscapeSummary)
 
 instance Eq EscapeSummary where
-  (EscapeSummary eg1 ea1 fea1 ef1 fef1 _) == (EscapeSummary eg2 ea2 fea2 ef2 fef2 _) =
-    eg1 == eg2 && ea1 == ea2 && fea1 == fea2 && ef1 == ef2 && fef1 == fef2
+  (EscapeSummary eg1 ea1 ef1 _) == (EscapeSummary eg2 ea2 ef2 _) =
+    eg1 == eg2 && ea1 == ea2 && ef1 == ef2
 
 instance Default EscapeSummary where
-  def = EscapeSummary mempty mempty mempty mempty mempty mempty
+  def = EscapeSummary mempty mempty mempty mempty
 
 instance Monoid EscapeSummary where
   mempty = def
-  mappend (EscapeSummary gs1 as1 f1 was1 faf1 d1) (EscapeSummary gs2 as2 f2 was2 faf2 d2) =
+  mappend (EscapeSummary gs1 as1 was1 d1) (EscapeSummary gs2 as2 was2 d2) =
     EscapeSummary { _escapeGraphs = HM.union gs1 gs2
                   , _escapeArguments = HM.union as1 as2
-                  , _fptrEscapeArguments = HM.union f1 f2
                   , _escapeFields = HM.union was1 was2
-                  , _fptrEscapeFields = HM.union faf1 faf2
                   , _escapeDiagnostics = d1 `mappend` d2
                   }
 
 instance NFData EscapeSummary where
-  rnf r@(EscapeSummary gs as fs was faf d) =
-    gs `deepseq` as `deepseq` was `deepseq` fs `deepseq` faf `deepseq` d `deepseq` r `seq` ()
+  rnf r@(EscapeSummary gs as was d) =
+    gs `deepseq` as `deepseq` was `deepseq` d `deepseq` r `seq` ()
 
 instance HasDiagnostics EscapeSummary where
   diagnosticLens = escapeDiagnostics
@@ -243,13 +245,19 @@ instance Labellable NodeType where
 -- will throw an error if the function is not in the escape result set
 -- since that implies a programming error.
 argumentEscapes :: EscapeSummary -> Argument -> Maybe Instruction
-argumentEscapes er a = HM.lookup a (er ^. escapeArguments)
+argumentEscapes = argumentEscapeTest DirectEscape
 
 -- | If the given argument escapes through a call to a function pointer,
 -- return the indirect call responsible
 argumentFptrEscapes :: EscapeSummary -> Argument -> Maybe Instruction
-argumentFptrEscapes er a = HM.lookup a (er ^. fptrEscapeArguments)
+argumentFptrEscapes = argumentEscapeTest IndirectEscape
 
+argumentEscapeTest :: EscapeClass -> EscapeSummary -> Argument -> Maybe Instruction
+argumentEscapeTest c er a = do
+  (t, w) <- HM.lookup a (er ^. escapeArguments)
+  case t == c of
+    True -> return w
+    False -> Nothing
 
 summarizeEscapeArgument :: Argument -> EscapeSummary -> [(ParamAnnotation, [Witness])]
 summarizeEscapeArgument a er =
@@ -388,16 +396,17 @@ summarizeArgumentEscapes g n summ =
             ArgumentSource _ ->
               -- The argument for this node is escaping into another argument
               let w:_ = storesInPath $__LOCATION__ n sink g
-              in (escapeArguments ^!%= HM.insert a w) summ
+              in (escapeArguments ^!%= HM.insert a (DirectEscape, w)) summ
             FieldSource _ fsi _ ->
               -- The argument for this node is escaping into the field
               -- of an argument
               let ws = storesInPath $__LOCATION__ n sink g
                   w = fromMaybe fsi (listToMaybe ws)
-              in (escapeArguments ^!%= HM.insert a w) summ
-            _ -> (escapeArguments ^!%= HM.insert a (sinkInstruction (nodeLabel sink))) summ
+              in (escapeArguments ^!%= HM.insert a (DirectEscape, w)) summ
+            _ -> (escapeArguments ^!%= HM.insert a (DirectEscape, sinkInstruction (nodeLabel sink))) summ
         SinkFptr fsink ->
-          (fptrEscapeArguments ^!%= HM.insert a (sinkInstruction (nodeLabel fsink))) summ
+          let newVal = (IndirectEscape, sinkInstruction (nodeLabel fsink))
+          in (escapeArguments ^!%= HM.insert a newVal) summ
         SinkNone -> summ
 
     -- In this case, the field of an argument is escaping somewhere.
@@ -410,14 +419,15 @@ summarizeArgumentEscapes g n summ =
           case nodeLabel sink of
             ArgumentSource _ ->
               let w:_ = storesInPath $__LOCATION__ n sink g
-              in (escapeFields ^!%= HM.insertWith S.union a (S.singleton (absPath, w))) summ
+              in (escapeFields ^!%= HM.insertWith S.union a (S.singleton (DirectEscape, absPath, w))) summ
             FieldSource _ fsi _ ->
               let ws = storesInPath $__LOCATION__ n sink g
                   w = fromMaybe fsi (listToMaybe ws)
-              in (escapeFields ^!%= HM.insertWith S.union a (S.singleton (absPath, w))) summ
-            _ -> (escapeFields ^!%= HM.insertWith S.union a (S.singleton (absPath, sinkInstruction (nodeLabel sink)))) summ
+              in (escapeFields ^!%= HM.insertWith S.union a (S.singleton (DirectEscape, absPath, w))) summ
+            _ -> (escapeFields ^!%= HM.insertWith S.union a (S.singleton (DirectEscape, absPath, sinkInstruction (nodeLabel sink)))) summ
         SinkFptr fsink ->
-          (fptrEscapeFields ^!%= HM.insertWith S.union a (S.singleton (absPath, sinkInstruction (nodeLabel fsink)))) summ
+          let newVal = S.singleton (IndirectEscape, absPath, sinkInstruction (nodeLabel fsink))
+          in (escapeFields ^!%= HM.insertWith S.union a newVal) summ
         SinkNone -> summ
     _ -> summ
 
@@ -885,19 +895,22 @@ collectEscapes extSumm summ ci ces callee args =
 -- | Check these in order because there is a superceding relationship
 -- here.  General escapes take precedence over field escapes, which in
 -- turn take precedence over fptr escapes.
+--
+-- FIXME These cases need care when adding the new contract escape
+-- annotation
 checkFuncArg :: EscapeSummary -> Instruction -> CallEscapes -> (Argument, Value) -> CallEscapes
 checkFuncArg summ ci ces (formal, arg)
   | not (isPointerValue arg) = ces
   | otherwise =
     case HM.lookup formal (summ ^. escapeArguments) of
-      Just _ -> (valueEscapes ^!%= HM.insert arg ci) ces
-      Nothing -> case HM.lookup formal (summ ^. escapeFields) of
+      Just (DirectEscape, _) -> (valueEscapes ^!%= HM.insert arg ci) ces
+      _ -> case HM.lookup formal (summ ^. escapeFields) of
         Just apsAndWitnesses ->
-          let aps = S.toList $ S.map fst apsAndWitnesses
+          let aps = S.toList $ S.map (\(_, fld, _) -> fld) apsAndWitnesses
           in (fieldEscapes ^!%= HM.insertWith (++) arg aps) ces
-        Nothing -> case HM.lookup formal (summ ^. fptrEscapeArguments) of
-          Just _ -> (fptrEscapes ^!%= HM.insert arg ci) ces
-          Nothing -> ces
+        Nothing -> case HM.lookup formal (summ ^. escapeArguments) of
+          Just (IndirectEscape, _) -> (fptrEscapes ^!%= HM.insert arg ci) ces
+          _ -> ces
 
 
 isPointerValue :: (IsValue a) => a -> Bool
@@ -925,8 +938,8 @@ escapeResultToTestFormat er =
   foldr fieldTransform directEscapes (HM.toList fm)
   where
     directEscapes = foldr transform mempty (HM.keys m)
-    m = (er ^. escapeArguments) `HM.union` (er ^. fptrEscapeArguments)
-    fm = (er ^. escapeFields) `HM.union` (er ^. fptrEscapeFields)
+    m = (er ^. escapeArguments) -- `HM.union` (er ^. fptrEscapeArguments)
+    fm = (er ^. escapeFields) -- `HM.union` (er ^. fptrEscapeFields)
     transform a acc =
       let f = argumentFunction a
           fname = show (functionName f)
@@ -936,7 +949,7 @@ escapeResultToTestFormat er =
       let f = argumentFunction a
           fname = show (functionName f)
           aname = show (argumentName a)
-          fields = S.toList $ S.map fst fieldsAndInsts
+          fields = S.toList $ S.map (\(_, fld, _) -> fld) fieldsAndInsts
           newEntries = S.fromList $ mapMaybe (toFieldRef aname) fields
       in M.insertWith' S.union fname newEntries acc
     toFieldRef aname fld =

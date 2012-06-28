@@ -45,7 +45,7 @@ analyzeAllocator ds m =
     ics = identifyIndirectCallTargets m
     cg = mkCallGraph m ics []
     analyses :: [ComposableAnalysis AnalysisSummary FunctionMetadata]
-    analyses = [ identifyEscapes ds escapeSummary
+    analyses = [ identifyEscapes ds ics escapeSummary
                , identifyFinalizers ds ics finalizerSummary
                , identifyAllocators ds ics allocatorSummary escapeSummary finalizerSummary
                ]

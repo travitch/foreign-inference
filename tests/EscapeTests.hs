@@ -55,7 +55,7 @@ analyzeEscapes ds m =
     ics = identifyIndirectCallTargets m
     cg = mkCallGraph m ics []
     analyses :: [ComposableAnalysis AnalysisSummary FunctionMetadata]
-    analyses = [ identifyEscapes ds escapeSummary ]
+    analyses = [ identifyEscapes ds ics escapeSummary ]
     analysisFunc = callGraphComposeAnalysis analyses
     res = callGraphSCCTraversal cg analysisFunc mempty
 
@@ -67,7 +67,7 @@ analyzeInstructionEscapes ds m =
     ics = identifyIndirectCallTargets m
     cg = mkCallGraph m ics []
     analyses :: [ComposableAnalysis AnalysisSummary FunctionMetadata]
-    analyses = [ identifyEscapes ds escapeSummary ]
+    analyses = [ identifyEscapes ds ics escapeSummary ]
     analysisFunc = callGraphComposeAnalysis analyses
     res = callGraphSCCTraversal cg analysisFunc mempty
     Just i = find isCallInst (moduleInstructions m)

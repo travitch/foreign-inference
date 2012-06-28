@@ -125,7 +125,7 @@ import LLVM.Analysis.CallGraphSCCTraversal
 
 import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
-
+import Foreign.Inference.Analysis.IndirectCallResolver
 
 -- | The acctual graph type
 type EscapeGraph = Gr NodeType ()
@@ -340,9 +340,10 @@ reachableValues loc filt n g =
 -- that graph.
 identifyEscapes :: (FuncLike funcLike, HasFunction funcLike)
                    => DependencySummary
+                   -> IndirectCallSummary
                    -> Lens compositeSummary EscapeSummary
                    -> ComposableAnalysis compositeSummary funcLike
-identifyEscapes ds lns =
+identifyEscapes ds ics lns =
   composableAnalysisM runner escapeWrapper lns
   where
     escapeWrapper funcLike s = do

@@ -614,11 +614,6 @@ uniqueEscapeGraphNodes =
 -- actual so that an argument that escapes does not subsume another
 -- pointer argument that only escapes via a function pointer (an
 -- annotation of lesser severity).
---
--- FIXME: If a function has an escaping argument and some fptr escape
--- arguments, the escape node generated here overrides the others and
--- then all arguments become escapes.
-    -- ADD A TEST FOR THIS
 buildCallEscapeSubgraph :: CallEscapes -> ([EscapeNode], [EscapeEdge])
 buildCallEscapeSubgraph callEscapes = snd s1
   where

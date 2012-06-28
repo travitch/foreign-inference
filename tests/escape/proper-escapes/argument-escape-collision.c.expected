@@ -1,0 +1,3 @@
+fromList [ ("@g", fromList [ (DirectEscape, "%p"), (IndirectEscape, "%q") ] )
+         , ("@f", fromList [ (DirectEscape, "%i1"), (IndirectEscape, "%i2") ] )
+         ]

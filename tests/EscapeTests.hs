@@ -5,6 +5,7 @@ import Data.Map ( Map )
 import Data.Maybe ( isJust )
 import Data.Monoid
 import Data.Set ( Set )
+import System.Environment ( getArgs, withArgs )
 import System.FilePath
 import Test.HUnit ( assertEqual )
 
@@ -22,27 +23,20 @@ import Foreign.Inference.Analysis.Util.CompositeSummary
 
 main :: IO ()
 main = do
+  args <- getArgs
+  let pattern = case args of
+        [] -> "tests/escape/proper-escapes/*.c"
+        [infile] -> infile
+        _ -> error "At most one argument allowed"
   ds <- loadDependencies [] []
   let testDescriptors = [
-        TestDescriptor { testPattern = "tests/escape/proper-escapes/*.c"
+        TestDescriptor { testPattern = pattern
                        , testExpectedMapping = (<.> "expected")
                        , testResultBuilder = analyzeEscapes ds
                        , testResultComparator = assertEqual
                        }
-        -- , TestDescriptor { testPattern = "tests/escape/will-escape/*.c"
-        --                  , testExpectedMapping = (<.> "expected")
-        --                  , testResultBuilder = willEscapeSummary
-        --                  , testResultComparator = assertEqual
-        --                  }
-
-        , TestDescriptor { testPattern = "tests/escape/instruction-escape/*.c"
-                         , testExpectedMapping = (<.> "expected")
-                         , testResultBuilder = analyzeInstructionEscapes ds
-                         , testResultComparator = assertEqual
-                         }
         ]
-
-  testAgainstExpected requiredOptimizations bcParser testDescriptors
+  withArgs [] $ testAgainstExpected requiredOptimizations bcParser testDescriptors
   where
     bcParser = parseLLVMFile defaultParserOptions
 
@@ -60,32 +54,6 @@ analyzeEscapes ds m =
     res = callGraphSCCTraversal cg analysisFunc mempty
 
 
-analyzeInstructionEscapes :: DependencySummary -> Module -> Bool
-analyzeInstructionEscapes ds m =
-  isJust $ instructionEscapesWith notReturn i (_escapeSummary res)
-  where
-    ics = identifyIndirectCallTargets m
-    cg = mkCallGraph m ics []
-    analyses :: [ComposableAnalysis AnalysisSummary FunctionMetadata]
-    analyses = [ identifyEscapes ds ics escapeSummary ]
-    analysisFunc = callGraphComposeAnalysis analyses
-    res = callGraphSCCTraversal cg analysisFunc mempty
-    Just i = find isCallInst (moduleInstructions m)
-    notReturn ignoreInst =
-      case ignoreInst of
-        RetInst {} -> True
-        _ -> False
-
-
-moduleInstructions :: Module -> [Instruction]
-moduleInstructions = concatMap functionInstructions . moduleDefinedFunctions
-
-
-isCallInst :: Instruction -> Bool
-isCallInst i =
-  case i of
-    CallInst {} -> True
-    _ -> False
 
 -- runEscapeAnalysis ::  CallGraph
 --                      -> (ExternalFunction -> Int -> Identity Bool)

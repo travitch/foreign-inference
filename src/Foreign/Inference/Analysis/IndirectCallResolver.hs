@@ -61,6 +61,8 @@ data IndirectCallSummary =
         -- Function that is the key of the map.
       , fieldArgDependencies :: !(Map AbstractAccessPath [(Function, Int)])
       , globalArgDependencies :: !(Map GlobalVariable [(Function, Int)])
+        -- ^ These two are used to pass information about initializers
+        -- that are applied via function arguments
       , resolverCHA :: CHA
         -- ^ The class hierarchy analysis
       }
@@ -90,7 +92,10 @@ indirectCallInitializers s v =
       case valueContent' (accessPathBaseValue accPath) of
         GlobalVariableC gv@GlobalVariable { globalVariableInitializer = Just initVal } ->
           case followAccessPath absPath initVal of
-            Nothing -> return $! globalVarLookup s gv
+            Nothing ->
+              case globalVarLookup s gv of
+                [] -> return $! absPathLookup s absPath
+                gvs -> return gvs
             accPathVal -> fmap return accPathVal
         _ -> return $! absPathLookup s absPath
     _ -> []
@@ -135,12 +140,17 @@ absPathLookup s absPath = storeInits `union` argInits `union` reducedPathResults
         Nothing -> []
         Just rpath -> absPathLookup s rpath
 
+-- | Look up initializers for a global variable, ignoring NULLs
 globalVarLookup :: IndirectCallSummary -> GlobalVariable -> [Value]
-globalVarLookup s gv = concreteInits `union` argInits
+globalVarLookup s gv = filter isNotNullPtr $ concreteInits `union` argInits
   where
     concreteInits = M.findWithDefault [] gv (concreteValueInitializers s)
     argDeps = M.findWithDefault [] gv (globalArgDependencies s)
     argInits = concatMap (\x -> M.findWithDefault [] x (argumentInitializers s)) argDeps
+    isNotNullPtr v =
+      case valueContent' v of
+        ConstantC ConstantPointerNull {} -> False
+        _ -> True
 
 -- | Run the initializer analysis: a cheap pass to identify a subset
 -- of possible function pointers that object fields can point to.

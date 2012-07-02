@@ -1,8 +1,6 @@
 module Main ( main ) where
 
-import Data.List ( find )
 import Data.Map ( Map )
-import Data.Maybe ( isJust )
 import Data.Monoid
 import Data.Set ( Set )
 import System.Environment ( getArgs, withArgs )

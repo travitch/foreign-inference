@@ -42,6 +42,9 @@ import LLVM.Analysis.AccessPath
 import LLVM.Analysis.ClassHierarchy
 import LLVM.Analysis.PointsTo
 
+import Debug.Trace
+debug = flip trace
+
 -- | This isn't a true points-to analysis because it is an
 -- under-approximation.  However, that is sufficient for this library.
 instance PointsToAnalysis IndirectCallSummary where
@@ -83,12 +86,19 @@ emptySummary m cvis =
   where
     cha = runCHA m
 
+-- FIXME: If an array member gets an initializer, figure out the
+-- abstract access path of the corresponding array element type and
+-- also note the initializer for that type.  The intuition is that an
+-- array element initialized to something could be used anywhere a
+-- single element is expected
+
 indirectCallInitializers :: IndirectCallSummary -> Value -> [Value]
 indirectCallInitializers s v =
   case valueContent' v of
     InstructionC i -> maybe [] id $ do
       accPath <- accessPath i
       let absPath = abstractAccessPath accPath
+      return () `debug` show absPath
       case valueContent' (accessPathBaseValue accPath) of
         GlobalVariableC gv@GlobalVariable { globalVariableInitializer = Just initVal } ->
           case followAccessPath absPath initVal of

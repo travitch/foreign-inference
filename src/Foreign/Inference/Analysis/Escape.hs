@@ -103,7 +103,9 @@ import Data.Function ( on )
 import Data.GraphViz
 import Data.Lens.Common
 import Data.Lens.Template
-import Data.List ( find, foldl', groupBy, maximumBy, sortBy )
+import Data.List ( find, foldl', groupBy, maximumBy, sortBy, transpose )
+import Data.List.NonEmpty ( NonEmpty, nonEmpty )
+import qualified Data.List.NonEmpty as NEL
 import Data.HashMap.Strict ( HashMap )
 import qualified Data.HashMap.Strict as HM
 import Data.Map ( Map )
@@ -128,6 +130,9 @@ import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
 import Foreign.Inference.Analysis.IndirectCallResolver
 
+import Debug.Trace
+debug = flip trace
+
 -- | The acctual graph type
 type EscapeGraph = Gr NodeType ()
 type EscapeNode = LNode EscapeGraph
@@ -151,6 +156,9 @@ data NodeType = ArgumentSource Argument
                 -- ^ Non-void call inst
               | FptrSink { sinkInstruction :: Instruction }
                 -- ^ Indirect call inst
+              | ContractSink { sinkInstruction :: Instruction }
+                -- ^ Indirect call with library initializers that have
+                -- consistent escape properties
               | EscapeSink { sinkInstruction :: Instruction }
                 -- ^ Passing a value to an escaping call argument
               | WillEscapeSink { sinkInstruction :: Instruction }
@@ -179,6 +187,9 @@ data EscapeSummary =
                 }
 
 $(makeLens ''EscapeSummary)
+
+instance Show EscapeSummary where
+  show (EscapeSummary _ ea _ _) = show ea
 
 instance Eq EscapeSummary where
   (EscapeSummary eg1 ea1 ef1 _) == (EscapeSummary eg2 ea2 ef2 _) =
@@ -209,13 +220,15 @@ instance HasDiagnostics EscapeSummary where
 -- arguments passed to indirect function calls.
 --
 -- This is built up in a preprocessing step.
+--
+-- FIXME: The last three members should all just be one, with a (Tag,
+-- Instruction)
 data CallEscapes = CallEscapes { _fieldEscapes :: HashMap Value [AbstractAccessPath]
-                               , _valueEscapes :: HashMap Value Instruction
-                               , _fptrEscapes :: HashMap Value Instruction
+                               , _valueEscapes :: HashMap Value (EscapeClass, Instruction)
                                }
 
 instance Default CallEscapes where
-  def = CallEscapes mempty mempty mempty
+  def = CallEscapes mempty mempty
 
 $(makeLens ''CallEscapes)
 
@@ -224,6 +237,7 @@ instance NFData NodeType where
   rnf (FieldSource a i aap) = a `seq` i `seq` aap `seq` ()
   rnf (CallSource i) = i `seq` ()
   rnf (FptrSink i) = i `seq` ()
+  rnf (ContractSink i) = i `seq` ()
   rnf (EscapeSink i) = i `seq` ()
   rnf (WillEscapeSink i) = i `seq` ()
   rnf (InternalNode i v) = i `seq` v `seq` ()
@@ -233,6 +247,7 @@ instance Labellable NodeType where
   toLabelValue (FieldSource a _ aap) = toLabelValue $ "FldSrc " ++ show a ++ "@" ++ show aap
   toLabelValue (CallSource i) = toLabelValue $ "CallSrc " ++ show i
   toLabelValue (FptrSink i) = toLabelValue $ "FptrSink " ++ show i
+  toLabelValue (ContractSink i) = toLabelValue $ "ContractSink " ++ show i
   toLabelValue (EscapeSink i) = toLabelValue $ "EscSink " ++ show i
   toLabelValue (WillEscapeSink i) = toLabelValue $ "WillEscSink " ++ show i
   toLabelValue (InternalNode i v) =
@@ -240,38 +255,21 @@ instance Labellable NodeType where
         s = printf "Int %s (from %s)" (show v) (show i)
     in toLabelValue s
 
-
--- | Get the set of escaped arguments for a function.  This function
--- will throw an error if the function is not in the escape result set
--- since that implies a programming error.
-argumentEscapes :: EscapeSummary -> Argument -> Maybe Instruction
-argumentEscapes = argumentEscapeTest DirectEscape
-
--- | If the given argument escapes through a call to a function pointer,
--- return the indirect call responsible
-argumentFptrEscapes :: EscapeSummary -> Argument -> Maybe Instruction
-argumentFptrEscapes = argumentEscapeTest IndirectEscape
-
-argumentEscapeTest :: EscapeClass -> EscapeSummary -> Argument -> Maybe Instruction
-argumentEscapeTest c er a = do
-  (t, w) <- HM.lookup a (er ^. escapeArguments)
-  case t == c of
-    True -> return w
-    False -> Nothing
-
 summarizeEscapeArgument :: Argument -> EscapeSummary -> [(ParamAnnotation, [Witness])]
 summarizeEscapeArgument a er =
-  case argumentEscapes er a of
-    Nothing ->
-      case argumentFptrEscapes er a of
-        Nothing -> []
-        Just w@CallInst {} -> [(PAFptrEscape, [Witness w "call"])]
-        Just w@InvokeInst {} -> [(PAFptrEscape, [Witness w "call"])]
-        Just w -> $failure ("Expected call instruction " ++ show w)
-    Just w@RetInst {} -> [(PAWillEscape, [Witness w "ret"])]
-    Just w@CallInst {} -> [(PAEscape, [Witness w "call"])]
-    Just w@InvokeInst {} -> [(PAEscape, [Witness w "call"])]
-    Just w -> [(PAEscape, [Witness w "store"])]
+  case HM.lookup a (er ^. escapeArguments) of
+    Nothing -> []
+    Just (DirectEscape, w@RetInst {}) -> [(PAWillEscape, [Witness w "ret"])]
+    Just (t, w@StoreInst {}) -> [(tagToAnnot t, [Witness w "store"])]
+    Just (t, w@CallInst {}) -> [(tagToAnnot t, [Witness w "call"])]
+    Just (t, w@InvokeInst {}) -> [(tagToAnnot t, [Witness w "call"])]
+    Just (_, w) -> $failure ("Unexpected witness: " ++ show w)
+  where
+    tagToAnnot t =
+      case t of
+        DirectEscape -> PAEscape
+        IndirectEscape -> PAFptrEscape
+        BrokenContractEscape -> PAContractEscape
 
 instance SummarizeModule EscapeSummary where
   summarizeFunction _ _ = []
@@ -356,7 +354,7 @@ identifyEscapes ds ics lns =
   where
     escapeWrapper funcLike s = do
       let f = getFunction funcLike
-      callEscapes <- foldM (buildEscapeMaps extSumm s) def (functionInstructions f)
+      callEscapes <- foldM (buildEscapeMaps extSumm s ics) def (functionInstructions f)
       let g = buildEscapeGraph callEscapes f
           summ1 = (escapeGraphs ^!%= HM.insert f g) s
       return $! foldr (summarizeArgumentEscapes g) summ1 (labNodes g)
@@ -615,15 +613,18 @@ uniqueEscapeGraphNodes =
 -- pointer argument that only escapes via a function pointer (an
 -- annotation of lesser severity).
 buildCallEscapeSubgraph :: CallEscapes -> ([EscapeNode], [EscapeEdge])
-buildCallEscapeSubgraph callEscapes = snd s1
+buildCallEscapeSubgraph callEscapes = snd s0
   where
     -- The first element of the tuple is the list of unique IDs for
     -- escaping arguments.  Note that they are all negative.
     initVal = ([-1,-2..], ([], []))
-    s0 = foldr (makeCallEscape FptrSink) initVal $ HM.toList $ callEscapes ^. fptrEscapes
-    s1 = foldr (makeCallEscape EscapeSink) s0 $ HM.toList $ callEscapes ^. valueEscapes
-    makeCallEscape constructor (val, call) (eid : rest, (ns, es)) =
-      let newNode = LNode eid (constructor call)
+    s0 = foldr makeCallEscape initVal $ HM.toList $ callEscapes ^. valueEscapes
+    makeCallEscape (val, (tag, call)) (eid : rest, (ns, es)) =
+      let constructor = case tag of
+            DirectEscape -> EscapeSink
+            BrokenContractEscape -> ContractSink
+            IndirectEscape -> FptrSink
+          newNode = LNode eid (constructor call)
           newEdge = LEdge (Edge (valueUniqueId val) eid) ()
       in (rest, (newNode : ns, newEdge : es))
 
@@ -858,22 +859,24 @@ toInternalEdge i v = LEdge (Edge (valueUniqueId v) (valueUniqueId i)) ()
 -- unlikely to be particularly useful, since most complicated
 -- relationships like that would be mostly restricted to the internals
 -- of a library
-buildEscapeMaps :: (Monad m) => (ExternalFunction -> Int -> m Bool) -> EscapeSummary
+buildEscapeMaps :: (Monad m) => (ExternalFunction -> Int -> m Bool)
+                   -> EscapeSummary -> IndirectCallSummary
                    -> CallEscapes -> Instruction -> m CallEscapes
-buildEscapeMaps extSumm summ acc i =
+buildEscapeMaps extSumm summ ics acc i =
   case i of
     CallInst { callFunction = f, callArguments = args } ->
-      collectEscapes extSumm summ i acc f (map fst args)
+      collectEscapes extSumm summ ics i acc f (map fst args)
     InvokeInst { invokeFunction = f, invokeArguments = args } ->
-      collectEscapes extSumm summ i acc f (map fst args)
+      collectEscapes extSumm summ ics i acc f (map fst args)
     _ -> return acc
 
 -- | The real worker that determines the escape properties of each
 -- actual argument based on what functions might be called by this
 -- instruction.
 collectEscapes :: (Monad m) => (ExternalFunction -> Int -> m Bool) -> EscapeSummary
-                  -> Instruction -> CallEscapes -> Value -> [Value] -> m CallEscapes
-collectEscapes extSumm summ ci ces callee args =
+                  -> IndirectCallSummary -> Instruction
+                  -> CallEscapes -> Value -> [Value] -> m CallEscapes
+collectEscapes extSumm summ ics ci ces callee args =
   case valueContent' callee of
     -- Use the external summary function to check each argument
     ExternalFunctionC ef -> foldM (checkExt ef) ces (zip [0..] args)
@@ -887,32 +890,72 @@ collectEscapes extSumm summ ci ces callee args =
 
     -- This is a call through a function pointer, and all of its
     -- arguments have fptr-escape.
-    _ -> return $ foldr (\arg -> fptrEscapes ^!%= HM.insert arg ci) ces args
+    _ ->
+      case consistentTargetEscapes summ ics ci of
+        Nothing -> return $ foldr (\arg -> valueEscapes ^!%= HM.insert arg (IndirectEscape, ci)) ces args
+        Just representative ->
+          let formals = functionParameters representative
+          in return $! foldl' (checkContractFuncArg summ ci) ces (zip formals args)
   where
     checkExt ef acc (ix, arg) = do
       doesEscape <- extSumm ef ix
       case doesEscape of
         False -> return acc
-        True -> return $! (valueEscapes ^!%= HM.insert arg ci) acc
+        True -> return $! (valueEscapes ^!%= HM.insert arg (DirectEscape, ci)) acc
+
+-- | If all of the resolvable targets of the given call/invoke
+-- instruction have the same escape properties for each argument,
+-- return an arbitrary one as a representative for the analysis.
+consistentTargetEscapes :: EscapeSummary -> IndirectCallSummary -> Instruction -> Maybe Function
+consistentTargetEscapes summ ics ci = do
+  fs <- nonEmpty targets `debug` printf "targets for <%s>: %s (from %s)\n" (show ci) (show targets) (show ics)
+  checkConsistency summ fs
+  where
+    targets = indirectCallTargets ics ci
+
+checkConsistency :: EscapeSummary -> NonEmpty Function -> Maybe Function
+checkConsistency summ fs =
+  case all (groupConsistent summ) formalsByPosition of
+    False -> Nothing
+    True -> Just (NEL.head fs)
+  where
+    formalLists = map functionParameters (NEL.toList fs)
+    formalsByPosition = transpose formalLists
+
+groupConsistent :: EscapeSummary -> [Argument] -> Bool
+groupConsistent _ [] = True
+groupConsistent summ (a:as) =
+  all (== (argEscapeType summ a)) (map (argEscapeType summ) as)
+
+-- This stuff doesn't deal with field escapes yet...
+argEscapeType :: EscapeSummary -> Argument -> Maybe EscapeClass
+argEscapeType summ a = do
+  (e, _) <- HM.lookup a (summ ^. escapeArguments)
+  return e
+
+checkContractFuncArg :: EscapeSummary -> Instruction -> CallEscapes -> (Argument, Value) -> CallEscapes
+checkContractFuncArg summ ci ces (formal, arg)
+  | not (isPointerValue arg) = ces
+  | otherwise =
+    case HM.lookup formal (summ ^. escapeArguments) of
+      Nothing -> (valueEscapes ^!%= HM.insert arg (BrokenContractEscape, ci)) ces -- `debug` ("n " ++ show summ)
+      Just (esctype, _) -> (valueEscapes ^!%= HM.insert arg (esctype, ci)) ces -- `debug` ("j " ++ show summ)
 
 -- | Check these in order because there is a superceding relationship
 -- here.  General escapes take precedence over field escapes, which in
 -- turn take precedence over fptr escapes.
---
--- FIXME These cases need care when adding the new contract escape
--- annotation
 checkFuncArg :: EscapeSummary -> Instruction -> CallEscapes -> (Argument, Value) -> CallEscapes
 checkFuncArg summ ci ces (formal, arg)
   | not (isPointerValue arg) = ces
   | otherwise =
     case HM.lookup formal (summ ^. escapeArguments) of
-      Just (DirectEscape, _) -> (valueEscapes ^!%= HM.insert arg ci) ces
+      Just (DirectEscape, _) -> (valueEscapes ^!%= HM.insert arg (DirectEscape, ci)) ces
       _ -> case HM.lookup formal (summ ^. escapeFields) of
         Just apsAndWitnesses ->
           let aps = S.toList $ S.map (\(_, fld, _) -> fld) apsAndWitnesses
           in (fieldEscapes ^!%= HM.insertWith (++) arg aps) ces
         Nothing -> case HM.lookup formal (summ ^. escapeArguments) of
-          Just (IndirectEscape, _) -> (fptrEscapes ^!%= HM.insert arg ci) ces
+          Just (IndirectEscape, _) -> (valueEscapes ^!%= HM.insert arg (IndirectEscape, ci)) ces
           _ -> ces
 
 

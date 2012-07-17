@@ -1,0 +1,1 @@
+fromList [ ("@addrOfEscape2", fromList [(DirectEscape, "%i1"), (DirectEscape, "%i2")]) ]

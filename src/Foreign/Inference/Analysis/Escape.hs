@@ -679,6 +679,14 @@ collectEdges callEscapes acc@(ns, es) i =
             newNode = LNode (instructionUniqueId i) (FieldSource a i absPath)
         in (newNode : ns, es)
 
+    LoadInst { loadAddress = (valueContent' -> GlobalVariableC _) } ->
+      ifPointer i acc $
+        let newNode = LNode (valueUniqueId i) (EscapeSink i)
+        in (newNode : ns, es)
+    LoadInst { loadAddress = (valueContent' -> ExternalValueC _) } ->
+      ifPointer i acc $
+        let newNode = LNode (valueUniqueId i) (EscapeSink i)
+        in (newNode : ns, es)
     LoadInst { } ->
       ifPointer i acc $
         let newNode = toInternalNode i (Value i)

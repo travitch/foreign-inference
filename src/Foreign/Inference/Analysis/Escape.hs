@@ -823,9 +823,9 @@ collectEdges callEscapes acc@(ns, es) i =
         in (tn : fn : ns, te : fe : es)
     PhiNode { phiIncomingValues = ivs } ->
       ifPointer i acc $
-        let newNodes = map (toInternalNode i) (map fst ivs)
+        let newNode = toInternalNode i (Value i)
             newEdges = map (toInternalEdge i) (map fst ivs)
-        in (newNodes ++ ns, newEdges ++ es)
+        in (newNode : ns, newEdges ++ es)
 
     -- InsertElementInst {} -> undefined
     -- InsertValueInst {} -> undefined

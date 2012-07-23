@@ -263,7 +263,7 @@ summarizeEscapeArgument a er =
     Just (t, w@StoreInst {}) -> [(tagToAnnot t, [Witness w "store"])]
     Just (t, w@CallInst {}) -> [(tagToAnnot t, [Witness w "call"])]
     Just (t, w@InvokeInst {}) -> [(tagToAnnot t, [Witness w "call"])]
-    Just (_, w) -> $failure ("Unexpected witness: " ++ show w)
+    Just (t, w) -> [(tagToAnnot t, [Witness w "access"])]
   where
     tagToAnnot t =
       case t of
@@ -667,6 +667,20 @@ collectEdges callEscapes acc@(ns, es) i =
             e = LEdge (Edge (valueUniqueId rv) (instructionUniqueId i)) ()
         in (newNode : rnode : ns, e : es)
 
+    -- This always returns a pointer
+    GetElementPtrInst { getElementPtrValue = (valueContent' -> GlobalVariableC _) } ->
+      let newNode = LNode (instructionUniqueId i) (EscapeSink i)
+      in (newNode : ns, es)
+    GetElementPtrInst { getElementPtrValue = (valueContent' -> ExternalValueC _) } ->
+      let newNode = LNode (instructionUniqueId i) (EscapeSink i)
+      in (newNode : ns, es)
+    GetElementPtrInst { getElementPtrValue = (valueContent' -> ArgumentC _) } ->
+      let newNode = LNode (instructionUniqueId i) (EscapeSink i)
+      in (newNode : ns, es)
+    GetElementPtrInst { getElementPtrValue = v } ->
+      let newNode = toInternalNode i v
+      in (newNode : ns, es)
+
     -- This is a load of a field of an argument (from a pointer to a
     -- struct).  These are important FieldSinks.  Note that argument
     -- sources are already in the graph so we don't need to make a new
@@ -688,10 +702,16 @@ collectEdges callEscapes acc@(ns, es) i =
       ifPointer i acc $
         let newNode = LNode (valueUniqueId i) (EscapeSink i)
         in (newNode : ns, es)
-    LoadInst { } ->
+    LoadInst { loadAddress = (valueContent' -> ArgumentC _) } ->
+      ifPointer i acc $
+        let newNode = LNode (valueUniqueId i) (EscapeSink i)
+        in (newNode : ns, es)
+    LoadInst { loadAddress = la } ->
       ifPointer i acc $
         let newNode = toInternalNode i (Value i)
-        in (newNode : ns, es)
+--            newEdge1 = LEdge (Edge (valueUniqueId la) (instructionUniqueId i)) ()
+            newEdge2 = LEdge (Edge (instructionUniqueId i) (valueUniqueId la)) ()
+        in (newNode : ns, newEdge2 : es)
 
     -- A store to a global generates a sink (the global) and an edge
     -- from the store value to the sink
@@ -711,7 +731,7 @@ collectEdges callEscapes acc@(ns, es) i =
             newEdge = LEdge (Edge (valueUniqueId sv) (valueUniqueId i)) ()
         in (newNode : ns, newEdge : es)
 
-
+{-
     -- In this case, we have a store to a field of a global (also an escape)
     StoreInst { storeValue = sv, storeAddress = (valueContent' -> InstructionC
       GetElementPtrInst { getElementPtrValue = (valueContent' -> GlobalVariableC _)})} ->
@@ -731,6 +751,7 @@ collectEdges callEscapes acc@(ns, es) i =
         let newNode = LNode (valueUniqueId i) (EscapeSink i)
             newEdge = LEdge (Edge (valueUniqueId sv) (valueUniqueId i)) ()
         in (newNode : ns, newEdge : es)
+-}
 
     -- Another interesting case is if the store address is a GEP whose
     -- base is in the callEscapes map (noted as escaping via function
@@ -908,7 +929,7 @@ collectEscapes extSumm summ ics ci ces callee args =
 -- return an arbitrary one as a representative for the analysis.
 consistentTargetEscapes :: EscapeSummary -> IndirectCallSummary -> Instruction -> Maybe Function
 consistentTargetEscapes summ ics ci = do
-  fs <- nonEmpty targets `debug` printf "targets for <%s>: %s (from %s)\n" (show ci) (show targets) (show ics)
+  fs <- nonEmpty targets -- `debug` printf "targets for <%s>: %s (from %s)\n" (show ci) (show targets) (show ics)
   checkConsistency summ fs
   where
     targets = indirectCallTargets ics ci

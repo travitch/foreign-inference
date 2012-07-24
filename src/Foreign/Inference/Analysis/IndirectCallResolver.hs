@@ -173,33 +173,27 @@ factsForGlobal :: (Failure DatalogError m)
 factsForGlobal _ GlobalVariable { globalVariableInitializer = Nothing } = return ()
 factsForGlobal fptrToField gv@GlobalVariable { globalVariableInitializer = Just i } =
   case valueContent' i of
-    FunctionC f ->
-      let bt = valueType gv
-          cs = []
-          p = AbstractAccessPath bt bt cs
-      in assertFact fptrToField [ Target (Value f), Path p ]
-    ExternalFunctionC f ->
-      let bt = valueType gv
-          cs = []
-          p = AbstractAccessPath bt bt cs
-      in assertFact fptrToField [ Target (Value f), Path p ]
+    FunctionC f -> addPlainInitializer (Value f)
+    ExternalFunctionC f -> addPlainInitializer (Value f)
     ConstantC (ConstantStruct _ _ is) ->
       forM_ (zip [0..] is) $ \(idx, initializer) ->
         case valueContent' initializer of
-          FunctionC f ->
-            let bt = valueType gv
-                et = TypePointer (TypePointer (valueType f) 0) 0
-                cs = [AccessField idx]
-                p = AbstractAccessPath bt et cs
-            in assertFact fptrToField [ Target (Value f), Path p ]
-          ExternalFunctionC f ->
-            let bt = valueType gv
-                et = TypePointer (TypePointer (valueType f) 0) 0
-                cs = [AccessField idx]
-                p = AbstractAccessPath bt et cs
-            in assertFact fptrToField [ Target (Value f), Path p ] `debug` show p
+          FunctionC f -> addAggregateInitializer idx (Value f)
+          ExternalFunctionC f -> addAggregateInitializer idx (Value f)
           _ -> return ()
     _ -> return ()
+  where
+    addPlainInitializer v =
+      let bt = valueType gv
+          cs = []
+          p = AbstractAccessPath bt bt cs
+      in assertFact fptrToField [ Target v, Path p ]
+    addAggregateInitializer idx v =
+      let bt = valueType gv
+          et = TypePointer (TypePointer (valueType v) 0) 0
+          cs = [AccessField idx]
+          p = AbstractAccessPath bt et cs
+      in assertFact fptrToField [ Target v, Path p]
 
 
 factsForInstruction :: (Failure DatalogError m)
@@ -212,18 +206,8 @@ factsForInstruction fptrToField fptrAsArg argToField i =
   case i of
     StoreInst { storeValue = sv, storeAddress = sa } ->
       case valueContent' sv of
-        FunctionC f ->
-          case accessPath i of
-            Nothing -> return ()
-            Just accPath -> do
-              let absPath = abstractAccessPath accPath
-              assertFact fptrToField [ Target (Value f), Path absPath ]
-        ExternalFunctionC ef ->
-          case accessPath i of
-            Nothing -> return ()
-            Just accPath -> do
-              let absPath = abstractAccessPath accPath
-              assertFact fptrToField [ Target (Value ef), Path absPath ]
+        FunctionC f -> addStoredFunc (Value f)
+        ExternalFunctionC ef -> addStoredFunc (Value ef)
         ArgumentC a ->
           case accessPath i of
             Nothing -> return ()
@@ -243,6 +227,12 @@ factsForInstruction fptrToField fptrAsArg argToField i =
       mapM_ (argPosFacts f) (zip [0..] (map fst args))
     _ -> return ()
   where
+    addStoredFunc v =
+      case accessPath i of
+        Nothing -> return ()
+        Just accPath -> do
+          let absPath = abstractAccessPath accPath
+          assertFact fptrToField [ Target v, Path absPath ]
     argPosFacts f (ix, val) =
       case valueContent' val of
         FunctionC fptr ->

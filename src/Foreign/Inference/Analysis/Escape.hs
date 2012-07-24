@@ -405,6 +405,9 @@ summarizeArgumentEscapes g n summ =
         SinkFptr fsink ->
           let newVal = (IndirectEscape, sinkInstruction (nodeLabel fsink))
           in (escapeArguments ^!%= HM.insert a newVal) summ
+        SinkContract sink ->
+          let newVal = (BrokenContractEscape, sinkInstruction (nodeLabel sink))
+          in (escapeArguments ^!%= HM.insert a newVal) summ
         SinkNone -> summ
 
     -- In this case, the field of an argument is escaping somewhere.
@@ -426,6 +429,9 @@ summarizeArgumentEscapes g n summ =
         SinkFptr fsink ->
           let newVal = S.singleton (IndirectEscape, absPath, sinkInstruction (nodeLabel fsink))
           in (escapeFields ^!%= HM.insertWith S.union a newVal) summ
+        SinkContract sink ->
+          let newVal = S.singleton (BrokenContractEscape, absPath, sinkInstruction (nodeLabel sink))
+          in (escapeFields ^!%= HM.insertWith S.union a newVal) summ
         SinkNone -> summ
     _ -> summ
 
@@ -433,6 +439,7 @@ summarizeArgumentEscapes g n summ =
 -- results from a search of the reached nodes.
 data SinkType = SinkNormal EscapeNode
               | SinkFptr EscapeNode
+              | SinkContract EscapeNode
               | SinkNone
 
 sinkType :: [EscapeNode] -> SinkType
@@ -440,9 +447,12 @@ sinkType reached =
   case find nodeIsSink reached of
     Just sink -> SinkNormal sink
     Nothing ->
-      case find nodeIsFptrSink reached of
-        Just fsink -> SinkFptr fsink
-        Nothing -> SinkNone
+      case find nodeIsContractSink reached of
+        Just sink -> SinkContract sink
+        Nothing ->
+          case find nodeIsFptrSink reached of
+            Just fsink -> SinkFptr fsink
+            Nothing -> SinkNone
 
 -- | Given a query node and the sink it escaped to, determine the
 -- shortest path between them in the escape graph and extract all of
@@ -519,6 +529,12 @@ nodeIsFptrSink :: EscapeNode -> Bool
 nodeIsFptrSink t =
   case nodeLabel t of
     FptrSink _ -> True
+    _ -> False
+
+nodeIsContractSink :: EscapeNode -> Bool
+nodeIsContractSink t =
+  case nodeLabel t of
+    ContractSink _ -> True
     _ -> False
 
 nodeIsAnySink :: EscapeNode -> Bool

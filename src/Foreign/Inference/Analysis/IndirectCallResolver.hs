@@ -1,4 +1,4 @@
-{-# LANGUAGE ViewPatterns #-}
+{-# LANGUAGE ViewPatterns, OverloadedStrings, FlexibleContexts #-}
 -- | FIXME: Currently there is an exception allowing us to identify
 -- finalizers that are called through function pointers if the
 -- function pointer is global and has an initializer.
@@ -30,12 +30,14 @@ module Foreign.Inference.Analysis.IndirectCallResolver (
   indirectCallTargets
   ) where
 
-import Data.List ( elemIndex, foldl', intercalate )
+import Control.Exception ( throw )
+import Control.Monad ( forM_ )
+import Data.Hashable
+import Data.List ( elemIndex )
 import Data.List.Ordered ( union )
-import Data.Map ( Map )
-import qualified Data.Map as M
 import Data.Maybe ( mapMaybe )
-import Data.Monoid
+
+import Database.Datalog
 
 import LLVM.Analysis
 import LLVM.Analysis.AccessPath
@@ -52,39 +54,26 @@ instance PointsToAnalysis IndirectCallSummary where
   pointsTo = indirectCallInitializers
   resolveIndirectCall = indirectCallTargets
 
+data CallSummary = ArgumentPosition Function Int
+                   -- ^ For describing call argument positions and
+                   -- formal positions
+                 | Path AbstractAccessPath
+                   -- ^ Paths that are assigned to
+                 | Target Value
+                 deriving (Eq, Ord, Show)
+
+instance Hashable CallSummary where
+  hash (ArgumentPosition f i) = 1 `combine` hash f `combine` hash i
+  hash (Path p) = 2 `combine` hash p
+  hash (Target f) = 3 `combine` hash f
+
 data IndirectCallSummary =
-  ICS { abstractPathInitializers :: !(Map AbstractAccessPath [Value])
-        -- ^ Function initializers assigned to fields of types
-      , concreteValueInitializers :: !(Map GlobalVariable [Value])
-        -- ^ Explicit values assigned to global variables, either at
-        -- initialization time or through a later assignment.
-      , argumentInitializers :: !(Map (Function, Int) [Value])
-        -- ^ A map of all of the known initializers (Functions or
-        -- External functions) passed as the ix'th argument of the
-        -- Function that is the key of the map.
-      , fieldArgDependencies :: !(Map AbstractAccessPath [(Function, Int)])
-      , globalArgDependencies :: !(Map GlobalVariable [(Function, Int)])
-        -- ^ These two are used to pass information about initializers
-        -- that are applied via function arguments
+  ICS { factDatabase :: Database CallSummary
       , resolverCHA :: CHA
-        -- ^ The class hierarchy analysis
       }
 
 instance Show IndirectCallSummary where
-  show (ICS api cbi _ _ _ _) = concat [ "Abstract Path Initializers\n"
-                                        , unlines $ map showAPI (M.toList api)
-                                        , "\nConcrete Value Initializers\n"
-                                        , unlines $ map showCBI (M.toList cbi)
-                                        ]
-    where
-      showAPI (aap, vs) = concat [ " * ", show aap, ": ", intercalate ", " (map (show . valueName) vs)]
-      showCBI (gv, vs) = concat [ " * ", show (globalVariableName gv), ": ", intercalate ", " (map (show . valueName) vs)]
-
-emptySummary :: Module -> Map GlobalVariable [Value] -> IndirectCallSummary
-emptySummary m cvis =
-  ICS mempty cvis mempty mempty mempty cha
-  where
-    cha = runCHA m
+  show (ICS db _) = show db
 
 -- FIXME: If an array member gets an initializer, figure out the
 -- abstract access path of the corresponding array element type and
@@ -98,16 +87,7 @@ indirectCallInitializers s v =
     InstructionC i -> maybe [] id $ do
       accPath <- accessPath i
       let absPath = abstractAccessPath accPath
-      return () `debug` show absPath
-      case valueContent' (accessPathBaseValue accPath) of
-        GlobalVariableC gv@GlobalVariable { globalVariableInitializer = Just initVal } ->
-          case followAccessPath absPath initVal of
-            Nothing ->
-              case globalVarLookup s gv of
-                [] -> return $! absPathLookup s absPath
-                gvs -> return gvs
-            accPathVal -> fmap return accPathVal
-        _ -> return $! absPathLookup s absPath
+      return $! absPathLookup s absPath `debug` show absPath
     _ -> []
 
 -- | Resolve the targets of an indirect call instruction.  This works
@@ -133,6 +113,25 @@ indirectCallTargets ics i =
         FunctionC f -> Just f
         _ -> Nothing
 
+pathQuery :: (Failure DatalogError m)
+             => AbstractAccessPath
+             -> QueryBuilder m CallSummary (Query CallSummary)
+pathQuery path = do
+  fptrToField <- relationPredicateFromName "fptrToField"
+  fptrAsArg <- relationPredicateFromName "fptrAsArg"
+  argToField <- relationPredicateFromName "argToField"
+  initializes <- inferencePredicate "initializes"
+
+  let f = LogicVar "F"
+      p = LogicVar "P"
+      pos = LogicVar "POS"
+
+  (initializes, [f, p]) |- [ lit fptrToField [ f, p ] ]
+  (initializes, [f, p]) |- [ lit fptrAsArg [ pos, f ]
+                           , lit argToField [ pos, p ]
+                           ]
+  issueQuery initializes [ f, Atom (Path path) ]
+
 -- | Look up the initializers for this abstract access path.  The key
 -- here is that we get both the initializers we know for this path,
 -- along with initializers for *suffixes* of the path.  For example,
@@ -140,126 +139,114 @@ indirectCallTargets ics i =
 -- (and c.d).  The recursive walk is in the reducedPathResults
 -- segment.
 absPathLookup :: IndirectCallSummary -> AbstractAccessPath -> [Value]
-absPathLookup s absPath = storeInits `union` argInits `union` reducedPathResults
+absPathLookup s absPath =
+  map toVal pathInits `union` reducedPathResults
   where
-    storeInits = M.findWithDefault [] absPath (abstractPathInitializers s)
-    argDeps = M.findWithDefault [] absPath (fieldArgDependencies s)
-    argInits = concatMap (\x -> M.findWithDefault [] x (argumentInitializers s)) argDeps
+    toVal [Target f, _] = f
+    toVal _ = error "Arity error in absPathLookup tuple"
+    Just pathInits = queryDatabase (factDatabase s) (pathQuery absPath)
     reducedPathResults =
       case reduceAccessPath absPath of
         Nothing -> []
         Just rpath -> absPathLookup s rpath
 
--- | Look up initializers for a global variable, ignoring NULLs
-globalVarLookup :: IndirectCallSummary -> GlobalVariable -> [Value]
-globalVarLookup s gv = filter isNotNullPtr $ concreteInits `union` argInits
-  where
-    concreteInits = M.findWithDefault [] gv (concreteValueInitializers s)
-    argDeps = M.findWithDefault [] gv (globalArgDependencies s)
-    argInits = concatMap (\x -> M.findWithDefault [] x (argumentInitializers s)) argDeps
-    isNotNullPtr v =
-      case valueContent' v of
-        ConstantC ConstantPointerNull {} -> False
-        _ -> True
-
 -- | Run the initializer analysis: a cheap pass to identify a subset
 -- of possible function pointers that object fields can point to.
 identifyIndirectCallTargets :: Module -> IndirectCallSummary
-identifyIndirectCallTargets m =
-  foldl' (flip recordInitializers) s0 allInsts
+identifyIndirectCallTargets m = ICS factdb (runCHA m)
   where
-    s0 = emptySummary m (M.fromList globalsWithInits)
-    allBlocks = concatMap functionBody $ moduleDefinedFunctions m
-    allInsts = concatMap basicBlockInstructions allBlocks
-    globalsWithInits = foldr extractGlobalsWithInits [] (moduleGlobalVariables m)
+    factdb = either throw id (buildDatabase m)
 
-extractGlobalsWithInits :: GlobalVariable
-                           -> [(GlobalVariable, [Value])]
-                           -> [(GlobalVariable, [Value])]
-extractGlobalsWithInits gv acc =
-  case globalVariableInitializer gv of
-    Nothing -> acc
-    Just i -> (gv, [i]) : acc
+buildDatabase :: Module -> Either DatalogError (Database CallSummary)
+buildDatabase m = makeDatabase $ do
+  fptrToField <- addRelation "fptrToField" 2
+  fptrAsArg <- addRelation "fptrAsArg" 2
+  argToField <- addRelation "argToField" 2
+  mapM_ (factsForGlobal fptrToField) (moduleGlobalVariables m)
+  let f = mapM_ (factsForInstruction fptrToField fptrAsArg argToField) . functionInstructions
+  mapM_ f (moduleDefinedFunctions m)
 
-recordInitializers :: Instruction -> IndirectCallSummary -> IndirectCallSummary
-recordInitializers i s =
+factsForGlobal :: (Failure DatalogError m)
+                  => Relation
+                  -> GlobalVariable
+                  -> DatabaseBuilder m CallSummary ()
+factsForGlobal _ GlobalVariable { globalVariableInitializer = Nothing } = return ()
+factsForGlobal fptrToField gv@GlobalVariable { globalVariableInitializer = Just i } =
+  case valueContent' i of
+    FunctionC f ->
+      let bt = valueType gv
+          cs = []
+          p = AbstractAccessPath bt bt cs
+      in assertFact fptrToField [ Target (Value f), Path p ]
+    ExternalFunctionC f ->
+      let bt = valueType gv
+          cs = []
+          p = AbstractAccessPath bt bt cs
+      in assertFact fptrToField [ Target (Value f), Path p ]
+    ConstantC (ConstantStruct _ _ is) ->
+      forM_ (zip [0..] is) $ \(idx, initializer) ->
+        case valueContent' initializer of
+          FunctionC f ->
+            let bt = valueType gv
+                et = TypePointer (TypePointer (valueType f) 0) 0
+                cs = [AccessField idx]
+                p = AbstractAccessPath bt et cs
+            in assertFact fptrToField [ Target (Value f), Path p ]
+          ExternalFunctionC f ->
+            let bt = valueType gv
+                et = TypePointer (TypePointer (valueType f) 0) 0
+                cs = [AccessField idx]
+                p = AbstractAccessPath bt et cs
+            in assertFact fptrToField [ Target (Value f), Path p ] `debug` show p
+          _ -> return ()
+    _ -> return ()
+
+
+factsForInstruction :: (Failure DatalogError m)
+                       => Relation
+                       -> Relation
+                       -> Relation
+                       -> Instruction
+                       -> DatabaseBuilder m CallSummary ()
+factsForInstruction fptrToField fptrAsArg argToField i =
   case i of
     StoreInst { storeValue = sv, storeAddress = sa } ->
       case valueContent' sv of
-        FunctionC _ -> maybeRecordInitializer i sv sa s
-        ExternalFunctionC _ -> maybeRecordInitializer i sv sa s
+        FunctionC f ->
+          case accessPath i of
+            Nothing -> return ()
+            Just accPath -> do
+              let absPath = abstractAccessPath accPath
+              assertFact fptrToField [ Target (Value f), Path absPath ]
+        ExternalFunctionC ef ->
+          case accessPath i of
+            Nothing -> return ()
+            Just accPath -> do
+              let absPath = abstractAccessPath accPath
+              assertFact fptrToField [ Target (Value ef), Path absPath ]
         ArgumentC a ->
-          let f = argumentFunction a
-              Just ix = elemIndex a (functionParameters f)
-          in recordArgInitializer i f ix sa s
-        _ -> s
+          case accessPath i of
+            Nothing -> return ()
+            Just accPath -> do
+              let f = argumentFunction a
+                  Just ix = elemIndex a (functionParameters f)
+                  absPath = abstractAccessPath accPath
+              assertFact argToField [ ArgumentPosition f ix, Path absPath ]
+        _ -> return ()
     CallInst { callFunction = (valueContent' -> FunctionC f)
              , callArguments = args
              } ->
-      let ixArgs = zip [0..] $ map fst args
-      in foldl' (recordArgFuncInit f) s ixArgs
+      mapM_ (argPosFacts f) (zip [0..] (map fst args))
     InvokeInst { invokeFunction = (valueContent' -> FunctionC f)
                , invokeArguments = args
                } ->
-      let ixArgs = zip [0..] $ map fst args
-      in foldl' (recordArgFuncInit f) s ixArgs
-    _ -> s
-
--- | If an actual argument has a Function (or ExternalFunction) as its
--- value, record that as a value as associated with the ix'th argument
--- of the callee.
-recordArgFuncInit :: Function
-                     -> IndirectCallSummary
-                     -> (Int, Value)
-                     -> IndirectCallSummary
-recordArgFuncInit f s (ix, arg) =
-  case valueContent' arg of
-    FunctionC _ ->
-      s { argumentInitializers =
-             M.insertWith union (f, ix) [arg] (argumentInitializers s)
-        }
-    ExternalFunctionC _ ->
-      s { argumentInitializers =
-             M.insertWith union (f, ix) [arg] (argumentInitializers s)
-        }
-    _ -> s
-
-recordArgInitializer :: Instruction
-                        -> Function
-                        -> Int
-                        -> Value
-                        -> IndirectCallSummary
-                        -> IndirectCallSummary
-recordArgInitializer i f ix sa s =
-  case valueContent' sa of
-    GlobalVariableC gv ->
-      s { globalArgDependencies =
-             M.insertWith' union gv [(f, ix)] (globalArgDependencies s)
-        }
-    _ ->
-      case accessPath i of
-        Nothing -> s
-        Just accPath ->
-          let absPath = abstractAccessPath accPath
-          in s { fieldArgDependencies =
-                    M.insertWith' union absPath [(f, ix)] (fieldArgDependencies s)
-               }
-
--- | Initializers here (sv) are only functions (external or otherwise)
-maybeRecordInitializer :: Instruction -> Value -> Value
-                          -> IndirectCallSummary
-                          -> IndirectCallSummary
-maybeRecordInitializer i sv sa s =
-  case valueContent' sa of
-    GlobalVariableC gv ->
-      s { concreteValueInitializers =
-             M.insertWith' union gv [sv] (concreteValueInitializers s)
-        }
-    _ ->
-      case accessPath i of
-        Nothing -> s
-        Just accPath ->
-          let absPath = abstractAccessPath accPath
-          in s { abstractPathInitializers =
-                    M.insertWith' union absPath [sv] (abstractPathInitializers s)
-               }
+      mapM_ (argPosFacts f) (zip [0..] (map fst args))
+    _ -> return ()
+  where
+    argPosFacts f (ix, val) =
+      case valueContent' val of
+        FunctionC fptr ->
+          assertFact fptrAsArg [ ArgumentPosition f ix, Target (Value fptr) ]
+        ExternalFunctionC fptr ->
+          assertFact fptrAsArg [ ArgumentPosition f ix, Target (Value fptr) ]
+        _ -> return ()

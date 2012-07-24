@@ -66,12 +66,16 @@ instance Hashable CallSummary where
 
 data IndirectCallSummary =
   ICS { factDatabase :: Database CallSummary
+      , queryPlan :: QueryPlan CallSummary
       , resolverCHA :: CHA
       }
 
 instance Show IndirectCallSummary where
-  show (ICS db _) = show db
+  show (ICS db _ _) = show db
 
+-- FIXME Modify this to use unsafePerformIO to maintain a cache (using
+-- hashtables) of Value -> [Value] so we don't make exensive
+-- recomputations
 indirectCallInitializers :: IndirectCallSummary -> Value -> [Value]
 indirectCallInitializers s v =
   case valueContent' v of
@@ -104,10 +108,12 @@ indirectCallTargets ics i =
         FunctionC f -> Just f
         _ -> Nothing
 
-pathQuery :: (Failure DatalogError m)
-             => AbstractAccessPath
-             -> QueryBuilder m CallSummary (Query CallSummary)
-pathQuery path = do
+-- | This is the datalog program to compute a simple transitive
+-- closure (and unify function actual arguments with formals).  Note
+-- that it can't be as polymorphic as certain other datalog functions
+-- since it takes no arguments.
+pathQuery :: QueryBuilder (Either DatalogError) CallSummary (Query CallSummary)
+pathQuery = do
   fptrToField <- relationPredicateFromName "fptrToField"
   fptrAsArg <- relationPredicateFromName "fptrAsArg"
   argToField <- relationPredicateFromName "argToField"
@@ -121,7 +127,7 @@ pathQuery path = do
   (initializes, [f, p]) |- [ lit fptrAsArg [ pos, f ]
                            , lit argToField [ pos, p ]
                            ]
-  issueQuery initializes [ f, Atom (Path path) ]
+  issueQuery initializes [ f, BindVar "path" ]
 
 -- | Look up the initializers for this abstract access path.  The key
 -- here is that we get both the initializers we know for this path,
@@ -135,7 +141,7 @@ absPathLookup s absPath =
   where
     toVal [Target f, _] = f
     toVal _ = error "Arity error in absPathLookup tuple"
-    Just pathInits = queryDatabase (factDatabase s) (pathQuery absPath)
+    Just pathInits = executeQueryPlan (queryPlan s) (factDatabase s) [("path", Path absPath)]
     reducedPathResults =
       case reduceAccessPath absPath of
         Nothing -> []
@@ -144,9 +150,10 @@ absPathLookup s absPath =
 -- | Run the initializer analysis: a cheap pass to identify a subset
 -- of possible function pointers that object fields can point to.
 identifyIndirectCallTargets :: Module -> IndirectCallSummary
-identifyIndirectCallTargets m = ICS factdb (runCHA m)
+identifyIndirectCallTargets m = ICS factdb qp (runCHA m)
   where
     factdb = either throw id (buildDatabase m)
+    qp = either throw id $ buildQueryPlan factdb pathQuery
 
 buildDatabase :: Module -> Either DatalogError (Database CallSummary)
 buildDatabase m = makeDatabase $ do

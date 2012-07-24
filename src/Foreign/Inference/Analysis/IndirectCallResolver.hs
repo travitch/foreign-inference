@@ -33,7 +33,7 @@ module Foreign.Inference.Analysis.IndirectCallResolver (
 import Control.Exception ( throw )
 import Control.Monad ( forM_ )
 import Data.Hashable
-import Data.List ( elemIndex )
+import Data.List ( elemIndex, sort )
 import Data.List.Ordered ( union )
 import Data.Maybe ( mapMaybe )
 
@@ -43,9 +43,6 @@ import LLVM.Analysis
 import LLVM.Analysis.AccessPath
 import LLVM.Analysis.ClassHierarchy
 import LLVM.Analysis.PointsTo
-
-import Debug.Trace
-debug = flip trace
 
 -- | This isn't a true points-to analysis because it is an
 -- under-approximation.  However, that is sufficient for this library.
@@ -75,19 +72,13 @@ data IndirectCallSummary =
 instance Show IndirectCallSummary where
   show (ICS db _) = show db
 
--- FIXME: If an array member gets an initializer, figure out the
--- abstract access path of the corresponding array element type and
--- also note the initializer for that type.  The intuition is that an
--- array element initialized to something could be used anywhere a
--- single element is expected
-
 indirectCallInitializers :: IndirectCallSummary -> Value -> [Value]
 indirectCallInitializers s v =
   case valueContent' v of
     InstructionC i -> maybe [] id $ do
       accPath <- accessPath i
       let absPath = abstractAccessPath accPath
-      return $! absPathLookup s absPath `debug` show absPath
+      return $! absPathLookup s absPath
     _ -> []
 
 -- | Resolve the targets of an indirect call instruction.  This works
@@ -140,7 +131,7 @@ pathQuery path = do
 -- segment.
 absPathLookup :: IndirectCallSummary -> AbstractAccessPath -> [Value]
 absPathLookup s absPath =
-  map toVal pathInits `union` reducedPathResults
+  sort (map toVal pathInits) `union` reducedPathResults
   where
     toVal [Target f, _] = f
     toVal _ = error "Arity error in absPathLookup tuple"
@@ -166,6 +157,10 @@ buildDatabase m = makeDatabase $ do
   let f = mapM_ (factsForInstruction fptrToField fptrAsArg argToField) . functionInstructions
   mapM_ f (moduleDefinedFunctions m)
 
+-- | Collect facts from global variable initializers.  It currently
+-- only handles initializers assigned to global function pointers and
+-- global structure initializers.  It does not yet handle nested
+-- global initializers.
 factsForGlobal :: (Failure DatalogError m)
                   => Relation
                   -> GlobalVariable
@@ -185,17 +180,18 @@ factsForGlobal fptrToField gv@GlobalVariable { globalVariableInitializer = Just 
   where
     addPlainInitializer v =
       let bt = valueType gv
-          cs = []
+          cs = [AccessDeref]
           p = AbstractAccessPath bt bt cs
       in assertFact fptrToField [ Target v, Path p ]
     addAggregateInitializer idx v =
       let bt = valueType gv
           et = TypePointer (TypePointer (valueType v) 0) 0
-          cs = [AccessField idx]
+          cs = [AccessDeref, AccessField idx]
           p = AbstractAccessPath bt et cs
       in assertFact fptrToField [ Target v, Path p]
 
-
+-- | Record initializers provided by assignments and function calls in
+-- the actual code.
 factsForInstruction :: (Failure DatalogError m)
                        => Relation
                        -> Relation
@@ -215,7 +211,7 @@ factsForInstruction fptrToField fptrAsArg argToField i =
               let f = argumentFunction a
                   Just ix = elemIndex a (functionParameters f)
                   absPath = abstractAccessPath accPath
-              assertFact argToField [ ArgumentPosition f ix, Path absPath ]
+              addSubFacts (\p -> assertFact argToField [ArgumentPosition f ix, Path p]) absPath
         _ -> return ()
     CallInst { callFunction = (valueContent' -> FunctionC f)
              , callArguments = args
@@ -227,12 +223,19 @@ factsForInstruction fptrToField fptrAsArg argToField i =
       mapM_ (argPosFacts f) (zip [0..] (map fst args))
     _ -> return ()
   where
+    addSubFacts func p = do
+      _ <- func p
+      case reduceAccessPath p of
+        Nothing -> return ()
+        Just p' -> addSubFacts func p'
+
     addStoredFunc v =
       case accessPath i of
         Nothing -> return ()
         Just accPath -> do
           let absPath = abstractAccessPath accPath
-          assertFact fptrToField [ Target v, Path absPath ]
+          addSubFacts (\p -> assertFact fptrToField [Target v, Path p]) absPath
+
     argPosFacts f (ix, val) =
       case valueContent' val of
         FunctionC fptr ->

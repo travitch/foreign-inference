@@ -33,9 +33,14 @@ module Foreign.Inference.Analysis.IndirectCallResolver (
 import Control.Exception ( throw )
 import Control.Monad ( forM_ )
 import Data.Hashable
+import Data.HashMap.Strict ( HashMap )
+import qualified Data.HashMap.Strict as HM
+import Data.IORef ( IORef, newIORef, readIORef, writeIORef )
 import Data.List ( elemIndex, sort )
 import Data.List.Ordered ( union )
-import Data.Maybe ( mapMaybe )
+import Data.Maybe ( fromMaybe, mapMaybe )
+import Data.Monoid
+import System.IO.Unsafe ( unsafePerformIO )
 
 import Database.Datalog
 
@@ -66,24 +71,38 @@ instance Hashable CallSummary where
 
 data IndirectCallSummary =
   ICS { factDatabase :: Database CallSummary
+        -- ^ The collected datalog facts
       , queryPlan :: QueryPlan CallSummary
+        -- ^ An evaluation plan for the query
+      , targetCache :: IORef (HashMap AbstractAccessPath [Value])
+        -- ^ A cache of computed call targets.  The reachability
+        -- computation isn't cheap so cache all of them.
       , resolverCHA :: CHA
       }
 
 instance Show IndirectCallSummary where
-  show (ICS db _ _) = show db
+  show (ICS db _ _ _) = show db
 
--- FIXME Modify this to use unsafePerformIO to maintain a cache (using
--- hashtables) of Value -> [Value] so we don't make exensive
--- recomputations
 indirectCallInitializers :: IndirectCallSummary -> Value -> [Value]
 indirectCallInitializers s v =
   case valueContent' v of
-    InstructionC i -> maybe [] id $ do
+    InstructionC i -> fromMaybe [] $ do
       accPath <- accessPath i
       let absPath = abstractAccessPath accPath
-      return $! absPathLookup s absPath
+      return $! indirectCallLookup s absPath
     _ -> []
+
+{-# NOINLINE indirectCallLookup #-}
+indirectCallLookup :: IndirectCallSummary -> AbstractAccessPath -> [Value]
+indirectCallLookup s absPath = unsafePerformIO $ do
+  c <- readIORef (targetCache s)
+  case HM.lookup absPath c of
+    Just cv -> return cv
+    Nothing -> do
+      let res = absPathLookup s absPath
+          c' = HM.insert absPath res c
+      writeIORef (targetCache s) c'
+      return res
 
 -- | Resolve the targets of an indirect call instruction.  This works
 -- with both C++ virtual function dispatch and some other common
@@ -149,8 +168,11 @@ absPathLookup s absPath =
 
 -- | Run the initializer analysis: a cheap pass to identify a subset
 -- of possible function pointers that object fields can point to.
+{-# NOINLINE identifyIndirectCallTargets #-}
 identifyIndirectCallTargets :: Module -> IndirectCallSummary
-identifyIndirectCallTargets m = ICS factdb qp (runCHA m)
+identifyIndirectCallTargets m = unsafePerformIO $ do
+  cache <- newIORef mempty
+  return $! ICS factdb qp cache (runCHA m)
   where
     factdb = either throw id (buildDatabase m)
     qp = either throw id $ buildQueryPlan factdb pathQuery

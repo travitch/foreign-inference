@@ -155,8 +155,9 @@ absPathLookup s@(ICS targets _) absPath =
 identifyIndirectCallTargets :: Module -> IndirectCallSummary
 identifyIndirectCallTargets m = ICS targets (runCHA m)
   where
-    factdb = either throw id (buildDatabase m)
-    facts = either throw id $ queryDatabase factdb pathQuery
+    facts = either throw id $ do
+      db <- buildDatabase m
+      queryDatabase db pathQuery
     targets = foldr addTarget mempty facts
     addTarget [Target f, Path p] = HM.insertWith HS.union p (HS.singleton f)
     addTarget _ = error "identifyIndirectCallTargets: database schema mismatch"

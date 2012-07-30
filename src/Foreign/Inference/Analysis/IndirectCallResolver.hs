@@ -35,12 +35,11 @@ import Control.Monad ( forM_ )
 import Data.Hashable
 import Data.HashMap.Strict ( HashMap )
 import qualified Data.HashMap.Strict as HM
-import Data.IORef ( IORef, newIORef, readIORef, writeIORef )
-import Data.List ( elemIndex, sort )
-import Data.List.Ordered ( union )
+import Data.HashSet ( HashSet )
+import qualified Data.HashSet as HS
+import Data.List ( elemIndex )
 import Data.Maybe ( fromMaybe, mapMaybe )
 import Data.Monoid
-import System.IO.Unsafe ( unsafePerformIO )
 
 import Database.Datalog
 
@@ -70,18 +69,12 @@ instance Hashable CallSummary where
   hash (Target f) = 3 `combine` hash f
 
 data IndirectCallSummary =
-  ICS { factDatabase :: Database CallSummary
-        -- ^ The collected datalog facts
-      , queryPlan :: QueryPlan CallSummary
-        -- ^ An evaluation plan for the query
-      , targetCache :: IORef (HashMap AbstractAccessPath [Value])
-        -- ^ A cache of computed call targets.  The reachability
-        -- computation isn't cheap so cache all of them.
+  ICS { summaryTargets :: HashMap AbstractAccessPath (HashSet Value)
       , resolverCHA :: CHA
       }
 
 instance Show IndirectCallSummary where
-  show (ICS db _ _ _) = show db
+  show = show . summaryTargets
 
 indirectCallInitializers :: IndirectCallSummary -> Value -> [Value]
 indirectCallInitializers s v =
@@ -94,15 +87,7 @@ indirectCallInitializers s v =
 
 {-# NOINLINE indirectCallLookup #-}
 indirectCallLookup :: IndirectCallSummary -> AbstractAccessPath -> [Value]
-indirectCallLookup s absPath = unsafePerformIO $ do
-  c <- readIORef (targetCache s)
-  case HM.lookup absPath c of
-    Just cv -> return cv
-    Nothing -> do
-      let res = absPathLookup s absPath
-          c' = HM.insert absPath res c
-      writeIORef (targetCache s) c'
-      return res
+indirectCallLookup s = HS.toList . absPathLookup s
 
 -- | Resolve the targets of an indirect call instruction.  This works
 -- with both C++ virtual function dispatch and some other common
@@ -146,7 +131,7 @@ pathQuery = do
   (initializes, [f, p]) |- [ lit fptrAsArg [ pos, f ]
                            , lit argToField [ pos, p ]
                            ]
-  issueQuery initializes [ f, BindVar "path" ]
+  issueQuery initializes [ f, p ]
 
 -- | Look up the initializers for this abstract access path.  The key
 -- here is that we get both the initializers we know for this path,
@@ -154,28 +139,28 @@ pathQuery = do
 -- if the path is a.b.c.d, we also care about initializers for b.c.d
 -- (and c.d).  The recursive walk is in the reducedPathResults
 -- segment.
-absPathLookup :: IndirectCallSummary -> AbstractAccessPath -> [Value]
-absPathLookup s absPath =
-  sort (map toVal pathInits) `union` reducedPathResults
+absPathLookup :: IndirectCallSummary -> AbstractAccessPath -> HashSet Value
+absPathLookup s@(ICS targets _) absPath =
+  pathInits `HS.union` reducedPathResults
   where
-    toVal [Target f, _] = f
-    toVal _ = error "Arity error in absPathLookup tuple"
-    Just pathInits = executeQueryPlan (queryPlan s) (factDatabase s) [("path", Path absPath)]
+    pathInits = HM.lookupDefault mempty absPath targets
     reducedPathResults =
       case reduceAccessPath absPath of
-        Nothing -> []
+        Nothing -> mempty
         Just rpath -> absPathLookup s rpath
 
 -- | Run the initializer analysis: a cheap pass to identify a subset
 -- of possible function pointers that object fields can point to.
 {-# NOINLINE identifyIndirectCallTargets #-}
 identifyIndirectCallTargets :: Module -> IndirectCallSummary
-identifyIndirectCallTargets m = unsafePerformIO $ do
-  cache <- newIORef mempty
-  return $! ICS factdb qp cache (runCHA m)
+identifyIndirectCallTargets m = ICS targets (runCHA m)
   where
     factdb = either throw id (buildDatabase m)
-    qp = either throw id $ buildQueryPlan factdb pathQuery
+    facts = either throw id $ queryDatabase factdb pathQuery
+    targets = foldr addTarget mempty facts
+    addTarget [Target f, Path p] = HM.insertWith HS.union p (HS.singleton f)
+    addTarget _ = error "identifyIndirectCallTargets: database schema mismatch"
+
 
 buildDatabase :: Module -> Either DatalogError (Database CallSummary)
 buildDatabase m = makeDatabase $ do

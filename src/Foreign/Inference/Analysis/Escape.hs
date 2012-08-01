@@ -190,24 +190,6 @@ matchInst i [V v, _, W w, _] Nothing =
     True -> Just w
 matchInst _ _ _ = Nothing
 
--- ignoreValue i er = do
-  -- escNode <- find nodeIsAnySink reached
-  -- return $! sinkInstruction (nodeLabel escNode)
-  -- where
-  --   Just bb = instructionBasicBlock i
-  --   f = basicBlockFunction bb
-  --   errMsg = $failure ("Expected escape graph for " ++ show (functionName f))
-  --   g = HM.lookupDefault errMsg f (er ^. escapeGraphs)
-  --   instFilter = filter ((/= valueUniqueId i) . unlabelNode)
-  --   reached0 = reachableValues $__LOCATION__ instFilter (valueUniqueId i) g
-  --   reached = filter notIgnoredSink reached0
-  --   notIgnoredSink nt =
-  --     case nodeLabel nt of
-  --       FptrSink sink -> not (ignoreValue sink)
-  --       EscapeSink sink -> not (ignoreValue sink)
-  --       WillEscapeSink sink -> not (ignoreValue sink)
-  --       _ -> True
-
 
 summarizeEscapeArgument :: Argument -> EscapeSummary -> [(ParamAnnotation, [Witness])]
 summarizeEscapeArgument a er =
@@ -230,10 +212,7 @@ summarizeEscapeArgument a er =
 -- escapes override indirect &c.
 summarizeArgumentEscapes :: [Fact] -> EscapeSummary -> EscapeSummary
 summarizeArgumentEscapes [V v, EscapeSink ec _, W w, FieldSource a accPath] =
-  -- case abstractAccessPathComponents accPath of
-  --   [AccessDeref] -> escapeArguments ^!%= HM.insert a (ec, w)
-  --   _ ->
-      escapeFields ^!%= HM.insertWith S.union a (S.singleton (ec, accPath, w))
+  escapeFields ^!%= HM.insertWith S.union a (S.singleton (ec, accPath, w))
 summarizeArgumentEscapes [V v, EscapeSink ec _, W w, _] =
   case valueContent' v of
     ArgumentC a -> escapeArguments ^!%= HM.insert a (ec, w)

@@ -1,1 +1,1 @@
-fromList [ ]
+fromList [ ("@f", fromList [(DirectEscape, "%p")]) ]

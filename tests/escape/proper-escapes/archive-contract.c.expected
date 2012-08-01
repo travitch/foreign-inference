@@ -5,4 +5,5 @@ fromList [ ("@archive_read_data_block",
                      , (BrokenContractEscape, "%size")
                      ]
            )
+         , ("@__archive_read_register_format", fromList [ (DirectEscape, "%read_data") ] )
          ]

@@ -281,16 +281,27 @@ escapeQuery ignorePred = do
                            ]
   -- Final query
 
+  -- This rule handles proxying field escapes through callees.  See
+  -- escape-through-2-call-field.c
+  (escapes, [v, s, w, p]) |- [ lit callFieldEscape [ v, Anything, s, w ]
+                             , lit fieldSource [ v, p ]
+                             ]
+
   -- In this case, the w2 parameter is fake and unused, but we want
   -- this to be arity 3 so that we can handle field escapes in the
-  -- same query.
+  -- same query.  This simple case says that anything reaching a sink
+  -- node escapes (directly).
   (escapes, [v, s, w, w2]) |- [ lit flowTo' [ v, s, w2 ]
                               , lit sink [ s, w ]
-                           ]
+                              ]
+
+  -- This case describes fields of arguments escaping (directly)
   (escapes, [v, s, w, f]) |- [ lit flowTo' [ v, s, Anything ]
                              , lit sink [ s, w ]
                              , lit fieldSource [ v, f ]
                              ]
+
+  -- This case handles fields of values escaping through calls
   (escapes, [v, s, w, p]) |- [ lit flowTo' [ v, v2, Anything ]
                              , lit fieldStore [ base, v2, p, Anything ]
                              , lit callFieldEscape [ base, p, s, w ]

@@ -300,7 +300,7 @@ memAccessBase ptr =
     InstructionC AllocaInst {} -> Nothing
     -- For optimized code, arguments (which we care about) can be
     -- loaded/stored to directly (without an intervening alloca).
-    ArgumentC a -> Just (Value a)
+    ArgumentC a -> Just (toValue a)
     -- In this case, we have two levels of dereference.  The first
     -- level (la) is a global or alloca (or result of another
     -- load/GEP).  This represents a source-level dereference of a

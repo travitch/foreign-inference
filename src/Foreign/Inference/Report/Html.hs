@@ -23,7 +23,7 @@ import qualified Text.Blaze.Html5.Attributes as A
 import qualified Text.Highlighting.Kate as K
 import Text.Highlighting.Kate.Types ( defaultFormatOpts, FormatOptions(..) )
 
-import LLVM.Analysis
+import LLVM.Analysis hiding ( toValue )
 
 import Foreign.Inference.Interface
 import Foreign.Inference.Interface.Metadata

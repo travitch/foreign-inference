@@ -124,10 +124,12 @@ identifyEscapes ds ics lns =
       let f = getFunction funcLike
           db = either throwDatalogError id $
                  makeDatabase $ collectFacts ics extSumm s (functionInstructions f)
-          res = either throwDatalogError id $ queryDatabase db (escapeQuery Nothing)
+          res = either throwDatalogError id $ queryDatabase db (escapeQuery Nothing Nothing)
           s' = foldr summarizeArgumentEscapes s res
       return $ (escapeData ^!%= HM.insert f db) s'
-
+-- FIXME: It might be worth changing the query here to issue a single
+-- query for each argument.  The field escape stuff would make that
+-- hard, though.
 
     runner a =
       let (e, diags) = runWriter a
@@ -180,12 +182,13 @@ instructionEscapeCore ignorePred i (EscapeSummary dbs _ _ _) =
     f = basicBlockFunction bb
     errMsg = error ("Should have a summary for " ++ show (functionName f))
     db = HM.lookupDefault errMsg f dbs
-    res = either throwDatalogError id $ queryDatabase db (escapeQuery (Just ignorePred))
+    q = queryDatabase db (escapeQuery (Just ignorePred) (Just (Atom (V (toValue i)))))
+    res = either throwDatalogError id q
 
 matchInst :: Instruction -> [Fact] -> Maybe Instruction -> Maybe Instruction
 matchInst _ _ res@(Just _) = res
 matchInst i [V v, _, W w, _] Nothing =
-  case v == Value i of
+  case valueUniqueId v == instructionUniqueId i of
     False -> Nothing
     True -> Just w
 matchInst _ _ _ = Nothing
@@ -251,8 +254,9 @@ isSink v =
 
 escapeQuery :: (Failure DatalogError m)
                => Maybe (Instruction -> Bool)
+               -> Maybe (Term Fact)
                -> QueryBuilder m Fact (Query Fact)
-escapeQuery ignorePred = do
+escapeQuery ignorePred target = do
   sink <- relationPredicateFromName "sink"
   flowTo <- relationPredicateFromName "flowTo"
   fieldSource <- relationPredicateFromName "fieldSource"
@@ -312,7 +316,9 @@ escapeQuery ignorePred = do
   (escapes, [v, s, w, p]) |- [ lit fieldStore [ base, v, p, Anything ]
                              , lit callFieldEscape [ base, p, s, w ]
                              ]
-  issueQuery escapes [ v, s, w, f ]
+  case target of
+    Nothing -> issueQuery escapes [ v, s, w, f ]
+    Just tgt -> issueQuery escapes [ tgt, s, w, f]
 
 -- | A helper to abstract the pointer type tests.  If the value @v@ is
 -- not a pointer, return @defVal@.  Otherwise, return @isPtrVal@.
@@ -347,8 +353,16 @@ addFact ics extSumm summ sink flowTo fieldSource fieldStore callFieldEscape inst
         assertFact flowTo [ V rv, s, W inst ]
 
     GetElementPtrInst { getElementPtrValue = base } ->
-      assertFact flowTo [ V (Value inst), V base, W inst ]
+      assertFact flowTo [ V (toValue inst), V base, W inst ]
 
+    -- FIXME: probably doesn't handle something like
+    --
+    -- > foo(a->b)
+    --
+    -- where foo lets a field escape from its argument.  The correct
+    -- behavior there should be to either merge the two when checking
+    -- arguments or just saying that a field escaping through a field
+    -- escape is a full escape (conservative)
 
     -- For each load, if it is loading a field of an argument, add
     -- that fact.  FIXME: We also probably need to know when the
@@ -360,7 +374,7 @@ addFact ics extSumm summ sink flowTo fieldSource fieldStore callFieldEscape inst
           case valueContent' (accessPathBaseValue cpath) of
             ArgumentC a -> do
               let s = FieldSource a (abstractAccessPath cpath)
-              assertFact fieldSource [ V (Value inst), s ]
+              assertFact fieldSource [ V (toValue inst), s ]
             _ -> return ()
     StoreInst { storeValue = sv, storeAddress = sa } -> do
       -- If the access path base is something that escapes, we make a
@@ -402,23 +416,23 @@ addFact ics extSumm summ sink flowTo fieldSource fieldStore callFieldEscape inst
           assertFact sink [ s, W inst ]
           assertFact flowTo [ V sv, s, W inst ]
     CallInst { callFunction = f, callArguments = args } -> do
-      addCallArgumentFacts ics extSumm summ sink flowTo callFieldEscape inst f (map fst args)
+      addCallArgumentFacts ics extSumm summ sink flowTo callFieldEscape fieldSource inst f (map fst args)
       -- If the function call returns a pointer, that pointer is an
       -- escape sink (assigning a pointer to it lets that pointer
       -- escape since it could be a global pointer).
       ifPointer inst (return ()) $ do
-        assertFact sink [ EscapeSink DirectEscape (Value inst), W inst ]
+        assertFact sink [ EscapeSink DirectEscape (toValue inst), W inst ]
     InvokeInst { invokeFunction = f, invokeArguments = args } -> do
-      addCallArgumentFacts ics extSumm summ sink flowTo callFieldEscape inst f (map fst args)
+      addCallArgumentFacts ics extSumm summ sink flowTo callFieldEscape fieldSource inst f (map fst args)
       ifPointer inst (return ()) $ do
-        assertFact sink [ EscapeSink DirectEscape (Value inst), W inst ]
+        assertFact sink [ EscapeSink DirectEscape (toValue inst), W inst ]
     PhiNode { phiIncomingValues = ivs } ->
-      mapM_ (\v -> assertFact flowTo [ V v, V (Value inst), W inst ]) (map fst ivs)
+      mapM_ (\v -> assertFact flowTo [ V v, V (toValue inst), W inst ]) (map fst ivs)
     SelectInst { selectTrueValue = tv, selectFalseValue = fv } -> do
-      assertFact flowTo [ V tv, V (Value inst), W inst ]
-      assertFact flowTo [ V fv, V (Value inst), W inst ]
+      assertFact flowTo [ V tv, V (toValue inst), W inst ]
+      assertFact flowTo [ V fv, V (toValue inst), W inst ]
     BitcastInst { castedValue = cv } ->
-      assertFact flowTo [ V cv, V (Value inst), W inst ]
+      assertFact flowTo [ V cv, V (toValue inst), W inst ]
     _ -> return ()
 
 addCallArgumentFacts :: (Failure DatalogError m)
@@ -428,11 +442,12 @@ addCallArgumentFacts :: (Failure DatalogError m)
                         -> Relation
                         -> Relation
                         -> Relation
+                        -> Relation
                         -> Instruction
                         -> Value
                         -> [Value]
                         -> DatabaseBuilder m Fact ()
-addCallArgumentFacts ics extSumm summ sink flowTo callFieldEscape ci callee args =
+addCallArgumentFacts ics extSumm summ sink flowTo callFieldEscape fieldSource ci callee args =
   case valueContent' callee of
     FunctionC f -> do
       let formals = functionParameters f
@@ -446,13 +461,23 @@ addCallArgumentFacts ics extSumm summ sink flowTo callFieldEscape ci callee args
           mapM_ checkContractFuncArg (zip formals args)
   where
     doAssert etype v = do
-      let s = EscapeSink etype (Value ci)
+      let s = EscapeSink etype (toValue ci)
       assertFact sink [ s, W ci ]
       assertFact flowTo [ V v, s, W ci ]
     argFieldAssert etype v absPath = do
-      let s = EscapeSink etype (Value ci)
+              --       let s = FieldSource a (abstractAccessPath cpath)
+              -- assertFact fieldSource [ V (toValue inst), s ]
+
+      let s = EscapeSink etype (toValue ci)
       assertFact sink [ s, W ci ]
+--      assertFact flowTo [ V v, s, W ci ]
       assertFact callFieldEscape [ V v, P absPath, s, W ci ]
+      case valueContent' v of
+        ArgumentC a -> do
+          let src = FieldSource a absPath
+--          assertFact flowTo [ V v, src, W ci ]
+          assertFact fieldSource [ V v, src ]
+        _ -> return ()
     checkExt ef (ix, arg) =
       case extSumm ef ix of
         False -> return ()

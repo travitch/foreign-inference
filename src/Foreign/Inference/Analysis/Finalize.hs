@@ -200,13 +200,13 @@ callTransfer callInst v as info =
       sis <- asks singleInitSummary
       case indirectCallTargets sis callInst of
         [] -> return info
-        [singleInit] -> callTransfer callInst (Value singleInit) as info
+        [singleInit] -> callTransfer callInst (toValue singleInit) as info
         allInits -> do
           -- If there is more than one static initializer for the
           -- function pointer being called, treat it as a finalizer
           -- IFF all of the initializers agree and finalize the same
           -- argument.
-          info1:infos <- mapM (\si -> callTransfer callInst si as info) (map Value allInits)
+          info1:infos <- mapM (\si -> callTransfer callInst si as info) (map toValue allInits)
           case all (==info1) infos of
             True -> return info1
             False -> return info

@@ -365,14 +365,14 @@ argumentCastedTypes a =
   fst $ foldr captureCastedType s0 (functionInstructions f)
   where
     f = argumentFunction a
-    s0 = (HS.singleton (argumentType a), HS.singleton (Value a))
+    s0 = (HS.singleton (argumentType a), HS.singleton (toValue a))
 
     captureCastedType i acc@(ts, vs) =
       case i of
         BitcastInst { castedValue = cv } ->
           case cv `HS.member` vs of
             False -> acc
-            True -> (HS.insert (valueType i) ts, HS.insert (Value i) vs)
+            True -> (HS.insert (valueType i) ts, HS.insert (toValue i) vs)
         _ -> acc
 
 

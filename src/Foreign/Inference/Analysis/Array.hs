@@ -204,9 +204,9 @@ buildArrayDeref :: Instruction -> [Value] -> Value -> [(Value, PointerUse)] -> [
 buildArrayDeref inst idxs base acc =
   case idxs of
     [] -> $failure ("GEP with no indices: " ++ show inst)
-    [_] -> (base, IndexOperation (Value inst) idxs) : acc
+    [_] -> (base, IndexOperation (toValue inst) idxs) : acc
     (valueContent' -> ConstantC ConstantInt { constantIntValue = 0 }) : _ -> acc
-    _ -> (base, IndexOperation (Value inst) idxs ) : acc
+    _ -> (base, IndexOperation (toValue inst) idxs ) : acc
 
 -- | If the argument is an array (according to either the module
 -- summary or the dependency summary), make a CallArgument tag for it.

@@ -183,13 +183,13 @@ factsForGlobal :: (Failure DatalogError m)
 factsForGlobal _ GlobalVariable { globalVariableInitializer = Nothing } = return ()
 factsForGlobal fptrToField gv@GlobalVariable { globalVariableInitializer = Just i } =
   case valueContent' i of
-    FunctionC f -> addPlainInitializer (Value f)
-    ExternalFunctionC f -> addPlainInitializer (Value f)
+    FunctionC f -> addPlainInitializer (toValue f)
+    ExternalFunctionC f -> addPlainInitializer (toValue f)
     ConstantC (ConstantStruct _ _ is) ->
       forM_ (zip [0..] is) $ \(idx, initializer) ->
         case valueContent' initializer of
-          FunctionC f -> addAggregateInitializer idx (Value f)
-          ExternalFunctionC f -> addAggregateInitializer idx (Value f)
+          FunctionC f -> addAggregateInitializer idx (toValue f)
+          ExternalFunctionC f -> addAggregateInitializer idx (toValue f)
           _ -> return ()
     _ -> return ()
   where
@@ -217,8 +217,8 @@ factsForInstruction fptrToField fptrAsArg argToField i =
   case i of
     StoreInst { storeValue = sv, storeAddress = sa } ->
       case valueContent' sv of
-        FunctionC f -> addStoredFunc (Value f)
-        ExternalFunctionC ef -> addStoredFunc (Value ef)
+        FunctionC f -> addStoredFunc (toValue f)
+        ExternalFunctionC ef -> addStoredFunc (toValue ef)
         ArgumentC a ->
           case accessPath i of
             Nothing -> return ()
@@ -254,7 +254,7 @@ factsForInstruction fptrToField fptrAsArg argToField i =
     argPosFacts f (ix, val) =
       case valueContent' val of
         FunctionC fptr ->
-          assertFact fptrAsArg [ ArgumentPosition f ix, Target (Value fptr) ]
+          assertFact fptrAsArg [ ArgumentPosition f ix, Target (toValue fptr) ]
         ExternalFunctionC fptr ->
-          assertFact fptrAsArg [ ArgumentPosition f ix, Target (Value fptr) ]
+          assertFact fptrAsArg [ ArgumentPosition f ix, Target (toValue fptr) ]
         _ -> return ()

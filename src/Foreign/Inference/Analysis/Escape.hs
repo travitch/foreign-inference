@@ -42,9 +42,9 @@ import Foreign.Inference.Diagnostics ( HasDiagnostics(..), Diagnostics )
 import Foreign.Inference.Interface
 import Foreign.Inference.Analysis.IndirectCallResolver
 
-import Text.Printf
-import Debug.Trace
-debug = flip trace
+-- import Text.Printf
+-- import Debug.Trace
+-- debug = flip trace
 
 -- | The ways a value can escape from a function
 data EscapeClass = DirectEscape
@@ -381,7 +381,7 @@ buildValueFlowGraph :: IndirectCallSummary
 buildValueFlowGraph ics extSumm summ is =
   EscapeGraph { _escapeGraphValueMap = sN ^. graphStateValueMap
               , _escapeGraphFieldSourceMap = sN ^. graphStateFieldSourceMap
-              , _escapeVFG = mkGraph ns es `debug` printf "Nodes:\n%s\nEdges:\n%s\n" (show ns) (show es)
+              , _escapeVFG = mkGraph ns es -- `debug` printf "Nodes:\n%s\nEdges:\n%s\n" (show ns) (show es)
               }
   where
     ns = concat [ HM.elems (sN ^. graphStateValueMap)
@@ -543,9 +543,6 @@ addFact ics extSumm summ inst =
     RetInst { retInstValue = Just rv } ->
       ifPointer rv (return ()) $ do
         flowToSink DirectEscape rv inst
-        -- let s = EscapeSink DirectEscape rv
-        -- assertFact sink [ s, W inst ]
-        -- assertFact flowTo [ V rv, s, W inst ]
 {-
 FIXME Convert this to a special case of store GEP to loc
     GetElementPtrInst { getElementPtrValue = base } ->

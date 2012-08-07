@@ -303,22 +303,21 @@ summarizeArgumentEscapes eg a s =
 -- include it in the neighbor set.
 reachableSinks :: Int -> ValueFlowGraph -> (Instruction -> Bool) -> [ValueFlowNode]
 reachableSinks nodeId g ignoredPred =
-  let rs = evalState doReach mempty
-  in filter isSinkNode rs
+  filter isSinkNode doReach
   where
     isSinkNode (Sink _ _ _) = True
     isSinkNode _ = False
-    doReach = xdfsWithM contextNeighbors contextToReached [nodeId] g
+    doReach = xdfsWith contextNeighbors contextToReached [nodeId] g
     contextNeighbors c =
-      return $ filter sinkWitnessNotIgnored (neighbors' c)
+      filter sinkWitnessNotIgnored (neighbors' c)
     sinkWitnessNotIgnored nid =
       case lab g nid of
         Nothing -> error "Missing label in reachableSinks"
         Just (Sink _ w _) -> not (ignoredPred w)
         _ -> True
 
-contextToReached :: Context ValueFlowGraph -> State [Int] ValueFlowNode
-contextToReached (Context _ (LNode _ l) _) = return l
+contextToReached :: Context ValueFlowGraph -> ValueFlowNode
+contextToReached (Context _ (LNode _ l) _) = l
 
 entireArgumentEscapes :: EscapeGraph -> Argument -> EscapeSummary -> (Bool, EscapeSummary)
 entireArgumentEscapes eg a s =

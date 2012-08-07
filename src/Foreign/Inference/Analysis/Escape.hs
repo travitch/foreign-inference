@@ -42,9 +42,9 @@ import Foreign.Inference.Diagnostics ( HasDiagnostics(..), Diagnostics )
 import Foreign.Inference.Interface
 import Foreign.Inference.Analysis.IndirectCallResolver
 
--- import Text.Printf
--- import Debug.Trace
--- debug = flip trace
+import Text.Printf
+import Debug.Trace
+debug = flip trace
 
 -- | The ways a value can escape from a function
 data EscapeClass = DirectEscape
@@ -381,7 +381,7 @@ buildValueFlowGraph :: IndirectCallSummary
 buildValueFlowGraph ics extSumm summ is =
   EscapeGraph { _escapeGraphValueMap = sN ^. graphStateValueMap
               , _escapeGraphFieldSourceMap = sN ^. graphStateFieldSourceMap
-              , _escapeVFG = mkGraph ns es
+              , _escapeVFG = mkGraph ns es `debug` printf "Nodes:\n%s\nEdges:\n%s\n" (show ns) (show es)
               }
   where
     ns = concat [ HM.elems (sN ^. graphStateValueMap)
@@ -515,6 +515,20 @@ callFieldEscape eclass base p w = do
   let s = LNode nid (Sink eclass w (Just p))
   _ <- graphStateCallFieldEscapes !%= HM.insertWith (++) base [(p, nid)]
   _ <- graphStateSinks !%= (s:)
+
+  -- Make a fieldSource for base since a field of base escapes.  This
+  -- handles proxying an argument through a function call that lets a
+  -- field escape.
+  case valueContent' base of
+    ArgumentC a -> do
+      aid <- nextNodeId
+      let an = LNode aid (FieldSource a p)
+          e = LEdge (Edge aid nid) ()
+      _ <- graphStateEdges !%= HM.insertWith (++) aid [e]
+      _ <- graphStateFieldSourceMap !%= HM.insertWith (++) base [an]
+      return ()
+    _ -> return ()
+
   return ()
 
 -- FIXME at a high level, I need to add many more tests to ensure that

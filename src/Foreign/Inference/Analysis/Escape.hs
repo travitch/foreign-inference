@@ -303,11 +303,11 @@ summarizeArgumentEscapes eg a s =
 -- include it in the neighbor set.
 reachableSinks :: Int -> ValueFlowGraph -> (Instruction -> Bool) -> [ValueFlowNode]
 reachableSinks nodeId g ignoredPred =
-  filter isSinkNode doReach
+  filter isSinkNode (doReach g)
   where
     isSinkNode (Sink _ _ _) = True
     isSinkNode _ = False
-    doReach = xdfsWith contextNeighbors contextToReached [nodeId] g
+    doReach = xdfsWith contextNeighbors contextToReached [nodeId]
     contextNeighbors c =
       filter sinkWitnessNotIgnored (neighbors' c)
     sinkWitnessNotIgnored nid =

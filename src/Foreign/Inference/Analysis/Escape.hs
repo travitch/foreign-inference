@@ -1,3 +1,4 @@
+{-# OPTIONS_GHC -fno-warn-orphans #-}
 {-# LANGUAGE TemplateHaskell, OverloadedStrings, FlexibleContexts #-}
 module Foreign.Inference.Analysis.Escape (
   EscapeSummary,
@@ -542,6 +543,13 @@ addFact ics extSumm summ inst =
     RetInst { retInstValue = Just rv } ->
       ifPointer rv (return ()) $ do
         flowToSink DirectEscape rv inst
+
+    -- GetElementPtrInst { getElementPtrValue = base } ->
+    --   case valueType inst of
+    --     TypePointer (TypePointer _ _) _ -> do
+    --       flowTo (toValue inst) base inst
+    --       flowTo base (toValue inst) inst
+    --     _ -> return ()
 {-
 FIXME Convert this to a special case of store GEP to loc
     GetElementPtrInst { getElementPtrValue = base } ->

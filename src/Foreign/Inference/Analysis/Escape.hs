@@ -11,9 +11,10 @@ module Foreign.Inference.Analysis.Escape (
   ) where
 
 import Control.DeepSeq
-import Control.Exception ( throw )
+import Control.Monad.State.Strict
 import Control.Monad.Writer ( runWriter )
 import Data.Default
+import Data.Lens.Strict
 import Data.Hashable
 import Data.HashMap.Strict ( HashMap )
 import qualified Data.HashMap.Strict as HM
@@ -22,36 +23,28 @@ import Data.List.NonEmpty ( NonEmpty, nonEmpty )
 import qualified Data.List.NonEmpty as NEL
 import Data.Map ( Map )
 import qualified Data.Map as M
-import Data.Maybe ( mapMaybe )
+import Data.Maybe ( fromMaybe, mapMaybe )
 import Data.Set ( Set )
 import qualified Data.Set as S
-import Data.Lens.Common
 import Data.Lens.Template
 import Data.Monoid
 import Text.Printf
 
-import Database.Datalog
+import Data.Graph.Interface
+import Data.Graph.LazyHAMT
+import Data.Graph.Algorithms.Matching.DFS
+
 import LLVM.Analysis
 import LLVM.Analysis.AccessPath
 import LLVM.Analysis.CallGraphSCCTraversal
 
-import Foreign.Inference.Diagnostics
+import Foreign.Inference.Diagnostics ( HasDiagnostics(..), Diagnostics )
 import Foreign.Inference.Interface
 import Foreign.Inference.Analysis.IndirectCallResolver
 
-data Fact = W Instruction -- witness
-          | EscapeSink EscapeClass Value
-          | FieldSource Argument AbstractAccessPath
-          | P AbstractAccessPath
-          | V Value -- a value
-          deriving (Eq, Ord, Show)
-
-instance Hashable Fact where
-  hash (W i) = 1 `combine` hash i
-  hash (EscapeSink ec v) = 2 `combine` hash v `combine` hash ec
-  hash (V v) = 3 `combine` hash v
-  hash (FieldSource a p) = 4 `combine` hash a `combine` hash p
-  hash (P p) = 5 `combine` hash p
+-- import Text.Printf
+-- import Debug.Trace
+-- debug = flip trace
 
 -- | The ways a value can escape from a function
 data EscapeClass = DirectEscape
@@ -66,8 +59,90 @@ instance Hashable EscapeClass where
 
 instance NFData EscapeClass
 
+data ValueFlowNode = Sink { sinkClass :: EscapeClass
+                          , sinkWitness :: Instruction
+                          , sinkPath :: Maybe AbstractAccessPath
+                          }
+                   | Location { locationValue :: Value }
+                   | FieldSource { fieldSourceArgument :: Argument
+                                 , fieldSourcePath :: AbstractAccessPath
+                                 }
+                   deriving (Eq, Ord, Show)
+
+instance NFData ValueFlowNode where
+  rnf (Sink c w p) = c `deepseq` w `deepseq` p `deepseq` ()
+  rnf (Location v) = v `deepseq` ()
+  rnf (FieldSource a p) = a `deepseq` p `deepseq` ()
+
+type ValueFlowGraph = Gr ValueFlowNode ()
+
+-- Rules:
+--
+-- Each value gets a single node.  Nodes can be created from any
+-- location.
+--
+-- Field source nodes are only created by the fieldSource function.
+-- These are load instructions and arguments that are proxied to
+-- function calls that let an argument escape.  There can be more than
+-- one for a given value (because of the second condition).  The
+-- important thing is that, after all other nodes are created, each
+-- field source @fs@ has value root @v@.  For all edges @v@->@x@, add
+-- new edg @fs@->@x@.
+data GraphState = GraphState {
+  _graphStateValueMap :: HashMap Value (LNode ValueFlowGraph),
+  -- ^ A map of values to their representative nodes
+  _graphStateFieldSourceMap :: HashMap Value [LNode ValueFlowGraph],
+  -- ^ A map of values that act as field sources to their graph nodes.
+  _graphStateEdges :: HashMap Int [LEdge ValueFlowGraph],
+  -- ^ All of the edges, mapped from their srcid.  This is useful
+  -- because we need to be able to get all edges rooted at a node to
+  -- deal with fieldSources
+  _graphStateSinks :: [LNode ValueFlowGraph],
+  -- ^ All of the sink nodes generated
+  _graphStateFieldStores :: HashMap Value [(AbstractAccessPath, Int, Instruction)],
+  -- ^ A map of base values to which the mapped value is stored into
+  -- the associated path by an instruction.  These are corroborated
+  -- with callFieldEscapes.
+  _graphStateCallFieldEscapes :: HashMap Value [(AbstractAccessPath, Int)],
+  -- ^ A map of values passed to call arguments that let a field
+  -- escape to the sink nodes representing those escapes.  It is
+  -- annotated with the field that it allows to escape so that can be
+  -- compared with the path in the fieldStores.
+  _graphStateIdSrc :: Int
+  -- ^ A source of unique identifiers for graph nodes
+  }
+
+$(makeLens ''GraphState)
+
+emptyGraphState :: GraphState
+emptyGraphState = GraphState { _graphStateValueMap = mempty
+                             , _graphStateFieldSourceMap = mempty
+                             , _graphStateEdges = mempty
+                             , _graphStateSinks = mempty
+                             , _graphStateFieldStores = mempty
+                             , _graphStateCallFieldEscapes = mempty
+                             , _graphStateIdSrc = 0
+                             }
+
+instance (Eq a, Eq b, Ord a, Ord b) => Eq (Gr a b) where
+  (==) = graphEqual
+
+data EscapeGraph = EscapeGraph {
+  _escapeGraphValueMap :: HashMap Value (LNode ValueFlowGraph),
+  _escapeGraphFieldSourceMap :: HashMap Value [LNode ValueFlowGraph],
+  _escapeVFG :: ValueFlowGraph
+  } deriving (Eq)
+
+instance NFData EscapeGraph where
+  rnf (EscapeGraph m fm g) = g `deepseq` m `deepseq` fm `deepseq` ()
+
+$(makeLens ''EscapeGraph)
+
+-- | The monad in which we construct the value flow graph
+type GraphBuilder = State GraphState
+
 data EscapeSummary =
-  EscapeSummary { _escapeData :: HashMap Function (Database Fact)
+  EscapeSummary { _escapeGraph :: HashMap Function EscapeGraph
                 , _escapeArguments :: HashMap Argument (EscapeClass, Instruction)
                 , _escapeFields :: HashMap Argument (Set (EscapeClass, AbstractAccessPath, Instruction))
                 , _escapeDiagnostics :: Diagnostics
@@ -79,26 +154,24 @@ instance Show EscapeSummary where
   show (EscapeSummary _ ea ef _) = show ea ++ "/" ++ show ef
 
 instance Eq EscapeSummary where
-  (EscapeSummary db1 ea1 ef1 _) == (EscapeSummary db2 ea2 ef2 _) =
-    db1 == db2 && ea1 == ea2 && ef1 == ef2
+  (EscapeSummary g1 ea1 ef1 _) == (EscapeSummary g2 ea2 ef2 _) =
+    g1 == g2 && ea1 == ea2 && ef1 == ef2
 
 instance Default EscapeSummary where
   def = EscapeSummary mempty mempty mempty mempty
 
 instance Monoid EscapeSummary where
   mempty = def
-  mappend (EscapeSummary db1 as1 was1 d1) (EscapeSummary db2 as2 was2 d2) =
-    EscapeSummary { _escapeData = HM.union db1 db2
+  mappend (EscapeSummary g1 as1 was1 d1) (EscapeSummary g2 as2 was2 d2) =
+    EscapeSummary { _escapeGraph = HM.union g1 g2
                   , _escapeArguments = HM.union as1 as2
                   , _escapeFields = HM.union was1 was2
                   , _escapeDiagnostics = d1 `mappend` d2
                   }
 
--- We don't need to rnf the fact database because it is queried to
--- create the argument summaries (and is therefore fully evaluated).
 instance NFData EscapeSummary where
-  rnf r@(EscapeSummary _ as was d) =
-    as `deepseq` was `deepseq` d `deepseq` r `seq` ()
+  rnf r@(EscapeSummary g as was d) =
+    g `deepseq` as `deepseq` was `deepseq` d `deepseq` r `seq` ()
 
 instance HasDiagnostics EscapeSummary where
   diagnosticLens = escapeDiagnostics
@@ -106,6 +179,13 @@ instance HasDiagnostics EscapeSummary where
 instance SummarizeModule EscapeSummary where
   summarizeFunction _ _ = []
   summarizeArgument = summarizeEscapeArgument
+
+-- FIXME: Here is an easy improvement - note when values escape into
+-- an argument (and which one).  This will let us use this information
+-- in a caller and, if the argument being escaped into from a callee
+-- is just a local non-escaping value, we can ignore it since it isn't
+-- a real escape.  This prevents us from having to unify the caller
+-- context with all callee contexts.
 
 -- | This is the underlying bottom-up analysis to identify which
 -- arguments escape.  It builds an EscapeGraph for the function
@@ -122,20 +202,17 @@ identifyEscapes ds ics lns =
   where
     escapeWrapper funcLike s = do
       let f = getFunction funcLike
-          db = either throwDatalogError id $
-                 makeDatabase $ collectFacts ics extSumm s (functionInstructions f)
-          res = either throwDatalogError id $ queryDatabase db (escapeQuery Nothing Nothing)
-          s' = foldr summarizeArgumentEscapes s res
-      return $ (escapeData ^!%= HM.insert f db) s'
--- FIXME: It might be worth changing the query here to issue a single
--- query for each argument.  The field escape stuff would make that
--- hard, though.
+          g = buildValueFlowGraph ics extSumm s (functionInstructions f)
+          s' = foldr (summarizeArgumentEscapes g) s (functionParameters f)
+      return $ (escapeGraph ^!%= HM.insert f g) s'
 
     runner a =
       let (e, diags) = runWriter a
       in (escapeDiagnostics ^= diags) e
 
     extSumm ef ix =
+      -- FIXME: Switch the builder to be a StateT so we can let this
+      -- monadic extsumm record missing summaries
       case lookupArgumentSummary ds (undefined :: EscapeSummary) ef ix of
         Nothing -> True --  do
           -- let msg = "Missing summary for " ++ show (externalFunctionName ef)
@@ -175,24 +252,17 @@ instructionEscapeCore :: (Instruction -> Bool)
                          -> Instruction
                          -> EscapeSummary
                          -> Maybe Instruction
-instructionEscapeCore ignorePred i (EscapeSummary dbs _ _ _) =
-  foldr (matchInst i) Nothing res
+instructionEscapeCore ignorePred i (EscapeSummary eg _ _ _) = do
+  ln <- HM.lookup (toValue i) m
+  case reachableSinks (unlabelNode ln) g ignorePred of
+    [] -> Nothing
+    (Sink _ w _) : _ -> return w
+    _ -> error "Non-sink in reachableSinks result"
   where
     Just bb = instructionBasicBlock i
     f = basicBlockFunction bb
-    errMsg = error ("Should have a summary for " ++ show (functionName f))
-    db = HM.lookupDefault errMsg f dbs
-    q = queryDatabase db (escapeQuery (Just ignorePred) (Just (Atom (V (toValue i)))))
-    res = either throwDatalogError id q
-
-matchInst :: Instruction -> [Fact] -> Maybe Instruction -> Maybe Instruction
-matchInst _ _ res@(Just _) = res
-matchInst i [V v, _, W w, _] Nothing =
-  case valueUniqueId v == instructionUniqueId i of
-    False -> Nothing
-    True -> Just w
-matchInst _ _ _ = Nothing
-
+    errMsg = error ("Missing summary for function " ++ show (functionName f))
+    EscapeGraph m _ g = HM.lookupDefault errMsg f eg
 
 summarizeEscapeArgument :: Argument -> EscapeSummary -> [(ParamAnnotation, [Witness])]
 summarizeEscapeArgument a er =
@@ -210,35 +280,76 @@ summarizeEscapeArgument a er =
         IndirectEscape -> PAFptrEscape
         BrokenContractEscape -> PAContractEscape
 
--- FIXME: Now we can encounter the same argument more than once while
--- going through the results.  Use a smart merge to make sure direct
--- escapes override indirect &c.
-summarizeArgumentEscapes :: [Fact] -> EscapeSummary -> EscapeSummary
-summarizeArgumentEscapes [V _, EscapeSink ec _, W w, FieldSource a accPath] =
-  escapeFields ^!%= HM.insertWith S.union a (S.singleton (ec, accPath, w))
-summarizeArgumentEscapes [V v, EscapeSink ec _, W w, _] =
-  case valueContent' v of
-    ArgumentC a -> escapeArguments ^!%= HM.insert a (ec, w)
-    _ -> id
-summarizeArgumentEscapes _ = id
-
-collectFacts :: (Failure DatalogError m)
-                => IndirectCallSummary
-                -> (ExternalFunction -> Int -> Bool)
-                -> EscapeSummary
-                -> [Instruction]
-                -> DatabaseBuilder m Fact ()
-collectFacts ics extSumm summ is = do
-  sink <- addRelation "sink" 2
-  flowTo <- addRelation "flowTo" 3
-  fieldSource <- addRelation "fieldSource" 2
-  fieldStore <- addRelation "fieldStore" 4
-  callFieldEscape <- addRelation "callFieldEscape" 4
-  mapM_ (addFact ics extSumm summ sink flowTo fieldSource fieldStore callFieldEscape) is
 
 
--- FIXME if we can identify function call arguments as sinks here, that
--- could save significant complexity later
+summarizeArgumentEscapes :: EscapeGraph -> Argument -> EscapeSummary -> EscapeSummary
+summarizeArgumentEscapes eg a s =
+  case entireArgumentEscapes eg a s of
+    (True, s') -> s'
+    (False, _) -> argumentFieldsEscape eg a s
+
+-- | This is basically DFS.  Note that we need to generalize this for
+-- the instructionEscapes* functions.
+--
+-- Also note that for any reachable store, a follow up query must be
+-- issued to see if any sinks are reachable following store edges
+-- (once that functionality is implemented).  Be sure to remember
+-- stores that have been processed so that it doesn't loop forever.
+-- The recursive traversals should occur here so that clients only
+-- need to look for sinks.
+--
+-- Handle ignored instructions in the neighbor computation.  If a
+-- neighbor is a sink, and its witness is being ignored, do not
+-- include it in the neighbor set.
+reachableSinks :: Int -> ValueFlowGraph -> (Instruction -> Bool) -> [ValueFlowNode]
+reachableSinks nodeId g ignoredPred =
+  let rs = evalState doReach mempty
+  in filter isSinkNode rs
+  where
+    isSinkNode (Sink _ _ _) = True
+    isSinkNode _ = False
+    doReach = xdfsWithM contextNeighbors contextToReached [nodeId] g
+    contextNeighbors c =
+      return $ filter sinkWitnessNotIgnored (neighbors' c)
+    sinkWitnessNotIgnored nid =
+      case lab g nid of
+        Nothing -> error "Missing label in reachableSinks"
+        Just (Sink _ w _) -> not (ignoredPred w)
+        _ -> True
+
+contextToReached :: Context ValueFlowGraph -> State [Int] ValueFlowNode
+contextToReached (Context _ (LNode _ l) _) = return l
+
+entireArgumentEscapes :: EscapeGraph -> Argument -> EscapeSummary -> (Bool, EscapeSummary)
+entireArgumentEscapes eg a s =
+  case HM.lookup (toValue a) (eg ^. escapeGraphValueMap) of
+    Nothing -> (False, s)
+    Just (LNode nid _) ->
+      case reachableSinks nid (eg ^. escapeVFG) (const False) of
+        -- No non-field escapes, signal the caller to try to find
+        -- field escapes instead
+        [] -> (False, s)
+        -- Otherwise, take the first sink
+        (Sink eclass w _) : _ ->
+          let s' = (escapeArguments ^!%= HM.insert a (eclass, w)) s
+          in (True, s')
+        _ -> error "Non-sink found in reachableSinks result"
+
+argumentFieldsEscape :: EscapeGraph -> Argument -> EscapeSummary -> EscapeSummary
+argumentFieldsEscape eg a s =
+  case HM.lookup (toValue a) (eg ^. escapeGraphFieldSourceMap) of
+    -- No fields escape either
+    Nothing -> s
+    Just fieldSrcs -> foldr checkFieldEscapes s fieldSrcs
+  where
+    checkFieldEscapes (LNode fldSrcId (FieldSource arg p)) summ =
+      case reachableSinks fldSrcId (eg ^. escapeVFG) (const False) of
+        [] -> summ
+        (Sink eclass w _) : _ ->
+          let newEsc = S.singleton (eclass, p, w)
+          in (escapeFields ^!%= HM.insertWith S.union arg newEsc) summ
+        _ -> error "Non-sink found in reachableSinks result"
+
 isSink :: Maybe Value -> Bool
 isSink v =
   case v of
@@ -252,74 +363,6 @@ isSink v =
         InstructionC (InvokeInst {}) -> True
         _ -> False
 
-escapeQuery :: (Failure DatalogError m)
-               => Maybe (Instruction -> Bool)
-               -> Maybe (Term Fact)
-               -> QueryBuilder m Fact (Query Fact)
-escapeQuery ignorePred target = do
-  sink <- relationPredicateFromName "sink"
-  flowTo <- relationPredicateFromName "flowTo"
-  fieldSource <- relationPredicateFromName "fieldSource"
-  flowTo' <- inferencePredicate "flowTo*"
-  escapes <- inferencePredicate "escapes"
-  fieldStore <- relationPredicateFromName "fieldStore"
-  callFieldEscape <- relationPredicateFromName "callFieldEscape"
-  let v = LogicVar "v"
-      s = LogicVar "s"
-      w = LogicVar "w"
-      v1 = LogicVar "v1"
-      v2 = LogicVar "v2"
-      w2 = LogicVar "w2"
-      f = LogicVar "f"
-      p = LogicVar "p"
-      base = LogicVar "base"
-  -- Graph closure
-  case ignorePred of
-    Nothing -> (flowTo', [v, s, w]) |- [ lit flowTo [ v, s, w ] ]
-    Just ignore ->
-      (flowTo', [v, s, w]) |- [ lit flowTo [ v, s, w ]
-                              , cond1 (\(W inst) -> not (ignore inst)) w
-                              ]
-  (flowTo', [v, v2, w]) |- [ lit flowTo' [ v, v1, Anything ]
-                           , lit flowTo' [ v1, v2, w ]
-                           ]
-  -- Final query
-
-  -- This rule handles proxying field escapes through callees.  See
-  -- escape-through-2-call-field.c
-  (escapes, [v, s, w, p]) |- [ lit callFieldEscape [ v, Anything, s, w ]
-                             , lit fieldSource [ v, p ]
-                             ]
-
-  -- In this case, the w2 parameter is fake and unused, but we want
-  -- this to be arity 3 so that we can handle field escapes in the
-  -- same query.  This simple case says that anything reaching a sink
-  -- node escapes (directly).
-  (escapes, [v, s, w, w2]) |- [ lit flowTo' [ v, s, w2 ]
-                              , lit sink [ s, w ]
-                              ]
-
-  -- This case describes fields of arguments escaping (directly)
-  (escapes, [v, s, w, f]) |- [ lit flowTo' [ v, s, Anything ]
-                             , lit sink [ s, w ]
-                             , lit fieldSource [ v, f ]
-                             ]
-
-  -- This case handles fields of values escaping through calls
-  (escapes, [v, s, w, p]) |- [ lit flowTo' [ v, v2, Anything ]
-                             , lit fieldStore [ base, v2, p, Anything ]
-                             , lit callFieldEscape [ base, p, s, w ]
-                             ]
-  -- There isn't necessarily an extra flow step here since a value
-  -- could escape directly... this works but we might be able to
-  -- combine the rules if we are more clever.
-  (escapes, [v, s, w, p]) |- [ lit fieldStore [ base, v, p, Anything ]
-                             , lit callFieldEscape [ base, p, s, w ]
-                             ]
-  case target of
-    Nothing -> issueQuery escapes [ v, s, w, f ]
-    Just tgt -> issueQuery escapes [ tgt, s, w, f]
-
 -- | A helper to abstract the pointer type tests.  If the value @v@ is
 -- not a pointer, return @defVal@.  Otherwise, return @isPtrVal@.
 -- This helps remove a level of nested (and repetitive) pattern
@@ -330,30 +373,183 @@ ifPointer v defVal isPtrVal =
     TypePointer _ _ -> isPtrVal
     _ -> defVal
 
+buildValueFlowGraph :: IndirectCallSummary
+                       -> (ExternalFunction -> Int -> Bool)
+                       -> EscapeSummary
+                       -> [Instruction]
+                       -> EscapeGraph
+buildValueFlowGraph ics extSumm summ is =
+  EscapeGraph { _escapeGraphValueMap = sN ^. graphStateValueMap
+              , _escapeGraphFieldSourceMap = sN ^. graphStateFieldSourceMap
+              , _escapeVFG = mkGraph ns es
+              }
+  where
+    ns = concat [ HM.elems (sN ^. graphStateValueMap)
+                , concat $ HM.elems (sN ^. graphStateFieldSourceMap)
+                , sN ^. graphStateSinks
+                ]
+    es = concat [ callFieldEdges
+                , fieldSourceEdges
+                , concat $ HM.elems (sN ^. graphStateEdges)
+                ]
+
+    sN = execState b emptyGraphState
+    b = mapM_ (addFact ics extSumm summ) is
+    fieldSourceEdges = concatMap (addFieldSourceEdges sN) (HM.toList (sN ^. graphStateFieldSourceMap))
+    callFieldEdges = concatMap (addCallFieldEdges sN) (HM.toList (sN ^. graphStateCallFieldEscapes))
+
+addCallFieldEdges :: GraphState
+                     -> (Value, [(AbstractAccessPath, Int)])
+                     -> [LEdge ValueFlowGraph]
+addCallFieldEdges gs (base, sinkPaths) =
+  fromMaybe [] $ do
+    fsnodes <- HM.lookup base (gs ^. graphStateFieldStores)
+    return $ concatMap (makeEdges fsnodes) sinkPaths
+  where
+    makeEdges fsnodes (p, dest) = mapMaybe (makeEdge p dest) fsnodes
+    makeEdge p1 dest (p2, src, _) =
+      case p1 == p2 of
+        False -> Nothing
+        True -> Just $ LEdge (Edge src dest) ()
+
+-- | For each fieldSource node, find all of the normal nodes with the
+-- same base.  For each of those nodes, clone their edges and replace
+-- the source with this fieldsource node.  Note, it is possible that
+-- there are simply none to add.
+addFieldSourceEdges :: GraphState
+                       -> (Value, [LNode ValueFlowGraph])
+                       -> [LEdge ValueFlowGraph]
+addFieldSourceEdges gs (base, fsnodes) =
+  fromMaybe [] $ do
+    normalNode <- HM.lookup base (gs ^. graphStateValueMap)
+    es <- HM.lookup (unlabelNode normalNode) (gs ^. graphStateEdges)
+    return $ concatMap (convertEdges es) fsnodes
+  where
+    convertEdge src (LEdge (Edge _ dst) lbl) = LEdge (Edge src dst) lbl
+    convertEdges es n = map (convertEdge (unlabelNode n)) es
+
+nextNodeId :: GraphBuilder Int
+nextNodeId = do
+  nid <- access graphStateIdSrc
+  _ <- graphStateIdSrc !%= (+1)
+  return nid
+
+-- | Create a node for the given value if it does not already exist.
+-- Returns the corresponding unique node id.
+valueNode :: Value -> GraphBuilder Int
+valueNode v = do
+  vm <- access graphStateValueMap
+  case HM.lookup v vm of
+    Just n -> return (unlabelNode n)
+    Nothing -> do
+      nid <- nextNodeId
+      let n = LNode nid (Location v)
+      _ <- graphStateValueMap !%= HM.insert v n
+      return nid
+
+-- | Values flow from v1 to v2
+flowTo :: Value -> Value -> Instruction -> GraphBuilder ()
+flowTo from to w = do
+  fromN <- valueNode from
+  toN <- valueNode to
+  let e = LEdge (Edge fromN toN) ()
+  _ <- graphStateEdges !%= HM.insertWith (++) fromN [e]
+  return ()
+
+-- | The value named flows to a sink.  This should create a new node
+-- (each sink is accompanied by a flowTo).  Having it make a new node
+-- allows us to have each argument be a sink without requiring fancy
+-- handling of arguments (seeing if they are in a loop, &c)
+flowToSink :: EscapeClass -> Value -> Instruction -> GraphBuilder ()
+flowToSink eclass v w = do
+  -- The value node
+  vN <- valueNode v
+  -- A virtual node representing the sink
+  sid <- nextNodeId
+  let s = LNode sid (Sink eclass w Nothing)
+      e = LEdge (Edge vN sid) ()
+  _ <- graphStateEdges !%= HM.insertWith (++) vN [e]
+  _ <- graphStateSinks !%= (s:)
+  return ()
+
+-- | These handle fields of arguments escaping.  Before the final
+-- graph construction step, edges will be added from this to
+-- everything that v has an edge to.  We can't do it here because v
+-- might have more edges added later.
+--
+-- Make a special field source - that is looked up during the escape
+-- query based on its base (a).  It also needs an edge to the @v@.
+fieldSource :: Value -> Argument -> AbstractAccessPath -> GraphBuilder ()
+fieldSource v a p = do
+  vN <- valueNode v
+  nid <- nextNodeId
+  let n = LNode nid (FieldSource a p)
+      e = LEdge (Edge nid vN) ()
+  _ <- graphStateEdges !%= HM.insertWith (++) nid [e]
+  _ <- graphStateFieldSourceMap !%= HM.insertWith (++) (toValue a) [n]
+  return ()
+
+-- | These two go together; they handle fields escaping through calls.
+-- They handle fields of values escaping through calls.  The call
+-- allows a field to escape (callFieldEscape) and the fieldStore tells
+-- us what value was stored to that field.
+--
+-- @sv@ is stored into path @p@ of @base@ (by instruction @w@).
+--
+-- If @base@ is an argument to a function call that lets path @p@
+-- escape (these are the callFieldEscape facts), then @sv@ escapes
+-- (through the call).  At graph construction time, this can be
+-- represented by making an edge from sv to the argument sink (which
+-- can be made then).
+fieldStore :: Value -> Value -> AbstractAccessPath -> Instruction -> GraphBuilder ()
+fieldStore sv base p w = do
+  n <- valueNode sv
+  _ <- graphStateFieldStores !%= HM.insertWith (++) base [(p, n, w)]
+  return ()
+
+-- | Paired with fieldStore - it implicitly creates a sink (much like
+-- flowToSink) annotated with an access path
+callFieldEscape :: EscapeClass -> Value -> AbstractAccessPath -> Instruction -> GraphBuilder ()
+callFieldEscape eclass base p w = do
+  nid <- nextNodeId
+  let s = LNode nid (Sink eclass w (Just p))
+  _ <- graphStateCallFieldEscapes !%= HM.insertWith (++) base [(p, nid)]
+  _ <- graphStateSinks !%= (s:)
+  return ()
 
 -- FIXME at a high level, I need to add many more tests to ensure that
 -- escapes by address-taken operations are handled properly.
-addFact :: (Failure DatalogError m)
-           => IndirectCallSummary
+addFact :: IndirectCallSummary
            -> (ExternalFunction -> Int -> Bool)
            -> EscapeSummary
-           -> Relation
-           -> Relation
-           -> Relation
-           -> Relation
-           -> Relation
            -> Instruction
-           -> DatabaseBuilder m Fact ()
-addFact ics extSumm summ sink flowTo fieldSource fieldStore callFieldEscape inst =
+           -> GraphBuilder ()
+addFact ics extSumm summ inst =
   case inst of
     RetInst { retInstValue = Just rv } ->
       ifPointer rv (return ()) $ do
-        let s = EscapeSink DirectEscape rv
-        assertFact sink [ s, W inst ]
-        assertFact flowTo [ V rv, s, W inst ]
-
+        flowToSink DirectEscape rv inst
+        -- let s = EscapeSink DirectEscape rv
+        -- assertFact sink [ s, W inst ]
+        -- assertFact flowTo [ V rv, s, W inst ]
+{-
+FIXME Convert this to a special case of store GEP to loc
     GetElementPtrInst { getElementPtrValue = base } ->
-      assertFact flowTo [ V (toValue inst), V base, W inst ]
+      case valueType inst of
+        TypePointer (TypePointer _ _) _ -> do
+          assertFact flowTo [ V (toValue inst), V base, W inst ]
+          assertFact flowTo [ V base, V (toValue inst), W inst ]
+        _ -> return ()
+      -- case (accessPath inst, valueContent' base) of
+      --   (Just cpath, ArgumentC a) ->
+      --     -- FIXME: need to add some extra rules to match the flow
+      --     -- here if the argument to the GEP isn't an argument, but is
+      --     -- something that flows from an argument.
+      --     assertFact fieldSource [ V (toValue inst), FieldSource a (abstractAccessPath cpath) ]
+      --   _ -> return ()
+-}
+
+    -- FIXME: address of an argument escaping
 
     -- FIXME: probably doesn't handle something like
     --
@@ -373,8 +569,7 @@ addFact ics extSumm summ sink flowTo fieldSource fieldStore callFieldEscape inst
         Just cpath ->
           case valueContent' (accessPathBaseValue cpath) of
             ArgumentC a -> do
-              let s = FieldSource a (abstractAccessPath cpath)
-              assertFact fieldSource [ V (toValue inst), s ]
+              fieldSource (toValue inst) a (abstractAccessPath cpath)
             _ -> return ()
     StoreInst { storeValue = sv, storeAddress = sa } -> do
       -- If the access path base is something that escapes, we make a
@@ -400,10 +595,10 @@ addFact ics extSumm summ sink flowTo fieldSource fieldStore callFieldEscape inst
         -- If the destination isn't a sink, it is just an internal
         -- node causing some information flow.
         False -> do
-          assertFact flowTo [ V sv, V sa, W inst ]
+          flowTo sv sa inst
           case (base, absPath) of
             (Just b, Just absPath') ->
-              assertFact fieldStore [ V b, V sv, P absPath', W inst ]
+              fieldStore sv b absPath' inst
             _ -> return ()
               -- At call sites where a field escapes, assert the fact:
               --
@@ -411,43 +606,43 @@ addFact ics extSumm summ sink flowTo fieldSource fieldStore callFieldEscape inst
               --
               -- and then match them up on base/path in a secondary
               -- escape rule (sv escapes via inst),
-        True -> do
-          let s = EscapeSink DirectEscape sa
-          assertFact sink [ s, W inst ]
-          assertFact flowTo [ V sv, s, W inst ]
-    CallInst { callFunction = f, callArguments = args } -> do
-      addCallArgumentFacts ics extSumm summ sink flowTo callFieldEscape fieldSource inst f (map fst args)
-      -- If the function call returns a pointer, that pointer is an
-      -- escape sink (assigning a pointer to it lets that pointer
-      -- escape since it could be a global pointer).
-      ifPointer inst (return ()) $ do
-        assertFact sink [ EscapeSink DirectEscape (toValue inst), W inst ]
-    InvokeInst { invokeFunction = f, invokeArguments = args } -> do
-      addCallArgumentFacts ics extSumm summ sink flowTo callFieldEscape fieldSource inst f (map fst args)
-      ifPointer inst (return ()) $ do
-        assertFact sink [ EscapeSink DirectEscape (toValue inst), W inst ]
+        True -> flowToSink DirectEscape sv inst
+    CallInst { callFunction = f, callArguments = args } ->
+      addCallArgumentFacts ics extSumm summ inst f (map fst args)
+    InvokeInst { invokeFunction = f, invokeArguments = args } ->
+      addCallArgumentFacts ics extSumm summ inst f (map fst args)
     PhiNode { phiIncomingValues = ivs } ->
-      mapM_ (\v -> assertFact flowTo [ V v, V (toValue inst), W inst ]) (map fst ivs)
+      mapM_ (\v -> flowTo v (toValue inst) inst) (map fst ivs)
     SelectInst { selectTrueValue = tv, selectFalseValue = fv } -> do
-      assertFact flowTo [ V tv, V (toValue inst), W inst ]
-      assertFact flowTo [ V fv, V (toValue inst), W inst ]
+      flowTo tv (toValue inst) inst
+      flowTo fv (toValue inst) inst
     BitcastInst { castedValue = cv } ->
-      assertFact flowTo [ V cv, V (toValue inst), W inst ]
+      flowTo cv (toValue inst) inst
     _ -> return ()
 
-addCallArgumentFacts :: (Failure DatalogError m)
-                        => IndirectCallSummary
+-- FIXME check to see if a store to a bitcast of (e.g., a global)
+-- properly escapes...  hopefully we don't need bidirectional edges on
+-- those and phi nodes
+--
+-- This would require edge labels and only edges with certain labels
+-- could be followed from some kinds of nodes - this is doable with
+-- xdfsWithM at least.  This would also work with GEP instructions.
+--
+-- The rule would be something like "Store edges can only be followed
+-- after the traversal hits a store instruction on its current path".
+-- Tracking paths within xdfsWithM would be difficult.  Maybe it is
+-- doable by having the "neighbors" extractor tag its "store
+-- successors" specially.  If the current node is store tagged, all of
+-- its successors are store tagged.
+
+addCallArgumentFacts :: IndirectCallSummary
                         -> (ExternalFunction -> Int -> Bool)
                         -> EscapeSummary
-                        -> Relation
-                        -> Relation
-                        -> Relation
-                        -> Relation
                         -> Instruction
                         -> Value
                         -> [Value]
-                        -> DatabaseBuilder m Fact ()
-addCallArgumentFacts ics extSumm summ sink flowTo callFieldEscape fieldSource ci callee args =
+                        -> GraphBuilder ()
+addCallArgumentFacts ics extSumm summ ci callee args =
   case valueContent' callee of
     FunctionC f -> do
       let formals = functionParameters f
@@ -460,23 +655,11 @@ addCallArgumentFacts ics extSumm summ sink flowTo callFieldEscape fieldSource ci
           let formals = functionParameters representative
           mapM_ checkContractFuncArg (zip formals args)
   where
-    doAssert etype v = do
-      let s = EscapeSink etype (toValue ci)
-      assertFact sink [ s, W ci ]
-      assertFact flowTo [ V v, s, W ci ]
+    doAssert etype v = flowToSink etype v ci
     argFieldAssert etype v absPath = do
-              --       let s = FieldSource a (abstractAccessPath cpath)
-              -- assertFact fieldSource [ V (toValue inst), s ]
-
-      let s = EscapeSink etype (toValue ci)
-      assertFact sink [ s, W ci ]
---      assertFact flowTo [ V v, s, W ci ]
-      assertFact callFieldEscape [ V v, P absPath, s, W ci ]
+      callFieldEscape etype v absPath ci
       case valueContent' v of
-        ArgumentC a -> do
-          let src = FieldSource a absPath
---          assertFact flowTo [ V v, src, W ci ]
-          assertFact fieldSource [ V v, src ]
+        ArgumentC a -> fieldSource v a absPath
         _ -> return ()
     checkExt ef (ix, arg) =
       case extSumm ef ix of
@@ -531,15 +714,6 @@ argEscapeType :: EscapeSummary -> Argument -> Maybe EscapeClass
 argEscapeType summ a = do
   (e, _) <- HM.lookup a (summ ^. escapeArguments)
   return e
-
--- Helpers
-
--- This is a trivial function to constrain the type of 'throw' so that
--- Failure DatalogError (Either a) can be recognized as Failure
--- DatalogError (Either DatalogError) and pick up the Failure instance
-throwDatalogError :: DatalogError -> a
-throwDatalogError = throw
-
 
 -- Testing
 

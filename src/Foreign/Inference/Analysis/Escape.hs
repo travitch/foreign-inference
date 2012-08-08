@@ -60,6 +60,7 @@ instance Hashable EscapeClass where
 
 instance NFData EscapeClass
 
+-- | The node labels for the Value Flow Graph
 data ValueFlowNode = Sink { sinkClass :: EscapeClass
                           , sinkWitness :: Instruction
                           , sinkPath :: Maybe AbstractAccessPath
@@ -223,22 +224,18 @@ identifyEscapes ds ics lns =
 
 -- | A generalization of 'instructionEscapes'.  The first argument is
 -- a predicate that returns True if the input Instruction (which is a
--- sink) should be excluded in the Escape graph.  The set of reachable
--- locations for the input instruction is computed as normal, but the
--- instructions in the @ignore@ list are removed from the set before
--- it is used to determine what escapes.
---
--- This arrangement means that @ignore@d nodes do *not* affect the
--- reachability computation.  That is critical for transitive
--- assignments to be treated properly (that is, for the transitive
--- links to be included).
+-- sink) should be excluded from the reachability search of the value
+-- flow graph.
 --
 -- The intended use of this variant is to issue escape queries for
 -- instructions that are known to escape via some desired means (e.g.,
 -- an out parameter) and to determine if they also escape via some
--- other means.  In that case, the @ignore@ list should be just the
--- store instruction that created the known escape.
-instructionEscapesWith :: (Instruction -> Bool) -> Instruction -> EscapeSummary -> Maybe Instruction
+-- other means.  In that case, the @ignore@ predicate should return
+-- True for the store instruction that created the known escape.
+instructionEscapesWith :: (Instruction -> Bool)
+                          -> Instruction
+                          -> EscapeSummary
+                          -> Maybe Instruction
 instructionEscapesWith = instructionEscapeCore
 
 -- | Returns the instruction (if any) that causes the input
@@ -281,16 +278,17 @@ summarizeEscapeArgument a er =
         IndirectEscape -> PAFptrEscape
         BrokenContractEscape -> PAContractEscape
 
-
-
 summarizeArgumentEscapes :: EscapeGraph -> Argument -> EscapeSummary -> EscapeSummary
 summarizeArgumentEscapes eg a s =
   case entireArgumentEscapes eg a s of
     (True, s') -> s'
     (False, _) -> argumentFieldsEscape eg a s
 
--- | This is basically DFS.  Note that we need to generalize this for
--- the instructionEscapes* functions.
+-- | This is basically DFS.  It is parameterized by a predicate that
+-- returns True if the Instruction labelling a sink (and its
+-- associated sink) should be ignored.  This is needed for
+-- instructionEscapesWith (so we can say "this instruction escapes
+-- ignoring this other instruction").
 --
 -- Also note that for any reachable store, a follow up query must be
 -- issued to see if any sinks are reachable following store edges
@@ -298,10 +296,6 @@ summarizeArgumentEscapes eg a s =
 -- stores that have been processed so that it doesn't loop forever.
 -- The recursive traversals should occur here so that clients only
 -- need to look for sinks.
---
--- Handle ignored instructions in the neighbor computation.  If a
--- neighbor is a sink, and its witness is being ignored, do not
--- include it in the neighbor set.
 reachableSinks :: Int -> ValueFlowGraph -> (Instruction -> Bool) -> [ValueFlowNode]
 reachableSinks nodeId g ignoredPred =
   filter isSinkNode (doReach g)
@@ -316,9 +310,7 @@ reachableSinks nodeId g ignoredPred =
         Nothing -> error "Missing label in reachableSinks"
         Just (Sink _ w _) -> not (ignoredPred w)
         _ -> True
-
-contextToReached :: Context ValueFlowGraph -> ValueFlowNode
-contextToReached (Context _ (LNode _ l) _) = l
+    contextToReached (Context _ (LNode _ l) _) = l
 
 entireArgumentEscapes :: EscapeGraph -> Argument -> EscapeSummary -> (Bool, EscapeSummary)
 entireArgumentEscapes eg a s =
@@ -589,51 +581,54 @@ FIXME Convert this to a special case of store GEP to loc
             ArgumentC a -> do
               fieldSource (toValue inst) a (abstractAccessPath cpath)
             _ -> return ()
-    StoreInst { storeValue = sv, storeAddress = sa } -> do
-      -- If the access path base is something that escapes, we make a
-      -- sink for it.  Otherwise we have to make an internal node.
-      --
-      -- We then add an edge from sv to whatever node got added.
-      let cpath = accessPath inst
-          base = fmap accessPathBaseValue cpath
-          absPath = fmap abstractAccessPath cpath
-      -- FIXME: if the *base* of the access path is used in a call
-      -- where the field described by this path escapes, we need to
-      -- generate a sink here.  It is easier to do it here than in the
-      -- normal call argument handler.  An alternative would be to add
-      -- a new fact stating that there was a store of @sv@ to a field
-      -- of @base@ (annotated with the abstract access path).  The
-      -- reachability rule could then be augmented to make the
-      -- connection.  Then at the call site, the argument can be
-      -- marked with a special FieldEscapeSink that has the same
-      -- access path.
-      --
-      -- FIXME: Does proxying an argument with a field escape work?
-      case isSink base of
-        -- If the destination isn't a sink, it is just an internal
-        -- node causing some information flow.
-        False -> do
-          flowTo sv sa inst
-          case (base, absPath) of
-            (Just b, Just absPath') ->
-              fieldStore sv b absPath' inst
-            _ -> return ()
-              -- At call sites where a field escapes, assert the fact:
-              --
-              -- > assertFact fieldEscapeSink [ V base, P absPath, W inst ]
-              --
-              -- and then match them up on base/path in a secondary
-              -- escape rule (sv escapes via inst),
-        True -> flowToSink DirectEscape sv inst
+    StoreInst { storeValue = sv, storeAddress = sa } ->
+      ifPointer sv (return ()) $ do
+        -- If the access path base is something that escapes, we make a
+        -- sink for it.  Otherwise we have to make an internal node.
+        --
+        -- We then add an edge from sv to whatever node got added.
+        let cpath = accessPath inst
+            base = fmap accessPathBaseValue cpath
+            absPath = fmap abstractAccessPath cpath
+        -- FIXME: if the *base* of the access path is used in a call
+        -- where the field described by this path escapes, we need to
+        -- generate a sink here.  It is easier to do it here than in
+        -- the normal call argument handler.  An alternative would be
+        -- to add a new fact stating that there was a store of @sv@ to
+        -- a field of @base@ (annotated with the abstract access
+        -- path).  The reachability rule could then be augmented to
+        -- make the connection.  Then at the call site, the argument
+        -- can be marked with a special FieldEscapeSink that has the
+        -- same access path.
+        --
+        -- FIXME: Does proxying an argument with a field escape work?
+        case isSink base of
+          -- If the destination isn't a sink, it is just an internal
+          -- node causing some information flow.
+          False -> do
+            flowTo sv sa inst
+            case (base, absPath) of
+              (Just b, Just absPath') ->
+                fieldStore sv b absPath' inst
+              _ -> return ()
+                   -- At call sites where a field escapes, assert the fact:
+                   --
+                   -- > assertFact fieldEscapeSink [ V base, P absPath, W inst ]
+                   --
+                   -- and then match them up on base/path in a secondary
+                   -- escape rule (sv escapes via inst),
+          True -> flowToSink DirectEscape sv inst
     CallInst { callFunction = f, callArguments = args } ->
       addCallArgumentFacts ics extSumm summ inst f (map fst args)
     InvokeInst { invokeFunction = f, invokeArguments = args } ->
       addCallArgumentFacts ics extSumm summ inst f (map fst args)
     PhiNode { phiIncomingValues = ivs } ->
-      mapM_ (\v -> flowTo v (toValue inst) inst) (map fst ivs)
-    SelectInst { selectTrueValue = tv, selectFalseValue = fv } -> do
-      flowTo tv (toValue inst) inst
-      flowTo fv (toValue inst) inst
+      ifPointer inst (return ()) $
+        mapM_ (\v -> flowTo v (toValue inst) inst) (map fst ivs)
+    SelectInst { selectTrueValue = tv, selectFalseValue = fv } ->
+      ifPointer inst (return ()) $ do
+        flowTo tv (toValue inst) inst
+        flowTo fv (toValue inst) inst
     BitcastInst { castedValue = cv } ->
       flowTo cv (toValue inst) inst
     _ -> return ()
@@ -673,7 +668,8 @@ addCallArgumentFacts ics extSumm summ ci callee args =
           let formals = functionParameters representative
           mapM_ checkContractFuncArg (zip formals args)
   where
-    doAssert etype v = flowToSink etype v ci
+    doAssert etype v =
+      ifPointer v (return ()) $ flowToSink etype v ci
     argFieldAssert etype v absPath = do
       callFieldEscape etype v absPath ci
       case valueContent' v of

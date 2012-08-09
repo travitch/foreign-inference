@@ -289,6 +289,7 @@ summarizeEscapeArgument a er =
         DirectEscape -> PAEscape
         IndirectEscape -> PAFptrEscape
         BrokenContractEscape -> PAContractEscape
+        ArgumentEscape ix -> PAArgEscape ix
 
 summarizeArgumentEscapes :: EscapeGraph -> Argument -> EscapeSummary -> EscapeSummary
 summarizeArgumentEscapes eg a s =

@@ -35,6 +35,7 @@ data ParamAnnotation = PAArray !Int
                      | PAUnref String [(String, [AccessType])] [String]
                      | PAAddRef String
                      | PAEscape
+                     | PAArgEscape !Int
                      | PAContractEscape
                      | PAFptrEscape
                      | PAWillEscape

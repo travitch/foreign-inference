@@ -19,7 +19,7 @@ import Data.Lens.Strict
 import Data.Hashable
 import Data.HashMap.Strict ( HashMap )
 import qualified Data.HashMap.Strict as HM
-import Data.List ( transpose )
+import Data.List ( find, transpose )
 import Data.List.NonEmpty ( NonEmpty, nonEmpty )
 import qualified Data.List.NonEmpty as NEL
 import Data.Map ( Map )
@@ -51,30 +51,40 @@ import Foreign.Inference.Analysis.IndirectCallResolver
 data EscapeClass = DirectEscape
                  | BrokenContractEscape
                  | IndirectEscape
+                 | ArgumentEscape !Int -- ^ Index escaped into
                  deriving (Eq, Ord, Read, Show)
 
 instance Hashable EscapeClass where
   hash DirectEscape = 76
   hash BrokenContractEscape = 699
   hash IndirectEscape = 5
+  hash (ArgumentEscape i) = 77997 `combine` hash i
 
 instance NFData EscapeClass
+
+data ArgumentDescriptor = ArgumentDescriptor Function Int
+                        deriving (Eq, Ord, Show)
+
+instance NFData ArgumentDescriptor where
+  rnf (ArgumentDescriptor f i) = f `deepseq` i `seq` ()
 
 -- | The node labels for the Value Flow Graph
 data ValueFlowNode = Sink { sinkClass :: EscapeClass
                           , sinkWitness :: Instruction
-                          , sinkPath :: Maybe AbstractAccessPath
+                          , sinkIntoArgument :: Maybe ArgumentDescriptor
                           }
                    | Location { locationValue :: Value }
                    | FieldSource { fieldSourceArgument :: Argument
                                  , fieldSourcePath :: AbstractAccessPath
                                  }
+                   | AllocaSink EscapeClass Instruction Instruction
                    deriving (Eq, Ord, Show)
 
 instance NFData ValueFlowNode where
   rnf (Sink c w p) = c `deepseq` w `deepseq` p `deepseq` ()
   rnf (Location v) = v `deepseq` ()
   rnf (FieldSource a p) = a `deepseq` p `deepseq` ()
+  rnf (AllocaSink c ai w) = c `deepseq` ai `deepseq` w `deepseq` ()
 
 type ValueFlowGraph = Gr ValueFlowNode ()
 
@@ -147,33 +157,35 @@ data EscapeSummary =
   EscapeSummary { _escapeGraph :: HashMap Function EscapeGraph
                 , _escapeArguments :: HashMap Argument (EscapeClass, Instruction)
                 , _escapeFields :: HashMap Argument (Set (EscapeClass, AbstractAccessPath, Instruction))
+                , _escapeIntoArguments :: HashMap Argument (EscapeClass, Function, Int)
                 , _escapeDiagnostics :: Diagnostics
                 }
 
 $(makeLens ''EscapeSummary)
 
 instance Show EscapeSummary where
-  show (EscapeSummary _ ea ef _) = show ea ++ "/" ++ show ef
+  show (EscapeSummary _ ea ef ei _) = show ea ++ "/" ++ show ef ++ "/" ++ show ei
 
 instance Eq EscapeSummary where
-  (EscapeSummary g1 ea1 ef1 _) == (EscapeSummary g2 ea2 ef2 _) =
-    g1 == g2 && ea1 == ea2 && ef1 == ef2
+  (EscapeSummary g1 ea1 ef1 ei1 _) == (EscapeSummary g2 ea2 ef2 ei2 _) =
+    g1 == g2 && ea1 == ea2 && ef1 == ef2 && ei1 == ei2
 
 instance Default EscapeSummary where
-  def = EscapeSummary mempty mempty mempty mempty
+  def = EscapeSummary mempty mempty mempty mempty mempty
 
 instance Monoid EscapeSummary where
   mempty = def
-  mappend (EscapeSummary g1 as1 was1 d1) (EscapeSummary g2 as2 was2 d2) =
+  mappend (EscapeSummary g1 as1 was1 ei1 d1) (EscapeSummary g2 as2 was2 ei2 d2) =
     EscapeSummary { _escapeGraph = HM.union g1 g2
                   , _escapeArguments = HM.union as1 as2
                   , _escapeFields = HM.union was1 was2
+                  , _escapeIntoArguments = HM.union ei1 ei2
                   , _escapeDiagnostics = d1 `mappend` d2
                   }
 
 instance NFData EscapeSummary where
-  rnf r@(EscapeSummary g as was d) =
-    g `deepseq` as `deepseq` was `deepseq` d `deepseq` r `seq` ()
+  rnf r@(EscapeSummary g as was ei d) =
+    g `deepseq` as `deepseq` was `deepseq` d `deepseq` ei `deepseq` r `seq` ()
 
 instance HasDiagnostics EscapeSummary where
   diagnosticLens = escapeDiagnostics
@@ -250,7 +262,7 @@ instructionEscapeCore :: (Instruction -> Bool)
                          -> Instruction
                          -> EscapeSummary
                          -> Maybe Instruction
-instructionEscapeCore ignorePred i (EscapeSummary eg _ _ _) = do
+instructionEscapeCore ignorePred i (EscapeSummary eg _ _ _ _) = do
   ln <- HM.lookup (toValue i) m
   case reachableSinks (unlabelNode ln) g ignorePred of
     [] -> Nothing
@@ -282,7 +294,7 @@ summarizeArgumentEscapes :: EscapeGraph -> Argument -> EscapeSummary -> EscapeSu
 summarizeArgumentEscapes eg a s =
   case entireArgumentEscapes eg a s of
     (True, s') -> s'
-    (False, _) -> argumentFieldsEscape eg a s
+    (False, s') -> argumentFieldsEscape eg a s'
 
 -- | This is basically DFS.  It is parameterized by a predicate that
 -- returns True if the Instruction labelling a sink (and its
@@ -301,6 +313,7 @@ reachableSinks nodeId g ignoredPred =
   filter isSinkNode (doReach g)
   where
     isSinkNode (Sink _ _ _) = True
+    isSinkNode (AllocaSink _ _ _) = True
     isSinkNode _ = False
     doReach = xdfsWith contextNeighbors contextToReached [nodeId]
     contextNeighbors c =
@@ -312,6 +325,10 @@ reachableSinks nodeId g ignoredPred =
         _ -> True
     contextToReached (Context _ (LNode _ l) _) = l
 
+notAllocaSink :: ValueFlowNode -> Bool
+notAllocaSink (AllocaSink _ _ _) = False
+notAllocaSink _ = True
+
 entireArgumentEscapes :: EscapeGraph -> Argument -> EscapeSummary -> (Bool, EscapeSummary)
 entireArgumentEscapes eg a s =
   case HM.lookup (toValue a) (eg ^. escapeGraphValueMap) of
@@ -321,11 +338,34 @@ entireArgumentEscapes eg a s =
         -- No non-field escapes, signal the caller to try to find
         -- field escapes instead
         [] -> (False, s)
-        -- Otherwise, take the first sink
-        (Sink eclass w _) : _ ->
-          let s' = (escapeArguments ^!%= HM.insert a (eclass, w)) s
-          in (True, s')
-        _ -> error "Non-sink found in reachableSinks result"
+        -- If there is only an alloca sink, @a@ does not escape IFF
+        -- the alloca does not escape.
+        [AllocaSink eclass allocaInst w] ->
+          case HM.lookup (toValue allocaInst) (eg ^. escapeGraphValueMap) of
+            -- The alloca doesn't have any edges from it, so @a@ does
+            -- not escape (since the alloca it was stored into doesn't
+            -- escape).
+            Nothing -> (True, s)
+            Just (LNode aid _) ->
+              case reachableSinks aid (eg ^. escapeVFG) (const False) of
+                -- There are edges from the alloca but none that reach
+                -- a sink, so @a@ does not escape
+                [] -> (True, s)
+                -- The alloca escapes so @a@ escapes.
+                _ -> (True, (escapeArguments ^!%= HM.insert a (DirectEscape, w)) s)
+        -- Otherwise, we need to check for other sinks (filtering out allocasinks)
+        rest ->
+          case filter notAllocaSink rest of
+            -- The argument escapes into another argument ONLY.  We
+            -- can propagate this information to the caller and the
+            -- caller can decide if this is a real escape or not.
+            [Sink eclass w (Just (ArgumentDescriptor f ix))] ->
+              (False, (escapeIntoArguments ^!%= HM.insert a (eclass, f, ix)) s)
+            -- Otherwise, take the first sink
+            (Sink eclass w _) : _ ->
+              let s' = (escapeArguments ^!%= HM.insert a (eclass, w)) s
+              in (True, s')
+            _ -> error "Non-sink found in reachableSinks result"
 
 argumentFieldsEscape :: EscapeGraph -> Argument -> EscapeSummary -> EscapeSummary
 argumentFieldsEscape eg a s =
@@ -342,18 +382,18 @@ argumentFieldsEscape eg a s =
           in (escapeFields ^!%= HM.insertWith S.union arg newEsc) summ
         _ -> error "Non-sink found in reachableSinks result"
 
-isSink :: Maybe Value -> Bool
+isSink :: Maybe Value -> Maybe Value
 isSink v =
   case v of
-    Nothing -> False
+    Nothing -> Nothing
     Just vv ->
       case valueContent' vv of
-        ArgumentC _ -> True
-        GlobalVariableC _ -> True
-        ExternalValueC _ -> True
-        InstructionC (CallInst {}) -> True
-        InstructionC (InvokeInst {}) -> True
-        _ -> False
+        ArgumentC _ -> Just vv
+        GlobalVariableC _ -> Just vv
+        ExternalValueC _ -> Just vv
+        InstructionC (CallInst {}) -> Just vv
+        InstructionC (InvokeInst {}) -> Just vv
+        _ -> Nothing
 
 -- | A helper to abstract the pointer type tests.  If the value @v@ is
 -- not a pointer, return @defVal@.  Otherwise, return @isPtrVal@.
@@ -373,7 +413,7 @@ buildValueFlowGraph :: IndirectCallSummary
 buildValueFlowGraph ics extSumm summ is =
   EscapeGraph { _escapeGraphValueMap = sN ^. graphStateValueMap
               , _escapeGraphFieldSourceMap = sN ^. graphStateFieldSourceMap
-              , _escapeVFG = mkGraph ns es -- `debug` printf "Nodes:\n%s\nEdges:\n%s\n" (show ns) (show es)
+              , _escapeVFG = mkGraph ns es
               }
   where
     ns = concat [ HM.elems (sN ^. graphStateValueMap)
@@ -452,18 +492,27 @@ flowTo from to w = do
 -- (each sink is accompanied by a flowTo).  Having it make a new node
 -- allows us to have each argument be a sink without requiring fancy
 -- handling of arguments (seeing if they are in a loop, &c)
-flowToSink :: EscapeClass -> Value -> Instruction -> GraphBuilder ()
-flowToSink eclass v w = do
+flowToSink :: EscapeClass -> Value -> Instruction -> Maybe ArgumentDescriptor -> GraphBuilder ()
+flowToSink eclass v w ad = do
   -- The value node
   vN <- valueNode v
   -- A virtual node representing the sink
   sid <- nextNodeId
-  let s = LNode sid (Sink eclass w Nothing)
+  let s = LNode sid (Sink eclass w ad)
       e = LEdge (Edge vN sid) ()
   _ <- graphStateEdges !%= HM.insertWith (++) vN [e]
   _ <- graphStateSinks !%= (s:)
   return ()
 
+flowToAlloca :: EscapeClass -> Value -> Instruction -> Instruction -> GraphBuilder ()
+flowToAlloca eclass arg i w = do
+  vN <- valueNode arg
+  sid <- nextNodeId
+  let s = LNode sid (AllocaSink eclass i w)
+      e = LEdge (Edge vN sid) ()
+  _ <- graphStateSinks !%= (s:)
+  _ <- graphStateEdges !%= HM.insertWith (++) vN [e]
+  return ()
 -- | These handle fields of arguments escaping.  Before the final
 -- graph construction step, edges will be added from this to
 -- everything that v has an edge to.  We can't do it here because v
@@ -504,7 +553,7 @@ fieldStore sv base p w = do
 callFieldEscape :: EscapeClass -> Value -> AbstractAccessPath -> Instruction -> GraphBuilder ()
 callFieldEscape eclass base p w = do
   nid <- nextNodeId
-  let s = LNode nid (Sink eclass w (Just p))
+  let s = LNode nid (Sink eclass w Nothing)
   _ <- graphStateCallFieldEscapes !%= HM.insertWith (++) base [(p, nid)]
   _ <- graphStateSinks !%= (s:)
 
@@ -534,7 +583,7 @@ addFact ics extSumm summ inst =
   case inst of
     RetInst { retInstValue = Just rv } ->
       ifPointer rv (return ()) $ do
-        flowToSink DirectEscape rv inst
+        flowToSink DirectEscape rv inst Nothing
 
     -- GetElementPtrInst { getElementPtrValue = base } ->
     --   case valueType inst of
@@ -605,7 +654,7 @@ FIXME Convert this to a special case of store GEP to loc
         case isSink base of
           -- If the destination isn't a sink, it is just an internal
           -- node causing some information flow.
-          False -> do
+          Nothing -> do
             flowTo sv sa inst
             case (base, absPath) of
               (Just b, Just absPath') ->
@@ -617,7 +666,13 @@ FIXME Convert this to a special case of store GEP to loc
                    --
                    -- and then match them up on base/path in a secondary
                    -- escape rule (sv escapes via inst),
-          True -> flowToSink DirectEscape sv inst
+          Just baseVal ->
+            case valueContent' baseVal of
+              ArgumentC a ->
+                let f = argumentFunction a
+                    Just (ix, _) = find ((==a) . snd) (zip [0..] (functionParameters f))
+                in flowToSink (ArgumentEscape ix) sv inst $ Just $ ArgumentDescriptor f ix
+              _ -> flowToSink DirectEscape sv inst Nothing
     CallInst { callFunction = f, callArguments = args } ->
       addCallArgumentFacts ics extSumm summ inst f (map fst args)
     InvokeInst { invokeFunction = f, invokeArguments = args } ->
@@ -669,7 +724,7 @@ addCallArgumentFacts ics extSumm summ ci callee args =
           mapM_ checkContractFuncArg (zip formals args)
   where
     doAssert etype v =
-      ifPointer v (return ()) $ flowToSink etype v ci
+      ifPointer v (return ()) $ flowToSink etype v ci Nothing
     argFieldAssert etype v absPath = do
       callFieldEscape etype v absPath ci
       case valueContent' v of
@@ -691,7 +746,36 @@ addCallArgumentFacts ics extSumm summ ci callee args =
               in mapM_ (argFieldAssert DirectEscape arg) aps
             Nothing -> case HM.lookup formal (summ ^. escapeArguments) of
               Just (IndirectEscape, _) -> doAssert IndirectEscape arg
-              _ -> return ()
+              -- Now if it doesn't escape legitimately, we can check
+              -- the case of an escape into a local.  So there are two
+              -- cases: escape into local (alloca) or proxied escape
+              -- into an argument.  If it is something else,
+              -- up-convert to a normal escape.
+              _ ->
+                case HM.lookup formal (summ ^. escapeIntoArguments) of
+                  Nothing -> return ()
+                  Just (eclass, func, idx) ->
+                    case length args > idx of
+                      False -> doAssert DirectEscape arg
+                      True ->
+                        case valueContent' (args !! idx) of
+                          -- arg escapes (via this function call) into
+                          -- a (so this is an escape by proxy).  We can
+                          -- bubble this annotation up to the caller
+                          ArgumentC a ->
+                            let desc = ArgumentDescriptor (argumentFunction a) idx
+                            in ifPointer a (return ()) $
+                                 flowToSink (ArgumentEscape idx) arg ci (Just desc)
+                          -- Use a SinkUnless (unless arg does not
+                          -- escape).  Use a helper to check if only
+                          -- this special sink is reachable.  If it is
+                          -- not, filter the special sink out and
+                          -- return the remaining sinks.
+                          InstructionC i@AllocaInst {} ->
+                            flowToAlloca eclass arg i ci
+                          -- If it isn't one of those things, it just
+                          -- escapes.
+                          _ -> doAssert DirectEscape arg
     checkContractFuncArg (formal, arg) =
       ifPointer arg (return ()) $ do
         case HM.lookup formal (summ ^. escapeArguments) of
@@ -739,11 +823,18 @@ argEscapeType summ a = do
 -- 'functionWillEscapeArguments', or 'instructionEscapes' instead.
 escapeResultToTestFormat :: EscapeSummary -> Map String (Set (EscapeClass, String))
 escapeResultToTestFormat er =
-  M.filter (not . S.null) $ foldr fieldTransform directEscapes (HM.toList fm)
+  M.filter (not . S.null) $ foldr fieldTransform argEscapes (HM.toList fm)
   where
     directEscapes = foldr transform mempty (HM.toList m)
+    argEscapes = foldr argTransform directEscapes (HM.toList am)
     m = er ^. escapeArguments
     fm = er ^. escapeFields
+    am = er ^. escapeIntoArguments
+    argTransform (a, (tag, _, _)) acc =
+      let aname = show (argumentName a)
+          f = argumentFunction a
+          fname = show (functionName f)
+      in M.insertWith' S.union fname (S.singleton (tag, aname)) acc
     transform (a, (tag, _)) acc =
       let f = argumentFunction a
           fname = show (functionName f)

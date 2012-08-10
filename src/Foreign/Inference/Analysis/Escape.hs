@@ -19,7 +19,7 @@ import Data.Lens.Strict
 import Data.Hashable
 import Data.HashMap.Strict ( HashMap )
 import qualified Data.HashMap.Strict as HM
-import Data.List ( find, transpose )
+import Data.List ( find, partition, transpose )
 import Data.List.NonEmpty ( NonEmpty, nonEmpty )
 import qualified Data.List.NonEmpty as NEL
 import Data.Map ( Map )
@@ -200,6 +200,13 @@ instance SummarizeModule EscapeSummary where
 -- is just a local non-escaping value, we can ignore it since it isn't
 -- a real escape.  This prevents us from having to unify the caller
 -- context with all callee contexts.
+--
+-- This is mostly done.
+--
+-- FIXME: Need to give this change an external representation with its
+-- own ParamAnnotation.  This is less important than having the
+-- information internally, but the code generator could choose to use
+-- it.
 
 -- | This is the underlying bottom-up analysis to identify which
 -- arguments escape.  It builds an EscapeGraph for the function
@@ -264,10 +271,11 @@ instructionEscapeCore :: (Instruction -> Bool)
                          -> Maybe Instruction
 instructionEscapeCore ignorePred i (EscapeSummary eg _ _ _ _) = do
   ln <- HM.lookup (toValue i) m
-  case reachableSinks (unlabelNode ln) g ignorePred of
+  let reached = reachableSinks (unlabelNode ln) g ignorePred
+  case filter (not . allocaSink) reached of
     [] -> Nothing
     (Sink _ w _) : _ -> return w
-    _ -> error "Non-sink in reachableSinks result"
+    _ -> error "Non-sink in reachableSinks result 1"
   where
     Just bb = instructionBasicBlock i
     f = basicBlockFunction bb
@@ -326,47 +334,50 @@ reachableSinks nodeId g ignoredPred =
         _ -> True
     contextToReached (Context _ (LNode _ l) _) = l
 
-notAllocaSink :: ValueFlowNode -> Bool
-notAllocaSink (AllocaSink _ _ _) = False
-notAllocaSink _ = True
+allocaSink :: ValueFlowNode -> Bool
+allocaSink (AllocaSink _ _ _) = True
+allocaSink _ = False
 
 entireArgumentEscapes :: EscapeGraph -> Argument -> EscapeSummary -> (Bool, EscapeSummary)
 entireArgumentEscapes eg a s =
   case HM.lookup (toValue a) (eg ^. escapeGraphValueMap) of
     Nothing -> (False, s)
     Just (LNode nid _) ->
-      case reachableSinks nid (eg ^. escapeVFG) (const False) of
-        -- No non-field escapes, signal the caller to try to find
-        -- field escapes instead
-        [] -> (False, s)
-        -- If there is only an alloca sink, @a@ does not escape IFF
-        -- the alloca does not escape.
-        [AllocaSink eclass allocaInst w] ->
-          case HM.lookup (toValue allocaInst) (eg ^. escapeGraphValueMap) of
-            -- The alloca doesn't have any edges from it, so @a@ does
-            -- not escape (since the alloca it was stored into doesn't
-            -- escape).
+      let reached = reachableSinks nid (eg ^. escapeVFG) (const False)
+      in case partition allocaSink reached of
+        -- No non-field escapes, so signal the caller to try to check
+        -- for those.
+        ([], []) -> (False, s)
+        (allocaSinks, []) ->
+          case find allocaSinkEscapes allocaSinks of
+            -- No edges from the alloca reach a sink, so it does not
+            -- escape and the values that "escape" into it also do not
+            -- escape.
             Nothing -> (True, s)
-            Just (LNode aid _) ->
-              case reachableSinks aid (eg ^. escapeVFG) (const False) of
-                -- There are edges from the alloca but none that reach
-                -- a sink, so @a@ does not escape
-                [] -> (True, s)
-                -- The alloca escapes so @a@ escapes.
-                _ -> (True, (escapeArguments ^!%= HM.insert a (DirectEscape, w)) s)
-        -- Otherwise, we need to check for other sinks (filtering out allocasinks)
-        rest ->
-          case filter notAllocaSink rest of
-            -- The argument escapes into another argument ONLY.  We
-            -- can propagate this information to the caller and the
-            -- caller can decide if this is a real escape or not.
-            [Sink eclass w (Just (ArgumentDescriptor f ix))] ->
-              (False, (escapeIntoArguments ^!%= HM.insert a (eclass, f, ix)) s)
-            -- Otherwise, take the first sink
-            (Sink eclass w _) : _ ->
-              let s' = (escapeArguments ^!%= HM.insert a (eclass, w)) s
-              in (True, s')
-            _ -> error "Non-sink found in reachableSinks result"
+            Just (AllocaSink eclass _ w) ->
+              (True, (escapeArguments ^!%= HM.insert a (DirectEscape, w)) s)
+            _ -> error "Non-alloca sink in the allocaSinks list"
+        -- The argument escapes (ONLY) into another argument.  We need
+        -- to record this to propagate the information to the caller.
+        (_, [Sink eclass w (Just (ArgumentDescriptor f ix))]) ->
+          (False, (escapeIntoArguments ^!%= HM.insert a (eclass, f, ix)) s)
+        -- Otherwise, this argument escapes normally.  Just take the
+        -- first one for now (we could record them all...)
+        (_, (Sink eclass w _):_) ->
+          (True, (escapeArguments ^!%= HM.insert a (eclass, w)) s)
+        (_, _) -> error "entireArgumentEscapes: Non-sink in sink list"
+  where
+    -- | If at least one of the alloca sinks can reach another sink,
+    -- the value escapes normally.
+    allocaSinkEscapes (AllocaSink _ allocaInst _) =
+      case HM.lookup (toValue allocaInst) (eg ^. escapeGraphValueMap) of
+        -- No edges to or from the alloca inst
+        Nothing -> False
+        Just (LNode aid _) ->
+          case reachableSinks aid (eg ^. escapeVFG) (const False) of
+            [] -> False
+            _ -> True
+    allocaSinkEscapes _ = error "allocaSinkEscapes: Non AllocaSink in alloca sinks list"
 
 argumentFieldsEscape :: EscapeGraph -> Argument -> EscapeSummary -> EscapeSummary
 argumentFieldsEscape eg a s =
@@ -376,12 +387,14 @@ argumentFieldsEscape eg a s =
     Just fieldSrcs -> foldr checkFieldEscapes s fieldSrcs
   where
     checkFieldEscapes (LNode fldSrcId (FieldSource arg p)) summ =
-      case reachableSinks fldSrcId (eg ^. escapeVFG) (const False) of
+      let reached = reachableSinks fldSrcId (eg ^. escapeVFG) (const False)
+      in case filter (not . allocaSink) reached of
         [] -> summ
         (Sink eclass w _) : _ ->
           let newEsc = S.singleton (eclass, p, w)
           in (escapeFields ^!%= HM.insertWith S.union arg newEsc) summ
-        _ -> error "Non-sink found in reachableSinks result"
+        _ -> error "Non-sink found in reachableSinks result 3"
+    checkFieldEscapes _ _ = error "argumentFieldsEscape: Non FieldSource in fieldSrcs list"
 
 isSink :: Maybe Value -> Maybe Value
 isSink v =

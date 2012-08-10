@@ -194,20 +194,6 @@ instance SummarizeModule EscapeSummary where
   summarizeFunction _ _ = []
   summarizeArgument = summarizeEscapeArgument
 
--- FIXME: Here is an easy improvement - note when values escape into
--- an argument (and which one).  This will let us use this information
--- in a caller and, if the argument being escaped into from a callee
--- is just a local non-escaping value, we can ignore it since it isn't
--- a real escape.  This prevents us from having to unify the caller
--- context with all callee contexts.
---
--- This is mostly done.
---
--- FIXME: Need to give this change an external representation with its
--- own ParamAnnotation.  This is less important than having the
--- information internally, but the code generator could choose to use
--- it.
-
 -- | This is the underlying bottom-up analysis to identify which
 -- arguments escape.  It builds an EscapeGraph for the function
 -- (incorporating information from other functions that have already

@@ -238,11 +238,25 @@ factsForInstruction fptrToField fptrAsArg argToField i =
       mapM_ (argPosFacts f) (zip [0..] (map fst args))
     _ -> return ()
   where
+    -- Add facts for all sub-fields of an assignment.  Example for
+    --
+    -- > a->b->c->d = foo
+    --
+    -- adds facts:
+    --
+    -- > a->b->c->d = foo
+    -- > b->c->d = foo
+    -- > c->d = foo
+    --
+    -- Note, we don't add facts for just d or the empty path.
     addSubFacts func p = do
       _ <- func p
       case reduceAccessPath p of
         Nothing -> return ()
-        Just p' -> addSubFacts func p'
+        Just p' ->
+          case any someField (abstractAccessPathComponents p') of
+            False -> return ()
+            True -> addSubFacts func p'
 
     addStoredFunc v =
       case accessPath i of
@@ -258,3 +272,5 @@ factsForInstruction fptrToField fptrAsArg argToField i =
         ExternalFunctionC fptr ->
           assertFact fptrAsArg [ ArgumentPosition f ix, Target (toValue fptr) ]
         _ -> return ()
+    someField (AccessField _) = True
+    someField _ = False

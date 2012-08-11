@@ -198,7 +198,10 @@ callTransfer callInst v as info =
   case valueContent' v of
     InstructionC LoadInst { } -> do
       sis <- asks singleInitSummary
-      case indirectCallTargets sis callInst of
+      let Just bb = instructionBasicBlock callInst
+          f = basicBlockFunction bb
+          fv = toValue f
+      case filter (/=fv) $ indirectCallInitializers sis v of
         [] -> return info
         [singleInit] -> callTransfer callInst (toValue singleInit) as info
         allInits -> do

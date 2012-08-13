@@ -201,7 +201,8 @@ callTransfer callInst v as info =
       let Just bb = instructionBasicBlock callInst
           f = basicBlockFunction bb
           fv = toValue f
-      case filter (/=fv) $ indirectCallInitializers sis v of
+          finits = filter (/=fv) $ indirectCallInitializers sis v
+      case finits of
         [] -> return info
         [singleInit] -> callTransfer callInst (toValue singleInit) as info
         allInits -> do

@@ -236,14 +236,14 @@ identifyEscapes ds ics lns =
   where
     escapeWrapper funcLike s = do
       let f = getFunction funcLike
-          g = buildValueFlowGraph ics extSumm s (functionInstructions f)
+          g = buildValueFlowGraph ics ds s (functionInstructions f)
           s' = foldr (summarizeArgumentEscapes g) s (functionParameters f)
       return $ (escapeGraph ^!%= HM.insert f g) s'
 
     runner a =
       let (e, diags) = runWriter a
       in (escapeDiagnostics ^= diags) e
-
+{-
     extSumm ef ix =
       -- FIXME: Switch the builder to be a StateT so we can let this
       -- monadic extsumm record missing summaries
@@ -253,6 +253,7 @@ identifyEscapes ds ics lns =
           -- emitWarning Nothing "EscapeAnalysis" msg
           -- return True
         Just annots -> PAEscape `elem` annots
+-}
 
 -- | A generalization of 'instructionEscapes'.  The first argument is
 -- a predicate that returns True if the input Instruction (which is a
@@ -462,11 +463,11 @@ dumpGraph g = unsafePerformIO $ do
   return g
 
 buildValueFlowGraph :: IndirectCallSummary
-                       -> (ExternalFunction -> Int -> Bool)
+                       -> DependencySummary -- (ExternalFunction -> Int -> Bool)
                        -> EscapeSummary
                        -> [Instruction]
                        -> EscapeGraph
-buildValueFlowGraph ics extSumm summ is =
+buildValueFlowGraph ics ds summ is =
   EscapeGraph { _escapeGraphValueMap = sN ^. graphStateValueMap
               , _escapeGraphFieldSourceMap = sN ^. graphStateFieldSourceMap
               , _escapeVFG = {- dumpGraph $ -} mkGraph ns es
@@ -482,7 +483,7 @@ buildValueFlowGraph ics extSumm summ is =
                 ]
 
     sN = execState b emptyGraphState
-    b = mapM_ (addFact ics extSumm summ) is
+    b = mapM_ (addFact ics ds summ) is
     fieldSourceEdges = concatMap (addFieldSourceEdges sN) (HM.toList (sN ^. graphStateFieldSourceMap))
     callFieldEdges = concatMap (addCallFieldEdges sN) (HM.toList (sN ^. graphStateCallFieldEscapes))
 
@@ -632,11 +633,11 @@ callFieldEscape eclass base p w = do
 -- FIXME at a high level, I need to add many more tests to ensure that
 -- escapes by address-taken operations are handled properly.
 addFact :: IndirectCallSummary
-           -> (ExternalFunction -> Int -> Bool)
+           -> DependencySummary
            -> EscapeSummary
            -> Instruction
            -> GraphBuilder ()
-addFact ics extSumm summ inst =
+addFact ics ds summ inst =
   case inst of
     RetInst { retInstValue = Just rv } ->
       ifPointer rv (return ()) $ do
@@ -736,9 +737,9 @@ FIXME Convert this to a special case of store GEP to loc
                 in flowToSink (ArgumentEscape ix) sv inst $ Just $ ArgumentDescriptor f ix
               _ -> flowToSink DirectEscape sv inst Nothing
     CallInst { callFunction = f, callArguments = args } ->
-      addCallArgumentFacts ics extSumm summ inst f (map fst args)
+      addCallArgumentFacts ics ds summ inst f (map fst args)
     InvokeInst { invokeFunction = f, invokeArguments = args } ->
-      addCallArgumentFacts ics extSumm summ inst f (map fst args)
+      addCallArgumentFacts ics ds summ inst f (map fst args)
     PhiNode { phiIncomingValues = ivs } ->
       ifPointer inst (return ()) $
         mapM_ (\v -> flowTo v (toValue inst) inst UnconditionalEdge) (map fst ivs)
@@ -766,24 +767,26 @@ FIXME Convert this to a special case of store GEP to loc
 -- its successors are store tagged.
 
 addCallArgumentFacts :: IndirectCallSummary
-                        -> (ExternalFunction -> Int -> Bool)
+                        -> DependencySummary
                         -> EscapeSummary
                         -> Instruction
                         -> Value
                         -> [Value]
                         -> GraphBuilder ()
-addCallArgumentFacts ics extSumm summ ci callee args =
+addCallArgumentFacts ics ds summ ci callee args =
   case valueContent' callee of
     FunctionC f -> do
       let formals = functionParameters f
       mapM_ checkFuncArg (zip formals args)
     ExternalFunctionC f -> mapM_ (checkExt f) (zip [0..] args)
     _ ->
-      case consistentTargetEscapes summ ics ci of
+      case consistentTargetEscapes summ ds ics callee (length args) of
         Nothing -> mapM_ (doAssert IndirectEscape) args
-        Just representative -> do
+        Just (Left representative) -> do
           let formals = functionParameters representative
           mapM_ checkContractFuncArg (zip formals args)
+        Just (Right representative) -> do
+          mapM_ (checkExtContractFuncArg representative) (zip [0..] args)
   where
     doAssert etype v =
       ifPointer v (return ()) $ flowToSink etype v ci Nothing
@@ -793,9 +796,18 @@ addCallArgumentFacts ics extSumm summ ci callee args =
         ArgumentC a -> fieldSource v a absPath
         _ -> return ()
     checkExt ef (ix, arg) =
-      case extSumm ef ix of
-        False -> return ()
-        True -> doAssert DirectEscape arg
+      case lookupArgumentSummary ds summ ef ix of
+        Nothing -> doAssert IndirectEscape arg
+        Just annots ->
+          case PAEscape `elem` annots of
+            True -> doAssert DirectEscape arg
+            False ->
+              case PAFptrEscape `elem` annots of
+                True -> doAssert IndirectEscape arg
+                False ->
+                  case PAContractEscape `elem` annots of
+                    True -> doAssert BrokenContractEscape arg
+                    False -> return ()
     checkFuncArg (formal, arg) =
       ifPointer arg (return ()) $ do
         case HM.lookup formal (summ ^. escapeArguments) of
@@ -843,31 +855,78 @@ addCallArgumentFacts ics extSumm summ ci callee args =
         case HM.lookup formal (summ ^. escapeArguments) of
           Nothing -> doAssert BrokenContractEscape arg
           Just (etype, _) -> doAssert etype arg
+    checkExtContractFuncArg ef (ix, arg) =
+      case lookupArgumentSummary ds summ ef ix of
+        -- No external summary, indirect escape
+        Nothing -> doAssert IndirectEscape arg
+        Just annots ->
+          case PAEscape `elem` annots of
+            True -> doAssert DirectEscape arg
+            False ->
+              case PAFptrEscape `elem` annots of
+                True -> doAssert IndirectEscape arg
+                False -> doAssert BrokenContractEscape arg
 
 
 -- | If all of the resolvable targets of the given call/invoke
 -- instruction have the same escape properties for each argument,
 -- return an arbitrary one as a representative for the analysis.
-consistentTargetEscapes :: EscapeSummary -> IndirectCallSummary -> Instruction -> Maybe Function
-consistentTargetEscapes summ ics ci = do
-  fs <- nonEmpty targets
-  checkConsistency summ fs
+consistentTargetEscapes :: EscapeSummary
+                           -> DependencySummary
+                           -> IndirectCallSummary
+                           -> Value
+                           -> Int
+                           -> Maybe (Either Function ExternalFunction)
+consistentTargetEscapes summ ds ics callee argCount = do
+  fs <- nonEmpty targets'
+  checkConsistency summ ds fs argCount
   where
-    targets = indirectCallTargets ics ci
+    toEither v =
+      case valueContent' v of
+        FunctionC f -> Just $ Left f
+        ExternalFunctionC ef -> Just $ Right ef
+        _ -> Nothing
+    targets' = mapMaybe toEither targets
+    targets = indirectCallInitializers ics callee
 
-checkConsistency :: EscapeSummary -> NonEmpty Function -> Maybe Function
-checkConsistency summ fs =
-  case all (groupConsistent summ) formalsByPosition of
+checkConsistency :: EscapeSummary
+                    -> DependencySummary
+                    -> NonEmpty (Either Function ExternalFunction)
+                    -> Int
+                    -> Maybe (Either Function ExternalFunction)
+checkConsistency summ ds fs argCount =
+  case all groupConsistent annotsByPosition of
     False -> Nothing
     True -> Just (NEL.head fs)
   where
-    formalLists = map functionParameters (NEL.toList fs)
-    formalsByPosition = transpose formalLists
+    annotsByPosition = transpose argAnnotLists
+    argAnnotLists = map calleeToAnnotations (NEL.toList fs)
+    -- Convert a callee to a list where each element is the (Maybe EscapeClass)
+    -- inferred for that argument position
+    calleeToAnnotations e =
+      case e of
+        Left f -> map (argEscapeType summ) (functionParameters f)
+        Right ef -> map (extArgEscapeType summ ds ef) [0..(argCount-1)]
+    -- formalLists = map functionParameters (NEL.toList fs)
+    -- formalsByPosition = transpose formalLists
 
-groupConsistent :: EscapeSummary -> [Argument] -> Bool
-groupConsistent _ [] = True
-groupConsistent summ (a:as) =
-  all (== (argEscapeType summ a)) (map (argEscapeType summ) as)
+groupConsistent :: [Maybe EscapeClass] -> Bool
+groupConsistent [] = True
+groupConsistent (ec:ecs) =
+  all (== ec) ecs
+
+extArgEscapeType :: EscapeSummary -> DependencySummary -> ExternalFunction -> Int -> Maybe EscapeClass
+extArgEscapeType summ ds ef ix = do
+  annots <- lookupArgumentSummary ds summ ef ix
+  case PAEscape `elem` annots of
+    True -> return DirectEscape
+    False ->
+      case PAFptrEscape `elem` annots of
+        True -> return IndirectEscape
+        False ->
+          case PAContractEscape `elem` annots of
+            True -> return BrokenContractEscape
+            False -> Nothing
 
 -- This stuff doesn't deal with field escapes yet...
 argEscapeType :: EscapeSummary -> Argument -> Maybe EscapeClass

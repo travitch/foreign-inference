@@ -1561,7 +1561,7 @@
           ]
         },
         { "foreignFunctionName": "strdup",
-          "foreignFunctionAnnotations": [],
+          "foreignFunctionAnnotations": [{"FAAllocator": "free"}],
           "foreignFunctionLinkage": { "LinkDefault": [] },
           "foreignFunctionReturnType": {"CInt": 32},
           "foreignFunctionParameters": [
@@ -1572,7 +1572,7 @@
           ]
         },
         { "foreignFunctionName": "strndup",
-          "foreignFunctionAnnotations": [],
+          "foreignFunctionAnnotations": [{"FAAllocator": "free"}],
           "foreignFunctionLinkage": { "LinkDefault": [] },
           "foreignFunctionReturnType": {"CInt": 32},
           "foreignFunctionParameters": [

@@ -1,4 +1,4 @@
-{-# LANGUAGE TypeSynonymInstances, FlexibleInstances, MultiParamTypeClasses #-}
+{-# LANGUAGE TypeSynonymInstances, FlexibleInstances, MultiParamTypeClasses, RankNTypes, ScopedTypeVariables #-}
 {-# LANGUAGE ViewPatterns, TemplateHaskell #-}
 -- | This analysis identifies output parameters.
 --
@@ -27,8 +27,7 @@ module Foreign.Inference.Analysis.Output (
 
 import Control.Arrow ( (&&&) )
 import Control.DeepSeq
-import Data.Lens.Common
-import Data.Lens.Template
+import Control.Lens
 import Data.List ( find, groupBy )
 import Data.Map ( Map )
 import qualified Data.Map as M
@@ -87,14 +86,14 @@ data OutputSummary =
                 , _outputDiagnostics :: Diagnostics
                 }
 
-$(makeLens ''OutputSummary)
+$(makeLenses ''OutputSummary)
 
 data OutInfo = OI { _outputInfo :: !(Map Argument (ArgumentDirection, Set Witness))
                   , _outputFieldInfo :: !(Map (Argument, Int) (ArgumentDirection, Set Witness))
                   }
              deriving (Eq, Show)
 
-$(makeLens ''OutInfo)
+$(makeLenses ''OutInfo)
 
 instance Eq OutputSummary where
   (OutputSummary s1 fs1 _) == (OutputSummary s2 fs2 _) =
@@ -165,19 +164,20 @@ data OutData = OD { moduleSummary :: OutputSummary
 -- | Note that array parameters are not out parameters, so we rely on
 -- the Array analysis to let us filter those parameters out of our
 -- results.
-identifyOutput :: (FuncLike funcLike, HasCFG funcLike, HasFunction funcLike)
+identifyOutput :: forall compositeSummary funcLike . (FuncLike funcLike, HasCFG funcLike, HasFunction funcLike)
                   => DependencySummary
-                  -> Lens compositeSummary OutputSummary
-                  -> Lens compositeSummary AllocatorSummary
-                  -> Lens compositeSummary EscapeSummary
+                  -> Simple Lens compositeSummary OutputSummary
+                  -> Simple Lens compositeSummary AllocatorSummary
+                  -> Simple Lens compositeSummary EscapeSummary
                   -> ComposableAnalysis compositeSummary funcLike
 identifyOutput ds lns allocLens escapeLens =
   composableDependencyAnalysisM runner outAnalysis lns depLens
   where
     runner a = runAnalysis a constData ()
     constData = OD mempty ds undefined undefined
-    readerL = getL allocLens &&& getL escapeLens
-    writerL (a, e) = setL allocLens a . setL escapeLens e
+    readerL = view allocLens &&& view escapeLens
+    writerL csumm (a, e) = (set allocLens a . set escapeLens e) csumm
+    depLens :: Simple Lens compositeSummary (AllocatorSummary, EscapeSummary)
     depLens = lens readerL writerL
 
 
@@ -243,7 +243,7 @@ outAnalysis (allocSumm, escSumm) funcLike s = do
   -- Merge the local information we just computed with the global
   -- summary.  Prefer the locally computed info if there are
   -- collisions (could arise while processing SCCs).
-  return $! (outputSummary ^!%= M.union exitInfo'') $ (outputFieldSummary ^!%= M.union fexitInfo'') s
+  return $! (outputSummary %~ M.union exitInfo'') $ (outputFieldSummary %~ M.union fexitInfo'') s
   where
     f = getFunction funcLike
 
@@ -394,17 +394,17 @@ memcpyTransfer info i dest src _ {-bytes-} =
         _ -> Nothing
 
 merge :: (Ord k)
-         => Lens info (Map k (ArgumentDirection, Set Witness))
+         => Simple Lens info (Map k (ArgumentDirection, Set Witness))
          -> Instruction -> k -> ArgumentDirection -> info -> info
 merge lns i arg ArgBoth info =
   let ws = S.singleton (Witness i (show ArgBoth))
-  in (lns ^!%= M.insert arg (ArgBoth, ws)) info
+  in (lns %~ M.insert arg (ArgBoth, ws)) info
 merge lns i arg newVal info =
   case M.lookup arg (info ^. lns) of
     -- No old value, so take the new one
     Nothing ->
       let ws = S.singleton (Witness i (show newVal))
-      in (lns ^!%= M.insert arg (newVal, ws)) info
+      in (lns %~ M.insert arg (newVal, ws)) info
     -- The old value was Both, so just keep it
     Just (ArgBoth, _) -> info
     -- Since the new value is not Both, we can't advance from Out with
@@ -416,7 +416,7 @@ merge lns i arg newVal info =
       case newVal of
         ArgOut ->
           let nw = Witness i (show ArgOut)
-          in (lns ^!%= M.insert arg (ArgOut, S.singleton nw)) info
+          in (lns %~ M.insert arg (ArgOut, S.singleton nw)) info
         ArgIn -> info
         ArgOutAlloc _ -> info -- FIXME: This should probably merge the two... or take newval
         ArgBoth -> $failure "Infeasible path"
@@ -424,10 +424,10 @@ merge lns i arg newVal info =
       case newVal of
         ArgOut ->
           let nw = Witness i (show ArgBoth)
-          in (lns ^!%= M.insert arg (ArgBoth, S.insert nw ws)) info
+          in (lns %~ M.insert arg (ArgBoth, S.insert nw ws)) info
         ArgOutAlloc _ ->
           let nw = Witness i (show ArgBoth)
-          in (lns ^!%= M.insert arg (ArgBoth, S.insert nw ws)) info
+          in (lns %~ M.insert arg (ArgBoth, S.insert nw ws)) info
         ArgIn -> info
         ArgBoth -> $failure "Infeasible path"
 

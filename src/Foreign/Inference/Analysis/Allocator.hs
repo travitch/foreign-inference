@@ -1,4 +1,4 @@
-{-# LANGUAGE ViewPatterns, TemplateHaskell #-}
+{-# LANGUAGE ViewPatterns, TemplateHaskell, RankNTypes, ScopedTypeVariables #-}
 {-|
 
 This analysis identifies functions that are allocators (in the style
@@ -34,8 +34,7 @@ module Foreign.Inference.Analysis.Allocator (
 
 import Control.Arrow ( (&&&) )
 import Control.DeepSeq
-import Data.Lens.Common
-import Data.Lens.Template
+import Control.Lens
 import Data.Map ( Map )
 import qualified Data.Map as M
 import Data.HashSet ( HashSet )
@@ -64,7 +63,7 @@ data AllocatorSummary =
                    , _finalizerSummary :: FinalizerSummary
                    }
 
-$(makeLens ''AllocatorSummary)
+$(makeLenses ''AllocatorSummary)
 
 instance Eq AllocatorSummary where
   (AllocatorSummary s1 _ _) == (AllocatorSummary s2 _ _) = s1 == s2
@@ -101,19 +100,20 @@ instance SummarizeModule AllocatorSummary where
           -- There was more than one, can't guess
           _ -> [FAAllocator ""]
 
-identifyAllocators :: (FuncLike funcLike, HasFunction funcLike)
+identifyAllocators :: forall compositeSummary funcLike . (FuncLike funcLike, HasFunction funcLike)
                       => DependencySummary
                       -> IndirectCallSummary
-                      -> Lens compositeSummary AllocatorSummary
-                      -> Lens compositeSummary EscapeSummary
-                      -> Lens compositeSummary FinalizerSummary
+                      -> Simple Lens compositeSummary AllocatorSummary
+                      -> Simple Lens compositeSummary EscapeSummary
+                      -> Simple Lens compositeSummary FinalizerSummary
                       -> ComposableAnalysis compositeSummary funcLike
 identifyAllocators ds ics lns escLens finLens =
   composableDependencyAnalysisM runner allocatorAnalysis lns depLens
   where
     runner a = runAnalysis a readOnlyData ()
     readOnlyData = AllocatorData ds ics
-    depLens = lens (getL escLens &&& getL finLens) (\(e, f) -> setL escLens e . setL finLens f)
+    depLens :: Simple Lens compositeSummary (EscapeSummary, FinalizerSummary)
+    depLens = lens (view escLens &&& view finLens) (\csum (e, f) -> (set escLens e . set finLens f) csum)
 
 -- | If the function returns a pointer, it is a candidate for an
 -- allocator.  We do not concern ourselves with functions that may
@@ -158,7 +158,7 @@ checkReturn esumm f rv summ =
         False -> return summ
         True ->
           let summ' = HS.insert f (summ ^. allocatorSummary)
-          in return $! (allocatorSummary ^= summ') summ
+          in return $! (allocatorSummary .~ summ') summ
   where
     rvs = flattenValue rv
     -- Here, drop all NULLs that are being returned since that is

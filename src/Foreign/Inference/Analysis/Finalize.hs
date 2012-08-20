@@ -1,4 +1,4 @@
-{-# LANGUAGE TypeSynonymInstances, FlexibleInstances, MultiParamTypeClasses #-}
+{-# LANGUAGE TypeSynonymInstances, FlexibleInstances, MultiParamTypeClasses, RankNTypes #-}
 {-# LANGUAGE ViewPatterns, TemplateHaskell #-}
 -- | Identify function arguments that are *finalized*.  An argument is
 -- finalized if, on every path, it is passed as a parameter to a
@@ -20,12 +20,11 @@ module Foreign.Inference.Analysis.Finalize (
   ) where
 
 import Control.DeepSeq
+import Control.Lens
 import Data.HashMap.Strict ( HashMap )
 import qualified Data.HashMap.Strict as HM
 import Data.HashSet ( HashSet )
 import qualified Data.HashSet as HS
-import Data.Lens.Common
-import Data.Lens.Template
 import Data.Map ( Map )
 import qualified Data.Map as M
 import Data.Monoid
@@ -45,8 +44,8 @@ import Foreign.Inference.Interface
 -- import LLVM.Analysis.AccessPath
 -- import Data.Maybe ( fromJust )
 -- import Text.Printf
--- import Debug.Trace
--- debug = flip trace
+import Debug.Trace
+debug = flip trace
 
 -- | If an argument is finalized, it will be in the map with its
 -- associated witnesses.  If no witnesses could be identified, the
@@ -57,7 +56,7 @@ data FinalizerSummary =
                    , _finalizerDiagnostics :: Diagnostics
                    }
 
-$(makeLens ''FinalizerSummary)
+$(makeLenses ''FinalizerSummary)
 
 instance Eq FinalizerSummary where
   (FinalizerSummary s1 _) == (FinalizerSummary s2 _) = s1 == s2
@@ -96,7 +95,7 @@ data FinalizerData =
 identifyFinalizers :: (FuncLike funcLike, HasFunction funcLike, HasCFG funcLike)
                       => DependencySummary
                       -> IndirectCallSummary
-                      -> Lens compositeSummary FinalizerSummary
+                      -> Simple Lens compositeSummary FinalizerSummary
                       -> ComposableAnalysis compositeSummary funcLike
 identifyFinalizers ds ics lns =
   composableAnalysisM runner finalizerAnalysis lns
@@ -175,7 +174,7 @@ finalizerAnalysis funcLike s@(FinalizerSummary summ _) = do
   -- is important for processing SCCs in the call graph, where a
   -- function may be visited more than once.  We always want the most
   -- up-to-date info.
-  return $! (finalizerSummary ^= newInfo `HM.union` summ) s
+  return $! (finalizerSummary .~ newInfo `HM.union` summ) s
   where
     f = getFunction funcLike
 

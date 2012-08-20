@@ -21,16 +21,16 @@ module Foreign.Inference.Diagnostics (
   ) where
 
 import Control.DeepSeq
+import Control.Lens
 import Control.Monad.Writer.Class
-import Data.Lens.Common
 import Data.Monoid
 import Data.Set ( Set, singleton )
 import qualified Data.Set as S
 import Text.Printf
 
 class HasDiagnostics a where
-  diagnosticLens :: Lens a Diagnostics
-  diagnosticLens = lens (const mempty) (\_ a -> a)
+  diagnosticLens :: Simple Lens a Diagnostics
+  diagnosticLens = lens (const mempty) (\a _ -> a)
   -- addDiagnostics :: a -> Diagnostics -> a
   -- addDiagnostics a _ = a
 

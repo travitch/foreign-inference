@@ -27,7 +27,7 @@ module Foreign.Inference.Analysis.Util.CompositeSummary (
   ) where
 
 import Control.DeepSeq
-import Data.Lens.Template
+import Control.Lens
 import Data.Monoid
 
 import LLVM.Analysis
@@ -93,7 +93,7 @@ data AnalysisSummary =
                   }
   deriving (Eq)
 
-$(makeLens ''AnalysisSummary)
+$(makeLenses ''AnalysisSummary)
 
 instance NFData AnalysisSummary where
   rnf a@(AnalysisSummary s1 s2 s3 s4 s5 s6 s7 s8 s9) =

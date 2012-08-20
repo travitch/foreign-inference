@@ -1,4 +1,4 @@
-{-# LANGUAGE ViewPatterns, TemplateHaskell #-}
+{-# LANGUAGE ViewPatterns, TemplateHaskell, RankNTypes #-}
 -- | This module defines the Array Analysis from the PLDI 2009 paper.
 --
 -- The analysis identifies which pointer parameters of a function are
@@ -16,9 +16,8 @@ module Foreign.Inference.Analysis.Array (
 
 import Control.Arrow
 import Control.DeepSeq
+import Control.Lens
 import Data.List ( foldl' )
-import Data.Lens.Common
-import Data.Lens.Template
 import Data.HashMap.Strict ( HashMap )
 import qualified Data.HashMap.Strict as M
 import Data.Map ( Map )
@@ -48,7 +47,7 @@ data ArraySummary =
                , _arrayDiagnostics :: Diagnostics
                }
 
-$(makeLens ''ArraySummary)
+$(makeLenses ''ArraySummary)
 
 instance Eq ArraySummary where
   (ArraySummary s1 _) == (ArraySummary s2 _) = s1 == s2
@@ -88,7 +87,7 @@ data PointerUse = IndexOperation Value [Value]
 
 identifyArrays :: (FuncLike funcLike, HasFunction funcLike)
                   => DependencySummary
-                  -> Lens compositeSummary ArraySummary
+                  -> Simple Lens compositeSummary ArraySummary
                   -> ComposableAnalysis compositeSummary funcLike
 identifyArrays ds lns =
   composableAnalysisM runner arrayAnalysis lns
@@ -108,7 +107,7 @@ arrayAnalysis funcLike a@(ArraySummary summary _) = do
   let basesAndOffsets = map (isArrayDeref ds a) insts
       baseResultMap = foldr (\itm acc -> foldr addDeref acc itm) M.empty basesAndOffsets
       summary' = M.foldlWithKey' (traceFromBases baseResultMap) summary baseResultMap
-  return $! (arraySummary ^= summary') a
+  return $! (arraySummary .~ summary') a
   where
     f = getFunction funcLike
     insts = concatMap basicBlockInstructions (functionBody f)

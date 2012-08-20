@@ -5,8 +5,10 @@ module Foreign.Inference.AnalysisMonad (
   module Control.Monad.RWS.Strict
   ) where
 
+import Control.Lens
+-- FIXME: Export only the relevant accessors - rename if necessary, so
+-- that not all of rws is exported
 import Control.Monad.RWS.Strict
-import Data.Lens.Common
 
 import Foreign.Inference.Diagnostics
 
@@ -19,9 +21,9 @@ newtype AnalysisMonad env st a =
 
 addDiagnostics :: HasDiagnostics a => a -> Diagnostics -> a
 addDiagnostics res newDiags =
-  setL diagnosticLens (curDiags `mappend` newDiags) res
+  set diagnosticLens (curDiags `mappend` newDiags) res
   where
-    curDiags = getL diagnosticLens res
+    curDiags = view diagnosticLens res
 
 -- Add a context on a here that forces a to implement an "attach
 -- diags" function so we can stuff the diagnostics into the result and

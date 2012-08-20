@@ -1,5 +1,5 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
-{-# LANGUAGE TemplateHaskell, OverloadedStrings, FlexibleContexts #-}
+{-# LANGUAGE TemplateHaskell, OverloadedStrings, FlexibleContexts, RankNTypes #-}
 module Foreign.Inference.Analysis.Escape (
   EscapeSummary,
   identifyEscapes,
@@ -15,10 +15,10 @@ module Foreign.Inference.Analysis.Escape (
 
 import Control.Arrow
 import Control.DeepSeq
+import Control.Lens
 import Control.Monad.State.Strict
 import Control.Monad.Writer ( runWriter )
 import Data.Default
-import Data.Lens.Strict
 import Data.GraphViz
 import Data.Hashable
 import Data.HashMap.Strict ( HashMap )
@@ -31,7 +31,6 @@ import qualified Data.Map as M
 import Data.Maybe ( fromMaybe, mapMaybe )
 import Data.Set ( Set )
 import qualified Data.Set as S
-import Data.Lens.Template
 import Data.Monoid
 import Text.Printf
 
@@ -151,7 +150,7 @@ data GraphState = GraphState {
   -- ^ A source of unique identifiers for graph nodes
   }
 
-$(makeLens ''GraphState)
+$(makeLenses ''GraphState)
 
 emptyGraphState :: GraphState
 emptyGraphState = GraphState { _graphStateValueMap = mempty
@@ -175,7 +174,7 @@ data EscapeGraph = EscapeGraph {
 instance NFData EscapeGraph where
   rnf (EscapeGraph m fm g) = g `deepseq` m `deepseq` fm `deepseq` ()
 
-$(makeLens ''EscapeGraph)
+$(makeLenses ''EscapeGraph)
 
 -- | The monad in which we construct the value flow graph
 type GraphBuilder = State GraphState
@@ -188,7 +187,7 @@ data EscapeSummary =
                 , _escapeDiagnostics :: Diagnostics
                 }
 
-$(makeLens ''EscapeSummary)
+$(makeLenses ''EscapeSummary)
 
 instance Show EscapeSummary where
   show (EscapeSummary _ ea ef ei _) = show ea ++ "/" ++ show ef ++ "/" ++ show ei
@@ -229,7 +228,7 @@ instance SummarizeModule EscapeSummary where
 identifyEscapes :: (FuncLike funcLike, HasFunction funcLike)
                    => DependencySummary
                    -> IndirectCallSummary
-                   -> Lens compositeSummary EscapeSummary
+                   -> Simple Lens compositeSummary EscapeSummary
                    -> ComposableAnalysis compositeSummary funcLike
 identifyEscapes ds ics lns =
   composableAnalysisM runner escapeWrapper lns
@@ -238,11 +237,11 @@ identifyEscapes ds ics lns =
       let f = getFunction funcLike
           g = buildValueFlowGraph ics ds s (functionInstructions f)
           s' = foldr (summarizeArgumentEscapes g) s (functionParameters f)
-      return $ (escapeGraph ^!%= HM.insert f g) s'
+      return $ (escapeGraph %~ HM.insert f g) s'
 
     runner a =
       let (e, diags) = runWriter a
-      in (escapeDiagnostics ^= diags) e
+      in (escapeDiagnostics .~ diags) e
 {-
     extSumm ef ix =
       -- FIXME: Switch the builder to be a StateT so we can let this
@@ -393,16 +392,16 @@ entireArgumentEscapes eg a s =
             -- escape.
             Nothing -> (True, s)
             Just (AllocaSink eclass _ w) ->
-              (True, (escapeArguments ^!%= HM.insert a (DirectEscape, w)) s)
+              (True, (escapeArguments %~ HM.insert a (DirectEscape, w)) s)
             _ -> error "Non-alloca sink in the allocaSinks list"
         -- The argument escapes (ONLY) into another argument.  We need
         -- to record this to propagate the information to the caller.
         (_, [Sink eclass w (Just (ArgumentDescriptor f ix))]) ->
-          (False, (escapeIntoArguments ^!%= HM.insert a (eclass, f, ix)) s)
+          (False, (escapeIntoArguments %~ HM.insert a (eclass, f, ix)) s)
         -- Otherwise, this argument escapes normally.  Just take the
         -- first one for now (we could record them all...)
         (_, (Sink eclass w _):_) ->
-          (True, (escapeArguments ^!%= HM.insert a (eclass, w)) s)
+          (True, (escapeArguments %~ HM.insert a (eclass, w)) s)
         (_, _) -> error "entireArgumentEscapes: Non-sink in sink list"
   where
     -- | If at least one of the alloca sinks can reach another sink,
@@ -430,7 +429,7 @@ argumentFieldsEscape eg a s =
         [] -> summ
         (Sink eclass w _) : _ ->
           let newEsc = S.singleton (eclass, p, w)
-          in (escapeFields ^!%= HM.insertWith S.union arg newEsc) summ
+          in (escapeFields %~ HM.insertWith S.union arg newEsc) summ
         _ -> error "Non-sink found in reachableSinks result 3"
     checkFieldEscapes _ _ = error "argumentFieldsEscape: Non FieldSource in fieldSrcs list"
 
@@ -519,21 +518,21 @@ addFieldSourceEdges gs (base, fsnodes) =
 
 nextNodeId :: GraphBuilder Int
 nextNodeId = do
-  nid <- access graphStateIdSrc
-  _ <- graphStateIdSrc !%= (+1)
+  nid <- use graphStateIdSrc
+  _ <- graphStateIdSrc %= (+1)
   return nid
 
 -- | Create a node for the given value if it does not already exist.
 -- Returns the corresponding unique node id.
 valueNode :: Value -> GraphBuilder Int
 valueNode v = do
-  vm <- access graphStateValueMap
+  vm <- use graphStateValueMap
   case HM.lookup v vm of
     Just n -> return (unlabelNode n)
     Nothing -> do
       nid <- nextNodeId
       let n = LNode nid (Location v)
-      _ <- graphStateValueMap !%= HM.insert v n
+      _ <- graphStateValueMap %= HM.insert v n
       return nid
 
 -- | Values flow from v1 to v2
@@ -542,7 +541,7 @@ flowTo from to w etype = do
   fromN <- valueNode from
   toN <- valueNode to
   let e = LEdge (Edge fromN toN) etype
-  _ <- graphStateEdges !%= HM.insertWith (++) fromN [e]
+  _ <- graphStateEdges %= HM.insertWith (++) fromN [e]
   return ()
 
 -- | The value named flows to a sink.  This should create a new node
@@ -557,8 +556,8 @@ flowToSink eclass v w ad = do
   sid <- nextNodeId
   let s = LNode sid (Sink eclass w ad)
       e = LEdge (Edge vN sid) UnconditionalEdge
-  _ <- graphStateEdges !%= HM.insertWith (++) vN [e]
-  _ <- graphStateSinks !%= (s:)
+  _ <- graphStateEdges %= HM.insertWith (++) vN [e]
+  _ <- graphStateSinks %= (s:)
   return ()
 
 flowToAlloca :: EscapeClass -> Value -> Instruction -> Instruction -> GraphBuilder ()
@@ -567,8 +566,8 @@ flowToAlloca eclass arg i w = do
   sid <- nextNodeId
   let s = LNode sid (AllocaSink eclass i w)
       e = LEdge (Edge vN sid) UnconditionalEdge
-  _ <- graphStateSinks !%= (s:)
-  _ <- graphStateEdges !%= HM.insertWith (++) vN [e]
+  _ <- graphStateSinks %= (s:)
+  _ <- graphStateEdges %= HM.insertWith (++) vN [e]
   return ()
 
 -- | These handle fields of arguments escaping.  Before the final
@@ -584,8 +583,8 @@ fieldSource v a p = do
   nid <- nextNodeId
   let n = LNode nid (FieldSource a p)
       e = LEdge (Edge nid vN) UnconditionalEdge
-  _ <- graphStateEdges !%= HM.insertWith (++) nid [e]
-  _ <- graphStateFieldSourceMap !%= HM.insertWith (++) (toValue a) [n]
+  _ <- graphStateEdges %= HM.insertWith (++) nid [e]
+  _ <- graphStateFieldSourceMap %= HM.insertWith (++) (toValue a) [n]
   return ()
 
 -- | These two go together; they handle fields escaping through calls.
@@ -603,7 +602,7 @@ fieldSource v a p = do
 fieldStore :: Value -> Value -> AbstractAccessPath -> Instruction -> GraphBuilder ()
 fieldStore sv base p w = do
   n <- valueNode sv
-  _ <- graphStateFieldStores !%= HM.insertWith (++) base [(p, n, w)]
+  _ <- graphStateFieldStores %= HM.insertWith (++) base [(p, n, w)]
   return ()
 
 -- | Paired with fieldStore - it implicitly creates a sink (much like
@@ -612,8 +611,8 @@ callFieldEscape :: EscapeClass -> Value -> AbstractAccessPath -> Instruction -> 
 callFieldEscape eclass base p w = do
   nid <- nextNodeId
   let s = LNode nid (Sink eclass w Nothing)
-  _ <- graphStateCallFieldEscapes !%= HM.insertWith (++) base [(p, nid)]
-  _ <- graphStateSinks !%= (s:)
+  _ <- graphStateCallFieldEscapes %= HM.insertWith (++) base [(p, nid)]
+  _ <- graphStateSinks %= (s:)
 
   -- Make a fieldSource for base since a field of base escapes.  This
   -- handles proxying an argument through a function call that lets a
@@ -623,8 +622,8 @@ callFieldEscape eclass base p w = do
       aid <- nextNodeId
       let an = LNode aid (FieldSource a p)
           e = LEdge (Edge aid nid) UnconditionalEdge
-      _ <- graphStateEdges !%= HM.insertWith (++) aid [e]
-      _ <- graphStateFieldSourceMap !%= HM.insertWith (++) base [an]
+      _ <- graphStateEdges %= HM.insertWith (++) aid [e]
+      _ <- graphStateFieldSourceMap %= HM.insertWith (++) base [an]
       return ()
     _ -> return ()
 

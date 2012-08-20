@@ -1,4 +1,4 @@
-{-# LANGUAGE TemplateHaskell, ViewPatterns #-}
+{-# LANGUAGE TemplateHaskell, ViewPatterns, RankNTypes, ScopedTypeVariables #-}
 -- | This analysis identifies the addRef and decRef functions for a library,
 -- along with the set of types that is reference counted.  This analysis is
 -- unsound and incomplete, but still useful.
@@ -29,13 +29,12 @@ module Foreign.Inference.Analysis.RefCount (
 
 import Control.Arrow
 import Control.DeepSeq
+import Control.Lens
 import Data.Foldable ( find )
 import Data.HashSet ( HashSet )
 import qualified Data.HashSet as HS
 import Data.HashMap.Strict ( HashMap )
 import qualified Data.HashMap.Strict as HM
-import Data.Lens.Common
-import Data.Lens.Template
 import Data.Map ( Map )
 import qualified Data.Map as M
 import Data.Maybe ( mapMaybe )
@@ -105,7 +104,7 @@ data RefCountSummary =
                   , _refCountDiagnostics :: !Diagnostics
                   }
 
-$(makeLens ''RefCountSummary)
+$(makeLenses ''RefCountSummary)
 
 instance Monoid RefCountSummary where
   mempty = RefCountSummary mempty mempty mempty mempty mempty
@@ -193,18 +192,21 @@ data RefCountData =
 type Analysis = AnalysisMonad RefCountData ()
 
 -- | The main analysis to identify both incref and decref functions.
-identifyRefCounting :: (FuncLike funcLike, HasFunction funcLike, HasCFG funcLike)
+identifyRefCounting :: forall compositeSummary funcLike . (FuncLike funcLike, HasFunction funcLike, HasCFG funcLike)
                        => DependencySummary
-                       -> Lens compositeSummary RefCountSummary
-                       -> Lens compositeSummary FinalizerSummary
-                       -> Lens compositeSummary ScalarEffectSummary
+                       -> Simple Lens compositeSummary RefCountSummary
+                       -> Simple Lens compositeSummary FinalizerSummary
+                       -> Simple Lens compositeSummary ScalarEffectSummary
                        -> ComposableAnalysis compositeSummary funcLike
 identifyRefCounting ds lns depLens1 depLens2 =
   composableDependencyAnalysisM runner refCountAnalysis lns depLens
   where
     runner a = runAnalysis a constData ()
     constData = RefCountData ds
-    depLens = lens (getL depLens1 &&& getL depLens2) (\(f, s) -> setL depLens1 f . setL depLens2 s)
+    readL = view depLens1 &&& view depLens2
+    writeL csum (f, s) = (set depLens1 f . set depLens2 s) csum
+    depLens :: Simple Lens compositeSummary (FinalizerSummary, ScalarEffectSummary)
+    depLens = lens readL writeL
 
 -- | Check to see if the given function is a conditional finalizer.
 -- If it is, return the call instruction that (conditionally) invokes
@@ -287,12 +289,12 @@ refCountAnalysis (finSumm, seSumm) funcLike summ = do
   condFinData <- isConditionalFinalizer finSumm f
   rcTypes <- refCountTypes f
 
-  let summ'' = (refCountedTypes ^!%= HM.unionWith HS.union rcTypes) summ'
+  let summ'' = (refCountedTypes %~ HM.unionWith HS.union rcTypes) summ'
 
   case condFinData of
     Nothing -> return summ''
     Just (cfi, cfa) ->
-      let summWithCondFin = (conditionalFinalizers ^!%= HS.insert f) summ''
+      let summWithCondFin = (conditionalFinalizers %~ HS.insert f) summ''
           finWitness = Witness cfi "condfin"
           fptrAccessPaths = mapMaybe (indirectCallAccessPath cfa) (functionInstructions f)
           -- If this is a conditional finalizer, figure out which
@@ -302,7 +304,7 @@ refCountAnalysis (finSumm, seSumm) funcLike summ = do
               let ud = UnrefData accPath fptrAccessPaths [finWitness, decWitness]
               in HM.insert a ud
             _ -> id
-          summWithUnref = (unrefArguments ^!%= newUnref) summWithCondFin
+          summWithUnref = (unrefArguments %~ newUnref) summWithCondFin
       in return summWithUnref
   where
     f = getFunction funcLike
@@ -382,7 +384,7 @@ incRefAnalysis seSumm f summ =
     ([], _) -> summ
     ([(fieldPath, w)], [a]) ->
       let newAddRef = HM.insert a (fieldPath, [w]) (summ ^. refArguments)
-      in (refArguments ^= newAddRef) summ
+      in (refArguments .~ newAddRef) summ
     _ -> summ
 
 -- Note, here pass in the argument that is conditionally finalized.  It should

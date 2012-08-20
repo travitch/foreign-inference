@@ -1,3 +1,4 @@
+{-# LANGUAGE RankNTypes #-}
 -- | This anaysis identifies functions that have scalar effects on
 -- their arguments.
 --
@@ -16,6 +17,7 @@ module Foreign.Inference.Analysis.ScalarEffects (
   ) where
 
 import Control.DeepSeq
+import Control.Lens
 import Control.Monad.Identity
 import qualified Data.HashMap.Strict as HM
 import Data.Monoid
@@ -57,7 +59,7 @@ summarizeEffectArgument a (ScalarEffectSummary s) =
       [(PAScalarEffectSubOne (show t) ats, [])]
 
 identifyScalarEffects :: (FuncLike funcLike, HasCFG funcLike, HasFunction funcLike)
-                         => Lens compositeSummary ScalarEffectSummary
+                         => Simple Lens compositeSummary ScalarEffectSummary
                          -> ComposableAnalysis compositeSummary funcLike
 identifyScalarEffects lns =
   composableAnalysisM runIdentity analysisWrapper lns

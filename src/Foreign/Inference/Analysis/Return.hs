@@ -1,3 +1,4 @@
+{-# LANGUAGE RankNTypes #-}
 -- | This analysis identifies functions that never return.
 --
 -- These are functions that are guaranteed to never return because
@@ -10,6 +11,7 @@ module Foreign.Inference.Analysis.Return (
   ) where
 
 import Control.DeepSeq
+import Control.Lens
 import Control.Monad.Identity
 import Data.Monoid
 import Data.HashSet ( HashSet )
@@ -46,7 +48,7 @@ instance SummarizeModule ReturnSummary where
 
 identifyReturns :: (FuncLike funcLike, HasCFG funcLike)
                    => DependencySummary
-                   -> Lens compositeSummary ReturnSummary
+                   -> Simple Lens compositeSummary ReturnSummary
                    -> ComposableAnalysis compositeSummary funcLike
 identifyReturns ds lns =
   composableAnalysisM runIdentity analysisWrapper lns

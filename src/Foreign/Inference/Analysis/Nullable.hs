@@ -1,4 +1,4 @@
-{-# LANGUAGE ViewPatterns, MultiParamTypeClasses, TypeSynonymInstances, FlexibleInstances #-}
+{-# LANGUAGE ViewPatterns, MultiParamTypeClasses, TypeSynonymInstances, FlexibleInstances, RankNTypes #-}
 {-# LANGUAGE TemplateHaskell #-}
 -- | This module defines a Nullable pointer analysis.  It actually
 -- identifies non-nullable pointers (the rest are nullable).
@@ -72,13 +72,12 @@ module Foreign.Inference.Analysis.Nullable (
 
 import Control.Arrow
 import Control.DeepSeq
+import Control.Lens
 import Data.Map ( Map )
 import qualified Data.Map as M
 import Data.Set ( Set )
 import qualified Data.Set as S
 import Data.HashMap.Strict ( HashMap )
-import Data.Lens.Common
-import Data.Lens.Template
 import qualified Data.HashMap.Strict as HM
 import Data.Monoid
 import Debug.Trace.LocationTH
@@ -111,7 +110,7 @@ data NullableSummary =
                   , _nullableDiagnostics :: !Diagnostics
                   }
 
-$(makeLens ''NullableSummary)
+$(makeLenses ''NullableSummary)
 
 instance Monoid NullableSummary where
   mempty = NullableSummary mempty mempty
@@ -137,8 +136,8 @@ summarizeNullArgument a (NullableSummary s _) =
 identifyNullable :: (FuncLike funcLike, HasFunction funcLike, HasCFG funcLike,
                      HasCDG funcLike, HasDomTree funcLike)
                     => DependencySummary
-                    -> Lens compositeSummary NullableSummary
-                    -> Lens compositeSummary ReturnSummary
+                    -> Simple Lens compositeSummary NullableSummary
+                    -> Simple Lens compositeSummary ReturnSummary
                     -> ComposableAnalysis compositeSummary funcLike
 identifyNullable ds lns depLens =
   composableDependencyAnalysisM runner nullableAnalysis lns depLens
@@ -219,7 +218,7 @@ nullableAnalysis retSumm funcLike s@(NullableSummary summ _) = do
   -- Update the module symmary with the set of pointer parameters that
   -- we have proven are accessed unchecked.
   let newSumm = foldr (\(a, ws) acc -> HM.insert a ws acc) summ argsAndWitnesses
-  return $! (nullableSummary ^= newSumm) s
+  return $! (nullableSummary .~ newSumm) s
   where
     f = getFunction funcLike
 

@@ -48,6 +48,10 @@ import LLVM.Analysis.AccessPath
 import LLVM.Analysis.ClassHierarchy
 import LLVM.Analysis.PointsTo
 
+-- import Text.Printf
+-- import Debug.Trace
+-- debug = flip trace
+
 -- | This isn't a true points-to analysis because it is an
 -- under-approximation.  However, that is sufficient for this library.
 instance PointsToAnalysis IndirectCallSummary where

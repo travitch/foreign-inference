@@ -18,7 +18,6 @@ import Control.DeepSeq
 import Control.Lens
 import Control.Monad.State.Strict
 import Control.Monad.Writer ( runWriter )
-import Data.Default
 import Data.GraphViz
 import Data.Hashable
 import Data.HashMap.Strict ( HashMap )
@@ -196,11 +195,11 @@ instance Eq EscapeSummary where
   (EscapeSummary g1 ea1 ef1 ei1 _) == (EscapeSummary g2 ea2 ef2 ei2 _) =
     g1 == g2 && ea1 == ea2 && ef1 == ef2 && ei1 == ei2
 
-instance Default EscapeSummary where
-  def = EscapeSummary mempty mempty mempty mempty mempty
+emptySummary :: EscapeSummary
+emptySummary = EscapeSummary mempty mempty mempty mempty mempty
 
 instance Monoid EscapeSummary where
-  mempty = def
+  mempty = emptySummary
   mappend (EscapeSummary g1 as1 was1 ei1 d1) (EscapeSummary g2 as2 was2 ei2 d2) =
     EscapeSummary { _escapeGraph = HM.union g1 g2
                   , _escapeArguments = HM.union as1 as2

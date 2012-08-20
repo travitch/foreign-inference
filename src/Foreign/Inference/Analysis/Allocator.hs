@@ -37,9 +37,10 @@ import Control.DeepSeq
 import Control.Lens
 import Data.Map ( Map )
 import qualified Data.Map as M
+import Data.Maybe ( isJust )
+import Data.Monoid
 import Data.HashSet ( HashSet )
 import qualified Data.HashSet as HS
-import Data.Maybe ( isJust )
 
 import LLVM.Analysis
 import LLVM.Analysis.CallGraphSCCTraversal
@@ -199,13 +200,13 @@ checkFunctionIsAllocator :: Value -> AllocatorSummary -> [Instruction] -> Analys
 checkFunctionIsAllocator v summ is =
   case valueContent' v of
     InstructionC LoadInst { } -> do
-      sis <- asks indirectCallSummary
+      sis <- analysisEnvironment indirectCallSummary
       case indirectCallInitializers sis v of
         [] -> return []
         [i] -> checkFunctionIsAllocator i summ is
         _ -> return []
     _ -> do
-      depSumm <- asks dependencySummary
+      depSumm <- analysisEnvironment dependencySummary
       case lookupFunctionSummary depSumm summ v of
         Nothing -> return []
         Just annots ->

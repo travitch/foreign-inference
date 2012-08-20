@@ -28,6 +28,7 @@ module Foreign.Inference.Analysis.Output (
 import Control.Arrow ( (&&&) )
 import Control.DeepSeq
 import Control.Lens
+import Control.Monad ( foldM )
 import Data.List ( find, groupBy )
 import Data.Map ( Map )
 import qualified Data.Map as M
@@ -235,7 +236,7 @@ outAnalysis (allocSumm, escSumm) funcLike s = do
                    , allocatorSummary = allocSumm
                    , escapeSummary = escSumm
                    }
-  funcInfo <- local envMod (forwardDataflow top funcLike)
+  funcInfo <- analysisLocal envMod (forwardDataflow top funcLike)
   let exitInfo = map (dataflowResult funcInfo) (functionExitInstructions f)
       OI exitInfo' fexitInfo' = meets exitInfo
       exitInfo'' = M.map (\(a, ws) -> (a, S.toList ws)) exitInfo'
@@ -253,9 +254,9 @@ outAnalysis (allocSumm, escSumm) funcLike s = do
 -- name of its associated finalizer.
 isAllocatedValue :: Instruction -> Value -> Instruction -> Analysis (Maybe String)
 isAllocatedValue storeInst calledFunc callInst = do
-  asum <- asks allocatorSummary
-  ds <- asks dependencySummary
-  esum <- asks escapeSummary
+  asum <- analysisEnvironment allocatorSummary
+  ds <- analysisEnvironment dependencySummary
+  esum <- analysisEnvironment escapeSummary
   case lookupFunctionSummary ds asum calledFunc of
     Nothing -> return Nothing
     Just annots ->
@@ -345,8 +346,8 @@ isMemcpy v =
 callTransfer :: OutInfo -> Instruction -> Value -> [Value] -> Analysis OutInfo
 callTransfer info i f args = do
   let indexedArgs = zip [0..] args
-  modSumm <- asks moduleSummary
-  depSumm <- asks dependencySummary
+  modSumm <- analysisEnvironment moduleSummary
+  depSumm <- analysisEnvironment dependencySummary
   case (isMemcpy f, args) of
     (True, [dest, src, bytes, _, _]) ->
       memcpyTransfer info i dest src bytes

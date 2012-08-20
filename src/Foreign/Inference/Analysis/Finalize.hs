@@ -21,6 +21,7 @@ module Foreign.Inference.Analysis.Finalize (
 
 import Control.DeepSeq
 import Control.Lens
+import Control.Monad ( foldM )
 import Data.HashMap.Strict ( HashMap )
 import qualified Data.HashMap.Strict as HM
 import Data.HashSet ( HashSet )
@@ -159,7 +160,7 @@ finalizerAnalysis funcLike s@(FinalizerSummary summ _) = do
       set0 = HS.fromList $ filter isPointer (functionParameters f)
       fact0 = FinalizerInfo set0 mempty
 
-  funcInfo <- local envMod (forwardDataflow fact0 funcLike)
+  funcInfo <- analysisLocal envMod (forwardDataflow fact0 funcLike)
 
   let exitInsts = functionExitInstructions f
       exitInfo = map (dataflowResult funcInfo) exitInsts
@@ -196,7 +197,7 @@ callTransfer :: Instruction -> Value -> [Value] -> FinalizerInfo -> Analysis Fin
 callTransfer callInst v as info =
   case valueContent' v of
     InstructionC LoadInst { } -> do
-      sis <- asks singleInitSummary
+      sis <- analysisEnvironment singleInitSummary
       let Just bb = instructionBasicBlock callInst
           f = basicBlockFunction bb
           fv = toValue f
@@ -214,8 +215,8 @@ callTransfer callInst v as info =
             True -> return info1
             False -> return info
     _ -> do
-      modSumm <- asks moduleSummary
-      depSumm <- asks dependencySummary
+      modSumm <- analysisEnvironment moduleSummary
+      depSumm <- analysisEnvironment dependencySummary
       foldM (checkArg depSumm modSumm) info indexedArgs
   where
     indexedArgs = zip [0..] as

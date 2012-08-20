@@ -219,7 +219,7 @@ isConditionalFinalizer :: FinalizerSummary
                           -> Function
                           -> Analysis (Maybe (Instruction, Argument))
 isConditionalFinalizer summ f = do
-  ds <- asks dependencySummary
+  ds <- analysisEnvironment dependencySummary
   case functionIsFinalizer ds summ f of
     True -> return Nothing
     False ->
@@ -311,7 +311,7 @@ refCountAnalysis (finSumm, seSumm) funcLike summ = do
 
 refCountTypes :: Function -> Analysis (HashMap (String, String) (HashSet Type))
 refCountTypes f = do
-  ds <- asks dependencySummary
+  ds <- analysisEnvironment dependencySummary
   let fptrFuncs = mapMaybe (identifyIndicatorFields ds) (functionInstructions f)
       rcTypesByField = map (id *** unaryFuncToCastedArgTypes) fptrFuncs
       structuralRefTypes = mapMaybe (subtypeRefCountTypes ds) interfaceTypes

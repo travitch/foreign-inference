@@ -22,6 +22,7 @@ import Data.HashMap.Strict ( HashMap )
 import qualified Data.HashMap.Strict as M
 import Data.Map ( Map )
 import qualified Data.Map as Map
+import Data.Monoid
 import Debug.Trace.LocationTH
 
 import LLVM.Analysis
@@ -102,7 +103,7 @@ identifyArrays ds lns =
 arrayAnalysis :: (FuncLike funcLike, HasFunction funcLike)
                  => funcLike -> ArraySummary -> Analysis ArraySummary
 arrayAnalysis funcLike a@(ArraySummary summary _) = do
-  ds <- asks dependencySummary
+  ds <- analysisEnvironment dependencySummary
 
   let basesAndOffsets = map (isArrayDeref ds a) insts
       baseResultMap = foldr (\itm acc -> foldr addDeref acc itm) M.empty basesAndOffsets

@@ -73,6 +73,7 @@ module Foreign.Inference.Analysis.Nullable (
 import Control.Arrow
 import Control.DeepSeq
 import Control.Lens
+import Control.Monad ( foldM )
 import Data.Map ( Map )
 import qualified Data.Map as M
 import Data.Set ( Set )
@@ -207,7 +208,7 @@ nullableAnalysis retSumm funcLike s@(NullableSummary summ _) = do
                    }
       args = filter isPointer (functionParameters f)
       fact0 = top { nullArguments = S.fromList args }
-  localInfo <- local envMod (forwardDataflow fact0 funcLike)
+  localInfo <- analysisLocal envMod (forwardDataflow fact0 funcLike)
 
   let exitInfo = map (dataflowResult localInfo) (functionExitInstructions f)
       exitInfo' = meets exitInfo
@@ -323,9 +324,9 @@ callTransfer ::  Instruction
                  -> Analysis NullInfo
 callTransfer i calledFunc args ni = do
   let indexedArgs = zip [0..] args
-  modSumm <- asks moduleSummary
-  retSumm <- asks returnSummary
-  depSumm <- asks dependencySummary
+  modSumm <- analysisEnvironment moduleSummary
+  retSumm <- analysisEnvironment returnSummary
+  depSumm <- analysisEnvironment dependencySummary
   let retAttrs = maybe [] id $ lookupFunctionSummary depSumm retSumm calledFunc
 
   ni' <- case FANoRet `elem` retAttrs of
@@ -387,19 +388,19 @@ mustExecuteValue v =
   case valueContent' v of
     InstructionC SelectInst {} -> return Nothing
     InstructionC i@PhiNode { phiIncomingValues = ivs } -> do
-      s <- get
+      s <- analysisGet
       case HM.lookup i (phiCache s) of
         Just mv -> return mv
         Nothing -> do
           mv <- mustExec' i ivs
-          put s { phiCache = HM.insert i mv (phiCache s) }
+          analysisPut s { phiCache = HM.insert i mv (phiCache s) }
           return mv
     _ -> return (Just v)
 
 mustExec' :: Instruction -> [(Value, Value)] -> Analysis (Maybe Value)
 mustExec' i ivs = do
-  cdg <- asks controlDepGraph
-  dt <- asks domTree
+  cdg <- analysisEnvironment controlDepGraph
+  dt <- analysisEnvironment domTree
   let cdeps = directControlDependencies cdg i
   case cdeps of
     [] -> return Nothing

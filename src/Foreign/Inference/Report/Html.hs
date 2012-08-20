@@ -187,7 +187,7 @@ htmlIndexPage r opts = H.docTypeHtml $ do
     H.div ! A.id "module-info" $ do
       "Name: " >> toHtml (moduleIdentifier m)
     H.h1 "Exposed Functions"
-    indexPageFunctionListing r (LinkDrilldowns `elem` opts) "exposed-functions" externs
+    indexPageFunctionListing r (LinkDrilldowns `elem` opts) "exposed-functions" externsWithAliases
     H.h1 "Private Functions"
     indexPageFunctionListing r (LinkDrilldowns `elem` opts) "private-functions" privates
     H.h1 "Annotated Types"
@@ -197,16 +197,54 @@ htmlIndexPage r opts = H.docTypeHtml $ do
     pageTitle = (moduleIdentifier m) `mappend` " summary report"
     m = reportModule r
     ts = moduleInterfaceStructTypes m
-    (externs, privates) = partition isExtern (moduleDefinedFunctions m)
+    (externs, ps) = partition isExtern (moduleDefinedFunctions m)
+    privates = map tagName ps
+    externsWithAliases = map tagName externs ++ exposedAliases
 
-    isExtern :: Function -> Bool
-    isExtern Function { functionLinkage = l } =
-      case l of
+    tagName f = (f, identifierAsString (functionName f))
+
+    isExtern :: (HasVisibility a) => a -> Bool
+    isExtern f = isVisible f && isExternLinkage f
+
+    isVisible :: (HasVisibility a) => a -> Bool
+    isVisible v =
+      case valueVisibility v of
+        VisibilityHidden -> False
+        _ -> True
+
+    isExternLinkage :: (HasVisibility a) => a -> Bool
+    isExternLinkage v =
+      case valueLinkage v of
         LTExternal -> True
         LTAvailableExternally -> True
         LTDLLExport -> True
         LTExternalWeak -> True
         _ -> False
+
+    exposedAliases :: [(Function, String)]
+    exposedAliases = mapMaybe externAliasToFunc (moduleAliases m)
+
+    externAliasToFunc a =
+      case isExtern a of
+        False -> Nothing
+        True ->
+          case globalAliasTarget a of
+            FunctionC f ->
+              let internalName = identifierAsString (functionName f)
+              in Just $ (f { functionName = globalAliasName a }, internalName)
+            _ -> Nothing
+
+class HasVisibility a where
+  valueVisibility :: a -> VisibilityStyle
+  valueLinkage :: a -> LinkageType
+
+instance HasVisibility Function where
+  valueVisibility = functionVisibility
+  valueLinkage = functionLinkage
+
+instance HasVisibility GlobalAlias where
+  valueVisibility = globalAliasVisibility
+  valueLinkage = globalAliasLinkage
 
 indexPageTypeListing :: InterfaceReport -> [CType] -> Html
 indexPageTypeListing r ts = do
@@ -225,14 +263,14 @@ indexPageAnnotatedType (t, annots) = do
     H.span ! A.class_ "code-comment" $ toHtml ("/* " ++ (show annots) ++ " */")
 
 
-indexPageFunctionListing :: InterfaceReport -> Bool -> AttributeValue -> [Function] -> Html
+indexPageFunctionListing :: InterfaceReport -> Bool -> AttributeValue -> [(Function, String)] -> Html
 indexPageFunctionListing r linkFuncs divId funcs = do
   H.div ! A.id divId $ do
     H.ul $ do
       forM_ funcs (indexPageFunctionEntry r linkFuncs)
 
-indexPageFunctionEntry :: InterfaceReport -> Bool -> Function -> Html
-indexPageFunctionEntry r linkFunc f = do
+indexPageFunctionEntry :: InterfaceReport -> Bool -> (Function, String) -> Html
+indexPageFunctionEntry r linkFunc (f, internalName) = do
   H.li $ do
     H.span ! A.class_ "code" $ do
       case r of
@@ -240,7 +278,7 @@ indexPageFunctionEntry r linkFunc f = do
           case M.lookup f bodies of
             Nothing -> toHtml fname
             Just _ -> do
-              let drilldown = mconcat [ "functions/", fname, ".html" ]
+              let drilldown = mconcat [ "functions/", internalName, ".html" ]
               case linkFunc of
                 True -> H.a ! A.href (toValue drilldown) $ toHtml fname
                 False -> toHtml fname

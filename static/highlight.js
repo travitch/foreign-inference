@@ -21,12 +21,12 @@ function highlightLines(startLine, witnessLines) {
 }
 
 function linkCalledFunctions(fnames) {
-  $.map(fnames, function (fname, ix) { $('code').makeFunctionLink(fname); });
+  $.map(fnames, function (fname, ix) { $('code').makeFunctionLink(fname[0], fname[1]); });
 }
 
 function initializeHighlighting() {
-  var linkFunc = function(fname) {
-    var regex = new RegExp('(<[^>]*>)|(\\b'+ fname.replace(/([-.*+?^${}()|[\]\/\\])/g,"\\$1") +')', 'g');
+  var linkFunc = function(txtName, fname) {
+    var regex = new RegExp('(<[^>]*>)|(\\b'+ txtName.replace(/([-.*+?^${}()|[\]\/\\])/g,"\\$1") +')', 'g');
     return this.html(this.html().replace(regex, function(a, b, c){
       var url = fname + ".html";
       return (a.charAt(0) == '<') ? a : '<a href="'+ url +'">' + c + '</a>';

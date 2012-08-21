@@ -11,6 +11,7 @@ import Control.Monad ( forM_, when )
 import Data.ByteString.Lazy.Char8 ( ByteString, unpack )
 import Data.List ( intercalate, partition, sort )
 import Data.Maybe ( mapMaybe )
+import Data.Map ( Map )
 import qualified Data.Map as M
 import Data.Monoid
 import Data.Text ( Text, pack )
@@ -70,7 +71,9 @@ htmlFunctionPage r f srcFile startLine functionText = H.docTypeHtml $ do
     funcName = identifierContent (functionName f)
     pageTitle = funcName `mappend` " [function breakdown]"
     allInstructions = concatMap basicBlockInstructions (functionBody f)
-    calledFunctions = foldr extractCalledFunctionNames [] allInstructions
+    calledFunctions = foldr (extractCalledFunctionNames aliasReverseIndex) [] allInstructions
+    m = reportModule r
+    aliasReverseIndex = foldr indexAliases mempty (moduleAliases m)
     args = functionParameters f
     fretType = case functionType f of
       TypeFunction rt _ _ -> rt
@@ -81,13 +84,19 @@ htmlFunctionPage r f srcFile startLine functionText = H.docTypeHtml $ do
 -- something matches or there are no more extensions.  If it cannot be
 -- determined, assume C.
 sourceFileLanguage :: FilePath -> String
-sourceFileLanguage p =
-  case hasExtension p of
-    False -> "C"
-    True ->
-      case K.languagesByFilename p of
-        [] -> sourceFileLanguage (dropExtension p)
-        lang : _ -> lang
+sourceFileLanguage p
+  | not (hasExtension p) = "C"
+  | otherwise =
+    case K.languagesByFilename p of
+      [] -> sourceFileLanguage (dropExtension p)
+      lang : _ -> lang
+
+indexAliases :: GlobalAlias -> Map Function [GlobalAlias] -> Map Function [GlobalAlias]
+indexAliases a m =
+  case globalAliasTarget a of
+    FunctionC f -> M.insertWith' (++) f [a] m
+    GlobalAliasC a' -> indexAliases a' m
+    _ -> m
 
 -- | Replace tabs with two spaces.  This makes the line number
 -- highlighting easier to read.
@@ -97,8 +106,8 @@ preprocessFunction = foldr replaceTab "" . unpack
     replaceTab '\t' acc = ' ' : ' ' : acc
     replaceTab c acc = c : acc
 
-extractCalledFunctionNames :: Instruction -> [Text] -> [Text]
-extractCalledFunctionNames i acc =
+extractCalledFunctionNames :: Map Function [GlobalAlias] -> Instruction -> [(Text, Text)] -> [(Text, Text)]
+extractCalledFunctionNames aliasReverseIndex i acc =
   case valueContent' i of
     InstructionC CallInst { callFunction = cv } -> maybeExtract cv acc
     InstructionC InvokeInst { invokeFunction = cv } -> maybeExtract cv acc
@@ -106,10 +115,18 @@ extractCalledFunctionNames i acc =
   where
     maybeExtract cv names =
       case valueContent cv of
-        FunctionC f -> identifierContent (functionName f) : names
+        FunctionC f ->
+          case M.lookup f aliasReverseIndex of
+            Nothing ->
+              let ic = identifierContent (functionName f)
+              in (ic, ic) : names
+            Just aliases ->
+              let ic = identifierContent (functionName f)
+                  aliasNames = map (identifierContent . globalAliasName) aliases
+              in zip aliasNames (repeat ic) ++ names
         _ -> names
 
-initialScript :: [Text] -> Text
+initialScript :: [(Text, Text)] -> Text
 initialScript calledFuncNames = mconcat [ "$(window).bind(\"load\", function () {\n"
                                         , "  initializeHighlighting();\n"
                                         , "  linkCalledFunctions(["
@@ -118,7 +135,7 @@ initialScript calledFuncNames = mconcat [ "$(window).bind(\"load\", function () 
                                         , "});"
                                         ]
   where
-    quotedNames = map (\txt -> mconcat ["'", txt, "'"]) calledFuncNames
+    quotedNames = map (\(txtName, target) -> mconcat ["['", txtName, "', '", target, "']"]) calledFuncNames
     funcNameList = T.intercalate ", " quotedNames
 
 
@@ -224,15 +241,14 @@ htmlIndexPage r opts = H.docTypeHtml $ do
     exposedAliases :: [(Function, String)]
     exposedAliases = mapMaybe externAliasToFunc (moduleAliases m)
 
-    externAliasToFunc a =
-      case isExtern a of
-        False -> Nothing
-        True ->
-          case globalAliasTarget a of
-            FunctionC f ->
-              let internalName = identifierAsString (functionName f)
-              in Just $ (f { functionName = globalAliasName a }, internalName)
-            _ -> Nothing
+    externAliasToFunc a
+      | not (isExtern a) = Nothing
+      | otherwise =
+        case globalAliasTarget a of
+          FunctionC f ->
+            let internalName = identifierAsString (functionName f)
+            in Just $ (f { functionName = globalAliasName a }, internalName)
+          _ -> Nothing
 
 class HasVisibility a where
   valueVisibility :: a -> VisibilityStyle

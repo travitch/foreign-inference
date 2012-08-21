@@ -455,6 +455,7 @@ ifPointer v defVal isPtrVal =
     TypePointer _ _ -> isPtrVal
     _ -> defVal
 
+dumpGraph :: ValueFlowGraph -> ValueFlowGraph
 dumpGraph g = unsafePerformIO $ do
   let dg = useGraphvizRepr g
   runGraphvizCanvas' dg Gtk

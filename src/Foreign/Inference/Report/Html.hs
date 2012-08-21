@@ -135,7 +135,8 @@ initialScript calledFuncNames = mconcat [ "$(window).bind(\"load\", function () 
                                         , "});"
                                         ]
   where
-    quotedNames = map (\(txtName, target) -> mconcat ["['", txtName, "', '", target, "']"]) calledFuncNames
+    toJsTuple (txtName, target) = mconcat ["['", txtName, "', '", target, "']"]
+    quotedNames = map toJsTuple calledFuncNames
     funcNameList = T.intercalate ", " quotedNames
 
 
@@ -157,11 +158,10 @@ drilldownArgumentAnnotations startLine annots = do
     commaSepList annots mkAnnotLink
     "] */"
   where
-    mkAnnotLink (a, witnessLines) =
-      case null witnessLines of
-        True -> toHtml (show a)
-        False ->
-          H.a ! A.href "#" ! A.onclick (H.preEscapedToValue clickScript) $ toHtml (show a)
+    mkAnnotLink (a, witnessLines)
+      | null witnessLines = toHtml (show a)
+      | otherwise =
+        H.a ! A.href "#" ! A.onclick (H.preEscapedToValue clickScript) $ toHtml (show a)
       where
         clickScript = mconcat ["highlightLines("
                               , pack (show startLine)

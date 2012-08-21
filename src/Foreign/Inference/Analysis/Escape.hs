@@ -797,15 +797,10 @@ addCallArgumentFacts ics ds summ ci callee args =
       case lookupArgumentSummary ds summ ef ix of
         Nothing -> doAssert IndirectEscape arg
         Just annots ->
-          case PAEscape `elem` annots of
-            True -> doAssert DirectEscape arg
-            False ->
-              case PAFptrEscape `elem` annots of
-                True -> doAssert IndirectEscape arg
-                False ->
-                  case PAContractEscape `elem` annots of
-                    True -> doAssert BrokenContractEscape arg
-                    False -> return ()
+          chooseM_ [ (PAEscape, doAssert DirectEscape arg)
+                   , (PAFptrEscape, doAssert IndirectEscape arg)
+                   , (PAContractEscape, doAssert BrokenContractEscape arg)
+                   ] (return ()) annots
     checkFuncArg (formal, arg) =
       ifPointer arg (return ()) $ do
         case HM.lookup formal (summ ^. escapeArguments) of
@@ -858,13 +853,23 @@ addCallArgumentFacts ics ds summ ci callee args =
         -- No external summary, indirect escape
         Nothing -> doAssert IndirectEscape arg
         Just annots ->
-          case PAEscape `elem` annots of
-            True -> doAssert DirectEscape arg
-            False ->
-              case PAFptrEscape `elem` annots of
-                True -> doAssert IndirectEscape arg
-                False -> doAssert BrokenContractEscape arg
+          chooseM_ [ (PAEscape, doAssert DirectEscape arg)
+                   , (PAFptrEscape, doAssert IndirectEscape arg)
+                   ] (doAssert BrokenContractEscape arg) annots
 
+-- | Execute the first matching action:
+--
+-- > chooseM_ actions dflt vals
+--
+-- The list of actions maps a value to an action.  This function takes
+-- the first value that matches anything in the list of @vals@ and
+-- executes it.  If none match, the default action is executed.
+chooseM_ :: (Monad m, Eq a) => [(a, m b)] -> m b -> [a] -> m b
+chooseM_ [] dflt _ = dflt
+chooseM_ ((v,a):actions) dflt vals =
+  case v `elem` vals of
+    True -> a
+    False -> chooseM_ actions dflt vals
 
 -- | If all of the resolvable targets of the given call/invoke
 -- instruction have the same escape properties for each argument,
@@ -905,8 +910,6 @@ checkConsistency summ ds fs argCount =
       case e of
         Left f -> map (argEscapeType summ) (functionParameters f)
         Right ef -> map (extArgEscapeType summ ds ef) [0..(argCount-1)]
-    -- formalLists = map functionParameters (NEL.toList fs)
-    -- formalsByPosition = transpose formalLists
 
 groupConsistent :: [Maybe EscapeClass] -> Bool
 groupConsistent [] = True

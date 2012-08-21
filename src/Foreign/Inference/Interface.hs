@@ -66,7 +66,7 @@ import Data.Map ( Map )
 import qualified Data.Map as Map
 import Data.IntMap ( IntMap )
 import qualified Data.IntMap as IM
-import Data.Maybe ( mapMaybe )
+import Data.Maybe ( fromMaybe, mapMaybe )
 import Data.Monoid
 import Data.Set ( Set )
 import qualified Data.Set as S
@@ -153,7 +153,7 @@ indexRefCounts = foldr indexForeignFunction mempty . M.elems
         [p] ->
           case mapMaybe unrefDetails (parameterAnnotations p) of
             [(refFunc, fields)] ->
-              foldl' (\a f -> Map.insert f (refFunc, (foreignFunctionName ff)) a) acc fields
+              foldl' (\a f -> Map.insert f (refFunc, foreignFunctionName ff) a) acc fields
             _ -> acc
         _ -> acc
 
@@ -168,7 +168,7 @@ indexStructuralSuperclasses = foldr indexForeignFunction mempty . M.elems
         [p] ->
           case mapMaybe unrefDetails (parameterAnnotations p) of
             [(refFunc, types)] ->
-              foldl' (\a t -> Map.insert t (refFunc, (foreignFunctionName ff)) a) acc types
+              foldl' (\a t -> Map.insert t (refFunc, foreignFunctionName ff) a) acc types
             _ -> acc
         _ -> acc
 
@@ -354,9 +354,8 @@ parseInterface summaryDirs p = do
 
 decodeInterface :: SBS.ByteString -> LibraryInterface
 decodeInterface bs =
-  case decode' (minify (LBS.fromChunks [bs])) of
-    Nothing -> throw (DependencyDecodeError "builtin")
-    Just li -> li
+  let err = throw (DependencyDecodeError "builtin")
+  in fromMaybe err $ decode' (minify (LBS.fromChunks [bs]))
 
 loadFromSources :: [FilePath] -> FilePath -> IO LBS.ByteString
 loadFromSources (src:rest) p = catch (LBS.readFile fname) handleMissingSrc
@@ -484,7 +483,7 @@ lookupFunctionSummary ds ms val =
           summ = depSummary ds
       fsum <- M.lookup fname summ
       return (foreignFunctionAnnotations fsum)
-    _ -> return $! []
+    _ -> return []
 
 lookupArgumentSummary :: (IsValue v, SummarizeModule s)
                          => DependencySummary

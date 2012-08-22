@@ -202,16 +202,15 @@ callTransfer callInst v as info =
           f = basicBlockFunction bb
           fv = toValue f
           finits = filter (/=fv) $ indirectCallInitializers sis v
-      case finits of
-        [] -> return info
-        [singleInit] -> callTransfer callInst singleInit as info
-        allInits -> do
+          xfer initializer = callTransfer callInst initializer as info
+      case null finits of
+        True -> return info
+        False -> do
           -- If there is more than one static initializer for the
           -- function pointer being called, treat it as a finalizer
           -- IFF all of the initializers agree and finalize the same
           -- argument.
-          let xfer si = callTransfer callInst si as info
-          info1:infos <- mapM xfer allInits
+          info1:infos <- mapM xfer finits
           case all (==info1) infos of
             True -> return info1
             False -> return info

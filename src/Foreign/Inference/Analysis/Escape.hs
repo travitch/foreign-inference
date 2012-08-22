@@ -797,10 +797,10 @@ addCallArgumentFacts ics ds summ ci callee args =
       case lookupArgumentSummary ds summ ef ix of
         Nothing -> doAssert IndirectEscape arg
         Just annots ->
-          chooseM_ [ (PAEscape, doAssert DirectEscape arg)
-                   , (PAFptrEscape, doAssert IndirectEscape arg)
-                   , (PAContractEscape, doAssert BrokenContractEscape arg)
-                   ] (return ()) annots
+          choose [ (PAEscape, doAssert DirectEscape arg)
+                 , (PAFptrEscape, doAssert IndirectEscape arg)
+                 , (PAContractEscape, doAssert BrokenContractEscape arg)
+                 ] (return ()) annots
     checkFuncArg (formal, arg) =
       ifPointer arg (return ()) $ do
         case HM.lookup formal (summ ^. escapeArguments) of
@@ -853,9 +853,9 @@ addCallArgumentFacts ics ds summ ci callee args =
         -- No external summary, indirect escape
         Nothing -> doAssert IndirectEscape arg
         Just annots ->
-          chooseM_ [ (PAEscape, doAssert DirectEscape arg)
-                   , (PAFptrEscape, doAssert IndirectEscape arg)
-                   ] (doAssert BrokenContractEscape arg) annots
+          choose [ (PAEscape, doAssert DirectEscape arg)
+                 , (PAFptrEscape, doAssert IndirectEscape arg)
+                 ] (doAssert BrokenContractEscape arg) annots
 
 -- | Execute the first matching action:
 --
@@ -864,12 +864,12 @@ addCallArgumentFacts ics ds summ ci callee args =
 -- The list of actions maps a value to an action.  This function takes
 -- the first value that matches anything in the list of @vals@ and
 -- executes it.  If none match, the default action is executed.
-chooseM_ :: (Monad m, Eq a) => [(a, m b)] -> m b -> [a] -> m b
-chooseM_ [] dflt _ = dflt
-chooseM_ ((v,a):actions) dflt vals =
+choose :: (Eq a) => [(a, b)] -> b -> [a] -> b
+choose [] dflt _ = dflt
+choose ((v,a):actions) dflt vals =
   case v `elem` vals of
     True -> a
-    False -> chooseM_ actions dflt vals
+    False -> choose actions dflt vals
 
 -- | If all of the resolvable targets of the given call/invoke
 -- instruction have the same escape properties for each argument,
@@ -892,13 +892,16 @@ consistentTargetEscapes summ ds ics callee argCount = do
     targets' = mapMaybe toEither targets
     targets = indirectCallInitializers ics callee
 
+-- | Given a list of indirect function call targets (@fs@), return a
+-- single (arbitrary) representative if all of the targets have the
+-- same annotations on each argument.
 checkConsistency :: EscapeSummary
                     -> DependencySummary
                     -> NonEmpty (Either Function ExternalFunction)
                     -> Int
                     -> Maybe (Either Function ExternalFunction)
 checkConsistency summ ds fs argCount =
-  case all groupConsistent annotsByPosition of
+  case all isGroupConsistent annotsByPosition of
     False -> Nothing
     True -> Just (NEL.head fs)
   where
@@ -910,18 +913,21 @@ checkConsistency summ ds fs argCount =
     funcToAnnots = map (argEscapeType summ) . functionParameters
     extFuncToAnnots ef = map (extArgEscapeType summ ds ef) [0..(argCount-1)]
 
-groupConsistent :: [Maybe EscapeClass] -> Bool
-groupConsistent [] = True
-groupConsistent (ec:ecs) =
+-- | Check if the escape annotations for each argument are consistent
+-- across all known call targets.  Nothing indicates that there is no
+-- escape.
+isGroupConsistent :: [Maybe EscapeClass] -> Bool
+isGroupConsistent [] = True
+isGroupConsistent (ec:ecs) =
   all (== ec) ecs
 
 extArgEscapeType :: EscapeSummary -> DependencySummary -> ExternalFunction -> Int -> Maybe EscapeClass
 extArgEscapeType summ ds ef ix = do
   annots <- lookupArgumentSummary ds summ ef ix
-  chooseM_ [ (PAEscape, return DirectEscape)
-           , (PAFptrEscape, return IndirectEscape)
-           , (PAContractEscape, return BrokenContractEscape)
-           ] Nothing annots
+  choose [ (PAEscape, return DirectEscape)
+         , (PAFptrEscape, return IndirectEscape)
+         , (PAContractEscape, return BrokenContractEscape)
+         ] Nothing annots
 
 -- This stuff doesn't deal with field escapes yet...
 argEscapeType :: EscapeSummary -> Argument -> Maybe EscapeClass

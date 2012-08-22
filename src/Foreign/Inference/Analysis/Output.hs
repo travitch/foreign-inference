@@ -25,7 +25,7 @@ module Foreign.Inference.Analysis.Output (
   outputSummaryToTestFormat
   ) where
 
-import Control.Arrow ( (&&&) )
+import Control.Arrow ( (&&&), second )
 import Control.DeepSeq
 import Control.Lens
 import Control.Monad ( foldM )
@@ -194,21 +194,22 @@ instance MeetSemiLattice ArgumentDirection where
   meet ArgOut ArgIn = ArgBoth
   meet ArgIn (ArgOutAlloc _) = ArgBoth
   meet (ArgOutAlloc _) ArgIn = ArgBoth
-  meet (ArgOutAlloc (is1, fin1)) (ArgOutAlloc (is2, fin2)) =
-    -- If the finalizers are different, consider this to just be a
-    -- normal out parameter since we can't say which finalizer is
-    -- involved.  We could possibly change this to at least tell the
-    -- user that ownership is transfered but the finalizer is unknown.
-    case fin1 == fin2 of
-      True -> ArgOutAlloc (S.union is1 is2, fin1)
-      False ->
-        case (fin1, fin2) of
-          (OutFinalizerConflict, _) -> ArgOutAlloc (S.union is1 is2, OutFinalizerConflict)
-          (_, OutFinalizerConflict) -> ArgOutAlloc (S.union is1 is2, OutFinalizerConflict)
-          (OutFinalizerNull, OutFinalizerNull) -> ArgOutAlloc (mempty, OutFinalizerNull)
-          (OutFinalizerNull, OutFinalizer f) -> ArgOutAlloc (is2, OutFinalizer f)
-          (OutFinalizer f, OutFinalizerNull) -> ArgOutAlloc (is1, OutFinalizer f)
-          _ -> ArgOutAlloc (S.union is1 is2, OutFinalizerConflict)
+
+  -- If the finalizers are different, consider this to just be a
+  -- normal out parameter since we can't say which finalizer is
+  -- involved.  We could possibly change this to at least tell the
+  -- user that ownership is transfered but the finalizer is unknown.
+  meet (ArgOutAlloc (is1, fin1)) (ArgOutAlloc (is2, fin2))
+    | fin1 == fin2 = ArgOutAlloc (S.union is1 is2, fin1)
+    | otherwise =
+      case (fin1, fin2) of
+        (OutFinalizerConflict, _) -> ArgOutAlloc (S.union is1 is2, OutFinalizerConflict)
+        (_, OutFinalizerConflict) -> ArgOutAlloc (S.union is1 is2, OutFinalizerConflict)
+        (OutFinalizerNull, OutFinalizerNull) -> ArgOutAlloc (mempty, OutFinalizerNull)
+        (OutFinalizerNull, OutFinalizer f) -> ArgOutAlloc (is2, OutFinalizer f)
+        (OutFinalizer f, OutFinalizerNull) -> ArgOutAlloc (is1, OutFinalizer f)
+        _ -> ArgOutAlloc (S.union is1 is2, OutFinalizerConflict)
+
   meet ArgBoth _ = ArgBoth
   meet _ ArgBoth = ArgBoth
 
@@ -239,8 +240,8 @@ outAnalysis (allocSumm, escSumm) funcLike s = do
   funcInfo <- analysisLocal envMod (forwardDataflow top funcLike)
   let exitInfo = map (dataflowResult funcInfo) (functionExitInstructions f)
       OI exitInfo' fexitInfo' = meets exitInfo
-      exitInfo'' = M.map (\(a, ws) -> (a, S.toList ws)) exitInfo'
-      fexitInfo'' = M.map (\(a, ws) -> (a, S.toList ws)) fexitInfo'
+      exitInfo'' = M.map (second S.toList) exitInfo' -- (\(a, ws) -> (a, S.toList ws)) exitInfo'
+      fexitInfo'' = M.map (second S.toList) fexitInfo' -- (\(a, ws) -> (a, S.toList ws)) fexitInfo'
   -- Merge the local information we just computed with the global
   -- summary.  Prefer the locally computed info if there are
   -- collisions (could arise while processing SCCs).
@@ -306,28 +307,28 @@ outTransfer info i =
                                                  , (valueContent -> ConstantC (ConstantInt _ _ fldNo))
                                                  ]
                         })} ->
-      return $! merge outputFieldInfo i (ptr, (fromIntegral fldNo)) ArgIn info
+      return $! merge outputFieldInfo i (ptr, fromIntegral fldNo) ArgIn info
     StoreInst { storeAddress = (valueContent -> InstructionC
       GetElementPtrInst { getElementPtrValue = (valueContent -> ArgumentC ptr)
                         , getElementPtrIndices = [ (valueContent -> ConstantC (ConstantInt _ _ 0))
                                                  , (valueContent -> ConstantC (ConstantInt _ _ fldNo))
                                                  ]
                         })} ->
-      return $! merge outputFieldInfo i (ptr, (fromIntegral fldNo)) ArgOut info
+      return $! merge outputFieldInfo i (ptr, fromIntegral fldNo) ArgOut info
     AtomicRMWInst { atomicRMWPointer = (valueContent -> InstructionC
       GetElementPtrInst { getElementPtrValue = (valueContent -> ArgumentC ptr)
                         , getElementPtrIndices = [ (valueContent -> ConstantC (ConstantInt _ _ 0))
                                                  , (valueContent -> ConstantC (ConstantInt _ _ fldNo))
                                                  ]
                         })} ->
-      return $! merge outputFieldInfo i (ptr, (fromIntegral fldNo)) ArgBoth info
+      return $! merge outputFieldInfo i (ptr, fromIntegral fldNo) ArgBoth info
     AtomicCmpXchgInst { atomicCmpXchgPointer = (valueContent -> InstructionC
       GetElementPtrInst { getElementPtrValue = (valueContent -> ArgumentC ptr)
                         , getElementPtrIndices = [ (valueContent -> ConstantC (ConstantInt _ _ 0))
                                                  , (valueContent -> ConstantC (ConstantInt _ _ fldNo))
                                                  ]
                         })} ->
-      return $! merge outputFieldInfo i (ptr, (fromIntegral fldNo)) ArgBoth info
+      return $! merge outputFieldInfo i (ptr, fromIntegral fldNo) ArgBoth info
 
     CallInst { callFunction = f, callArguments = args } ->
       callTransfer info i f (map fst args)

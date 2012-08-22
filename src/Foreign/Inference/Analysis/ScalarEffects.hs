@@ -61,8 +61,8 @@ summarizeEffectArgument a (ScalarEffectSummary s) =
 identifyScalarEffects :: (FuncLike funcLike, HasCFG funcLike, HasFunction funcLike)
                          => Simple Lens compositeSummary ScalarEffectSummary
                          -> ComposableAnalysis compositeSummary funcLike
-identifyScalarEffects lns =
-  composableAnalysisM runIdentity analysisWrapper lns
+identifyScalarEffects =
+  composableAnalysisM runIdentity analysisWrapper
   where
     analysisWrapper f (ScalarEffectSummary s) = do
       res <- scalarEffectAnalysis f s

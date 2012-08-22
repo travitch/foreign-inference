@@ -89,10 +89,9 @@ type Analysis = AnalysisMonad AllocatorData ()
 
 instance SummarizeModule AllocatorSummary where
   summarizeArgument _ _ = []
-  summarizeFunction f (AllocatorSummary summ _ finSumm) =
-    case HS.member f summ of
-      False -> []
-      True ->
+  summarizeFunction f (AllocatorSummary summ _ finSumm)
+    | not (HS.member f summ) = []
+    | otherwise =
         case automaticFinalizersForType finSumm (functionReturnType f) of
           -- If there is no allocator, assume we just free it...  this
           -- isn't necessarily safe.
@@ -149,17 +148,16 @@ allocatorAnalysis (esumm, fsumm) funcLike s =
 -- then f is an allocator.  If there is a unique finalizer for the
 -- same type, associate it with this allocator.
 checkReturn :: EscapeSummary -> Function -> Value -> AllocatorSummary -> Analysis AllocatorSummary
-checkReturn esumm f rv summ =
-  case null nonNullRvs of
-    -- Always returns NULL, not an allocator
-    True -> return summ
-    False -> do
-      valid <- mapM (isAllocatedWithoutEscape esumm summ) nonNullRvs
-      case and valid of
-        False -> return summ
-        True ->
-          let summ' = HS.insert f (summ ^. allocatorSummary)
-          in return $! (allocatorSummary .~ summ') summ
+checkReturn esumm f rv summ
+  -- Always returns NULL, not an allocator
+  | null nonNullRvs = return summ
+  | otherwise = do
+    valid <- mapM (isAllocatedWithoutEscape esumm summ) nonNullRvs
+    case and valid of
+      False -> return summ
+      True ->
+        let summ' = HS.insert f (summ ^. allocatorSummary)
+        in return $! (allocatorSummary .~ summ') summ
   where
     rvs = flattenValue rv
     -- Here, drop all NULLs that are being returned since that is
@@ -247,4 +245,4 @@ isNotPhi v =
 -- testing
 allocatorSummaryToTestFormat :: AllocatorSummary -> Map String (Maybe String)
 allocatorSummaryToTestFormat (AllocatorSummary s _ _) =
-  M.fromList $ map ((show . functionName) &&& (const Nothing)) $ HS.toList s
+  M.fromList $ map ((show . functionName) &&& const Nothing) $ HS.toList s

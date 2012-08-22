@@ -90,8 +90,8 @@ identifyArrays :: (FuncLike funcLike, HasFunction funcLike)
                   => DependencySummary
                   -> Simple Lens compositeSummary ArraySummary
                   -> ComposableAnalysis compositeSummary funcLike
-identifyArrays ds lns =
-  composableAnalysisM runner arrayAnalysis lns
+identifyArrays ds =
+  composableAnalysisM runner arrayAnalysis
   where
     runner a = runAnalysis a readOnlyData ()
     readOnlyData = AD ds

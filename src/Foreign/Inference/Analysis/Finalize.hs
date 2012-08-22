@@ -98,8 +98,8 @@ identifyFinalizers :: (FuncLike funcLike, HasFunction funcLike, HasCFG funcLike)
                       -> IndirectCallSummary
                       -> Simple Lens compositeSummary FinalizerSummary
                       -> ComposableAnalysis compositeSummary funcLike
-identifyFinalizers ds ics lns =
-  composableAnalysisM runner finalizerAnalysis lns
+identifyFinalizers ds ics =
+  composableAnalysisM runner finalizerAnalysis
   where
     runner a = runAnalysis a constData ()
     constData = FinalizerData mempty ds ics
@@ -168,7 +168,7 @@ finalizerAnalysis funcLike s@(FinalizerSummary summ _) = do
   -- The finalized parameters are those that are *NOT* in our fact set
   -- at the return instruction
       finalizedOrNull = set0 `HS.difference` notFinalized
-      attachWitness a m = HM.insert a (S.toList (HM.lookupDefault mempty a witnesses)) m
+      attachWitness a = HM.insert a (S.toList (HM.lookupDefault mempty a witnesses))
       newInfo = HS.foldr attachWitness mempty finalizedOrNull
   -- Note, we perform the union with newInfo first so that any
   -- repeated keys take their value from what we just computed.  This
@@ -210,7 +210,8 @@ callTransfer callInst v as info =
           -- function pointer being called, treat it as a finalizer
           -- IFF all of the initializers agree and finalize the same
           -- argument.
-          info1:infos <- mapM (\si -> callTransfer callInst si as info) (map toValue allInits)
+          let xfer si = callTransfer callInst si as info
+          info1:infos <- mapM (xfer . toValue) allInits
           case all (==info1) infos of
             True -> return info1
             False -> return info
@@ -264,10 +265,9 @@ processCFGEdge fi cond v =
     _ -> fi
 
 process' :: Instruction -> FinalizerInfo -> Argument -> Bool -> FinalizerInfo
-process' i fi arg isNull =
-  case isNull of
-    True -> fi
-    False -> removeArgWithWitness arg i "null" fi
+process' i fi arg isNull
+  | isNull = fi
+  | otherwise = removeArgWithWitness arg i "null" fi
 
 -- Helpers
 
@@ -283,7 +283,7 @@ isPointer v =
 finalizerSummaryToTestFormat :: FinalizerSummary -> Map String (Set String)
 finalizerSummaryToTestFormat (FinalizerSummary m _) = convert m
   where
-    convert = foldr addElt mempty . map toFuncNamePair . HM.keys
+    convert = foldr (addElt . toFuncNamePair) mempty . HM.keys
     addElt (f, a) = M.insertWith' S.union f (S.singleton a)
     toFuncNamePair arg =
       let f = argumentFunction arg

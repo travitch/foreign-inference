@@ -107,8 +107,9 @@ identifyFinalizers ds ics =
 -- | Find all functions of one parameter that finalize the given type.
 automaticFinalizersForType :: FinalizerSummary -> Type -> [Function]
 automaticFinalizersForType (FinalizerSummary s _) t =
-  filter ((==1) . length . functionParameters) funcs
+  filter (isSingleton . functionParameters) funcs
   where
+    isSingleton = (==1) . length
     args = HM.keys s
     compatibleArgs = filter ((t==) . argumentType) args
     funcs = map argumentFunction compatibleArgs
@@ -198,8 +199,7 @@ callTransfer callInst v as info =
   case valueContent' v of
     InstructionC LoadInst { } -> do
       sis <- analysisEnvironment singleInitSummary
-      let Just bb = instructionBasicBlock callInst
-          f = basicBlockFunction bb
+      let Just f = instructionFunction callInst
           fv = toValue f
           finits = filter (/=fv) $ indirectCallInitializers sis v
           xfer initializer = callTransfer callInst initializer as info

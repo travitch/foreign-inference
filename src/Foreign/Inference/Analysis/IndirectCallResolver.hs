@@ -38,7 +38,7 @@ import qualified Data.HashMap.Strict as HM
 import Data.HashSet ( HashSet )
 import qualified Data.HashSet as HS
 import Data.List ( elemIndex )
-import Data.Maybe ( fromMaybe, mapMaybe )
+import Data.Maybe ( fromMaybe )
 import Data.Monoid
 
 import Database.Datalog
@@ -96,25 +96,21 @@ indirectCallLookup s = HS.toList . absPathLookup s
 -- | Resolve the targets of an indirect call instruction.  This works
 -- with both C++ virtual function dispatch and some other common
 -- function pointer call patterns.  It is unsound and incomplete.
---
--- FIXME: Make this capable of returning external functions...
--- expected value is low.
-indirectCallTargets :: IndirectCallSummary -> Instruction -> [Function]
+indirectCallTargets :: IndirectCallSummary -> Instruction -> [Value]
 indirectCallTargets ics i =
-  case resolveVirtualCallee (resolverCHA ics) i of
-    Just fs -> fs
-    Nothing ->
+  -- If this is a virtual function call (C++), use the virtual
+  -- function resolver.  Otherwise, fall back to the normal function
+  -- pointer analysis.
+  maybe fptrTargets (fmap toValue) vfuncTargets
+  where
+    vfuncTargets = resolveVirtualCallee (resolverCHA ics) i
+    fptrTargets =
       case i of
         CallInst { callFunction = f } ->
-          mapMaybe toFunction $ indirectCallInitializers ics f
+          indirectCallInitializers ics f
         InvokeInst { invokeFunction = f } ->
-          mapMaybe toFunction $ indirectCallInitializers ics f
+          indirectCallInitializers ics f
         _ -> []
-  where
-    toFunction v =
-      case valueContent' v of
-        FunctionC f -> Just f
-        _ -> Nothing
 
 -- | This is the datalog program to compute a simple transitive
 -- closure (and unify function actual arguments with formals).  Note

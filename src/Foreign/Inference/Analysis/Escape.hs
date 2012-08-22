@@ -15,7 +15,7 @@ module Foreign.Inference.Analysis.Escape (
 
 import Control.Arrow
 import Control.DeepSeq
-import Control.Lens
+import Control.Lens hiding ( from, to )
 import Control.Monad.State.Strict
 import Control.Monad.Writer ( runWriter )
 import Data.GraphViz
@@ -46,9 +46,9 @@ import Foreign.Inference.Interface
 import Foreign.Inference.Analysis.IndirectCallResolver
 
 import System.IO.Unsafe
-import Text.Printf
-import Debug.Trace
-debug = flip trace
+-- import Text.Printf
+-- import Debug.Trace
+-- debug = flip trace
 
 -- | The ways a value can escape from a function
 data EscapeClass = DirectEscape
@@ -281,18 +281,17 @@ instructionEscapeCore :: (Instruction -> Bool)
                          -> Instruction
                          -> EscapeSummary
                          -> Maybe Instruction
-instructionEscapeCore ignorePred i (EscapeSummary eg _ _ _ _) = do
+instructionEscapeCore ignorePred i (EscapeSummary egs _ _ _ _) = do
   ln <- HM.lookup (toValue i) m
-  let reached = reachableSinks feg (unlabelNode ln) g ignorePred
+  let reached = reachableSinks eg (unlabelNode ln) g ignorePred
   case filter (not . allocaSink) reached of
     [] -> Nothing
     (Sink _ w _) : _ -> return w
     _ -> error "Non-sink in reachableSinks result 1"
   where
-    Just bb = instructionBasicBlock i
-    f = basicBlockFunction bb
+    Just f = instructionFunction i
     errMsg = error ("Missing summary for function " ++ show (functionName f))
-    feg@(EscapeGraph m _ g) = HM.lookupDefault errMsg f eg
+    eg@(EscapeGraph m _ g) = HM.lookupDefault errMsg f egs
 
 summarizeEscapeArgument :: Argument -> EscapeSummary -> [(ParamAnnotation, [Witness])]
 summarizeEscapeArgument a er =
@@ -920,15 +919,10 @@ groupConsistent (ec:ecs) =
 extArgEscapeType :: EscapeSummary -> DependencySummary -> ExternalFunction -> Int -> Maybe EscapeClass
 extArgEscapeType summ ds ef ix = do
   annots <- lookupArgumentSummary ds summ ef ix
-  case PAEscape `elem` annots of
-    True -> return DirectEscape
-    False ->
-      case PAFptrEscape `elem` annots of
-        True -> return IndirectEscape
-        False ->
-          case PAContractEscape `elem` annots of
-            True -> return BrokenContractEscape
-            False -> Nothing
+  chooseM_ [ (PAEscape, return DirectEscape)
+           , (PAFptrEscape, return IndirectEscape)
+           , (PAContractEscape, return BrokenContractEscape)
+           ] Nothing annots
 
 -- This stuff doesn't deal with field escapes yet...
 argEscapeType :: EscapeSummary -> Argument -> Maybe EscapeClass

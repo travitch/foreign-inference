@@ -204,7 +204,7 @@ callTransfer callInst v as info =
           finits = filter (/=fv) $ indirectCallInitializers sis v
       case finits of
         [] -> return info
-        [singleInit] -> callTransfer callInst (toValue singleInit) as info
+        [singleInit] -> callTransfer callInst singleInit as info
         allInits -> do
           -- If there is more than one static initializer for the
           -- function pointer being called, treat it as a finalizer

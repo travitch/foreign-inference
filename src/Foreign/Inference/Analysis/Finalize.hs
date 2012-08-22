@@ -211,7 +211,7 @@ callTransfer callInst v as info =
           -- IFF all of the initializers agree and finalize the same
           -- argument.
           let xfer si = callTransfer callInst si as info
-          info1:infos <- mapM (xfer . toValue) allInits
+          info1:infos <- mapM xfer allInits
           case all (==info1) infos of
             True -> return info1
             False -> return info

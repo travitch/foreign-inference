@@ -906,10 +906,9 @@ checkConsistency summ ds fs argCount =
     argAnnotLists = map calleeToAnnotations (NEL.toList fs)
     -- Convert a callee to a list where each element is the (Maybe EscapeClass)
     -- inferred for that argument position
-    calleeToAnnotations e =
-      case e of
-        Left f -> map (argEscapeType summ) (functionParameters f)
-        Right ef -> map (extArgEscapeType summ ds ef) [0..(argCount-1)]
+    calleeToAnnotations = either funcToAnnots extFuncToAnnots
+    funcToAnnots = map (argEscapeType summ) . functionParameters
+    extFuncToAnnots ef = map (extArgEscapeType summ ds ef) [0..(argCount-1)]
 
 groupConsistent :: [Maybe EscapeClass] -> Bool
 groupConsistent [] = True

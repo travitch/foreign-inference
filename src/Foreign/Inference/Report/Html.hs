@@ -52,11 +52,11 @@ htmlFunctionPage r f srcFile startLine functionText = H.docTypeHtml $ do
     H.script ! A.type_ "text/javascript" ! A.src "../jquery-1.7.1.js" $ return ()
     H.script ! A.type_ "text/javascript" ! A.src "../highlight.js" $ return ()
   H.body $ do
-    "Breakdown of " >> toHtml funcName >> " defined in " >> toHtml srcFile
+    stringToHtml "Breakdown of " >> toHtml funcName >> stringToHtml " defined in " >> toHtml srcFile
     H.div $ do
       H.ul $ forM_ (functionParameters f) (drilldownArgumentEntry startLine r)
 
-    toHtml funcName >> "(" >> commaSepList (zip [0..] args) (indexPageArgument r) >> ") -> "
+    toHtml funcName >> stringToHtml "(" >> commaSepList (zip [0..] args) (indexPageArgument r) >> stringToHtml ") -> "
     H.span ! A.class_ "code-type" $ toHtml (show fretType)
     let lang = sourceFileLanguage srcFile
         highlightedSrc = K.highlightAs lang (preprocessFunction functionText)
@@ -154,16 +154,16 @@ drilldownArgumentAnnotations :: Int -> [(ParamAnnotation, [Witness])] -> Html
 drilldownArgumentAnnotations _ [] = return ()
 drilldownArgumentAnnotations startLine annots = do
   H.span ! A.class_ "code-comment" $ do
-    " /* ["
+    stringToHtml " /* ["
     commaSepList annots mkAnnotLink
-    "] */"
+    stringToHtml "] */"
   where
     mkAnnotLink (a, witnessLines)
       | null witnessLines = toHtml (show a)
       | otherwise =
         H.a ! A.href "#" ! A.onclick (H.preEscapedToValue clickScript) $ toHtml (show a)
       where
-        clickScript = mconcat ["highlightLines("
+        clickScript = mconcat [ "highlightLines("
                               , pack (show startLine)
                               , ", ["
                               , pack (intercalate "," (mapMaybe showWL witnessLines))
@@ -202,7 +202,7 @@ htmlIndexPage r opts = H.docTypeHtml $ do
   H.body $ do
     H.h1 "Module Information"
     H.div ! A.id "module-info" $ do
-      "Name: " >> toHtml (moduleIdentifier m)
+      stringToHtml "Name: " >> toHtml (moduleIdentifier m)
     H.h1 "Exposed Functions"
     indexPageFunctionListing r (LinkDrilldowns `elem` opts) "exposed-functions" externsWithAliases
     H.h1 "Private Functions"
@@ -275,7 +275,7 @@ indexPageAnnotatedType :: (CType, [TypeAnnotation]) -> Html
 indexPageAnnotatedType (t, annots) = do
   H.li $ do
     H.span $ toHtml (show t)
-    " "
+    stringToHtml " "
     H.span ! A.class_ "code-comment" $ toHtml ("/* " ++ (show annots) ++ " */")
 
 
@@ -299,9 +299,9 @@ indexPageFunctionEntry r linkFunc (f, internalName) = do
                 True -> H.a ! A.href (toValue drilldown) $ toHtml fname
                 False -> toHtml fname
         _ -> toHtml fname
-      "("
+      stringToHtml "("
       commaSepList (zip [0..] args) (indexPageArgument r)
-      ") -> "
+      stringToHtml ") -> "
       H.span ! A.class_ "code-type" $ toHtml (show fretType)
       functionAnnotations fannots
   where
@@ -322,7 +322,7 @@ indexPageArgument :: InterfaceReport -> (Int, Argument) -> Html
 indexPageArgument r (ix, arg) = do
   H.span ! A.class_ "code-type" $ do
     toHtml paramType
-  " " >> toHtml paramName >> " " >> indexArgumentAnnotations annots
+  stringToHtml " " >> toHtml paramName >> stringToHtml " " >> indexArgumentAnnotations annots
   where
     paramType = show (argumentType arg)
     paramName = identifierContent (argumentName arg)
@@ -335,15 +335,15 @@ indexArgumentAnnotations :: [ParamAnnotation] -> Html
 indexArgumentAnnotations [] = return ()
 indexArgumentAnnotations annots = do
   H.span ! A.class_ "code-comment" $ do
-    " /* ["
+    stringToHtml " /* ["
     commaSepList annots (toHtml . show)
-    "] */"
+    stringToHtml "] */"
 
 functionAnnotations :: [FuncAnnotation] -> Html
 functionAnnotations [] = return ()
 functionAnnotations annots = do
   H.span ! A.class_ "code-comment" $ do
-    " /* [" >> commaSepList annots (toHtml . show) >> "] */"
+    stringToHtml " /* [" >> commaSepList annots (toHtml . show) >> stringToHtml "] */"
 
 -- Helpers
 
@@ -356,6 +356,9 @@ commaSepList itms f =
   forM_ (zip itms commaTags) $ \(itm, tag) -> do
     f itm
     when tag $ do
-      ", "
+      stringToHtml ", "
   where
     commaTags = reverse $ False : replicate (length itms - 1) True
+
+stringToHtml :: String -> Html
+stringToHtml = toHtml

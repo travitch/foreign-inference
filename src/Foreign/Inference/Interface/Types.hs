@@ -9,13 +9,17 @@ module Foreign.Inference.Interface.Types (
   FuncAnnotation(..),
   ParamAnnotation(..),
   TypeAnnotation(..),
-  Linkage(..)
+  Linkage(..),
+  ErrorAction(..)
   ) where
 
 import GHC.Generics
 
+import Control.DeepSeq
+import Control.DeepSeq.Generics ( genericRnf )
 import Data.Aeson
 import Data.List ( intercalate )
+import Data.Set ( Set )
 import Text.Printf
 
 import LLVM.Analysis.AccessPath
@@ -45,9 +49,52 @@ data ParamAnnotation = PAArray !Int
 instance FromJSON ParamAnnotation
 instance ToJSON ParamAnnotation
 
+instance NFData ParamAnnotation where
+  rnf = genericRnf
+
 deriving instance Generic AccessType
 instance FromJSON AccessType
 instance ToJSON AccessType
+
+data ErrorActionArgument = ErrorInt Int
+                         | ErrorString String
+                         | ErrorArgument String Int
+                           -- ^ Type and the position of the formal
+                           -- argument being passed as an actual
+                           -- argument
+                         deriving (Show, Read, Generic, Eq, Ord)
+
+instance FromJSON ErrorActionArgument
+instance ToJSON ErrorActionArgument
+
+instance NFData ErrorActionArgument where
+  rnf = genericRnf
+
+-- | These are actions that error handling code can perform that we
+-- are interested in.  The most general characterization of these
+-- actions is that they are the program actions that can allow the
+-- function to pass information back to the caller (either in-band
+-- return values or out-of-band routes).
+data ErrorAction = ReturnConstantInt (Set Int)
+                 | ReturnNULL
+                 | AssignToGlobal String (Set Int)
+                 | AssignToCall String (Set Int)
+                   -- ^ Assign a constant int to the return value of a
+                   -- call instruction
+                 | FunctionCall String [(Int, ErrorActionArgument)]
+                   -- ^ A call to a function.  The list should not be
+                   -- ints, but more descriptive wrappers.  We are
+                   -- interested in constants (string and int) and
+                   -- function arguments.  We may in the future be
+                   -- interested in locals that are returned by
+                   -- value...
+                 deriving (Show, Read, Generic, Eq, Ord)
+
+instance FromJSON ErrorAction
+instance ToJSON ErrorAction
+
+instance NFData ErrorAction where
+  rnf = genericRnf
 
 -- | The annotations that can apply at the 'ForeignFunction' level.
 -- The FAVarArg annotation is not inferred but is still necessary.
@@ -59,14 +106,21 @@ data FuncAnnotation = FAAllocator String -- ^ Record the associated finalizer
                     | FANoRet -- ^ The function does not return to the caller
                     | FAVarArg
                     | FACondFinalizer
+                    | FAReportsErrors (Set ErrorAction)
                     deriving (Show, Read, Generic, Eq, Ord)
 instance FromJSON FuncAnnotation
 instance ToJSON FuncAnnotation
+
+instance NFData FuncAnnotation where
+  rnf = genericRnf
 
 data TypeAnnotation = TARefCounted String String -- ^ The addRef and decRef functions
                     deriving (Show, Read, Generic, Eq, Ord)
 instance FromJSON TypeAnnotation
 instance ToJSON TypeAnnotation
+
+instance NFData TypeAnnotation where
+  rnf = genericRnf
 
 -- | Define linkage types so that modules with overlapping symbol
 -- definitions have a chance at being linked together.
@@ -75,6 +129,7 @@ data Linkage = LinkDefault
              deriving (Eq, Ord, Show, Generic)
 instance FromJSON Linkage
 instance ToJSON Linkage
+instance NFData Linkage
 
 -- | A simple external representation of C/C++ types.  Note that C++
 -- templates are not (and will not) be represented.
@@ -93,6 +148,9 @@ data CType = CVoid
            deriving (Eq, Ord, Generic)
 instance FromJSON CType
 instance ToJSON CType
+
+instance NFData CType where
+  rnf = genericRnf
 
 instance Show CType where
   show CVoid = "void"
@@ -117,6 +175,9 @@ data Parameter = Parameter { parameterType :: CType
 instance FromJSON Parameter
 instance ToJSON Parameter
 
+instance NFData Parameter where
+  rnf = genericRnf
+
 -- | A description of the interface of a foreign function.  Note that
 -- the function name is a ByteString to match the format it will have
 -- in a shared library.
@@ -130,12 +191,18 @@ data ForeignFunction = ForeignFunction { foreignFunctionName :: String
 instance FromJSON ForeignFunction
 instance ToJSON ForeignFunction
 
+instance NFData ForeignFunction where
+  rnf = genericRnf
+
 data CEnum = CEnum { enumName :: String
                    , enumValues :: [(String, Int)]
                    }
            deriving (Eq, Ord, Show, Generic)
 instance FromJSON CEnum
 instance ToJSON CEnum
+
+instance NFData CEnum where
+  rnf = genericRnf
 
 -- | A description of a foreign library.  This is just a collection of
 -- ForeignFunctions that also tracks its name and dependencies.
@@ -149,3 +216,6 @@ data LibraryInterface = LibraryInterface { libraryFunctions :: [ForeignFunction]
 
 instance FromJSON LibraryInterface
 instance ToJSON LibraryInterface
+
+instance NFData LibraryInterface where
+  rnf = genericRnf

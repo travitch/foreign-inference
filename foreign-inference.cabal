@@ -48,7 +48,7 @@ library
   build-depends: base > 3 && < 5, containers, filepath, text, bytestring, ghc-prim,
                  unordered-containers >= 0.2.1.0, hashable, mtl > 2 && < 3,
                  aeson >= 0.4.0.0, loch-th >= 0.2, temporary, process, data-ordlist,
-                 llvm-analysis, deepseq, lens >= 1,
+                 llvm-analysis, deepseq, deepseq-generics, lens >= 1,
                  failure >= 0.2, regex-tdfa, transformers >= 0.2 && < 0.4, hbgl,
                  file-embed >= 0.0.4.2, hjsmin, graphviz, semigroups,
                  datalog,

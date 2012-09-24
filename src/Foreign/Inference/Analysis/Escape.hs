@@ -432,17 +432,15 @@ argumentFieldsEscape eg a s =
     checkFieldEscapes _ _ = error "argumentFieldsEscape: Non FieldSource in fieldSrcs list"
 
 isSink :: Maybe Value -> Maybe Value
-isSink v =
-  case v of
-    Nothing -> Nothing
-    Just vv ->
-      case valueContent' vv of
-        ArgumentC _ -> Just vv
-        GlobalVariableC _ -> Just vv
-        ExternalValueC _ -> Just vv
-        InstructionC (CallInst {}) -> Just vv
-        InstructionC (InvokeInst {}) -> Just vv
-        _ -> Nothing
+isSink v = do
+  v' <- v
+  case valueContent' v' of
+    ArgumentC _ -> Just v'
+    GlobalVariableC _ -> Just v'
+    ExternalValueC _ -> Just v'
+    InstructionC (CallInst {}) -> Just v'
+    InstructionC (InvokeInst {}) -> Just v'
+    _ -> Nothing
 
 -- | A helper to abstract the pointer type tests.  If the value @v@ is
 -- not a pointer, return @defVal@.  Otherwise, return @isPtrVal@.

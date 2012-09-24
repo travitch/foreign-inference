@@ -494,10 +494,9 @@ addCallFieldEdges gs (base, sinkPaths) =
     return $ concatMap (makeEdges fsnodes) sinkPaths
   where
     makeEdges fsnodes (p, dest) = mapMaybe (makeEdge p dest) fsnodes
-    makeEdge p1 dest (p2, src, _) =
-      case p1 == p2 of
-        False -> Nothing
-        True -> Just $ LEdge (Edge src dest) UnconditionalEdge
+    makeEdge p1 dest (p2, src, _)
+      | p1 == p2 = Nothing
+      | otherwise = return $ LEdge (Edge src dest) UnconditionalEdge
 
 -- | For each fieldSource node, find all of the normal nodes with the
 -- same base.  For each of those nodes, clone their edges and replace

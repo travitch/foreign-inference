@@ -6,7 +6,6 @@ module Foreign.Inference.AnalysisMonad (
   analysisLocal,
   analysisGet,
   analysisPut
---  module Control.Monad.RWS.Strict
   ) where
 
 import Control.Lens

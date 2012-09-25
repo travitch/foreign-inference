@@ -23,6 +23,7 @@ module Foreign.Inference.Analysis.Util.CompositeSummary (
   allocatorSummary,
   refCountSummary,
   scalarEffectSummary,
+  errorHandlingSummary,
   extractSummary
   ) where
 
@@ -41,6 +42,7 @@ import LLVM.Analysis.Types
 
 import Foreign.Inference.Analysis.Allocator
 import Foreign.Inference.Analysis.Array
+import Foreign.Inference.Analysis.ErrorHandling
 import Foreign.Inference.Analysis.Escape
 import Foreign.Inference.Analysis.Finalize
 import Foreign.Inference.Analysis.Nullable
@@ -93,6 +95,7 @@ data AnalysisSummary =
                   , _allocatorSummary :: !AllocatorSummary
                   , _refCountSummary :: !RefCountSummary
                   , _scalarEffectSummary :: !ScalarEffectSummary
+                  , _errorHandlingSummary :: !ErrorSummary
                   }
   deriving (Eq, Generic)
 
@@ -111,6 +114,7 @@ instance Monoid AnalysisSummary where
                            , _allocatorSummary = mempty
                            , _refCountSummary = mempty
                            , _scalarEffectSummary = mempty
+                           , _errorHandlingSummary = mempty
                            }
   mappend a1 a2 =
     AnalysisSummary { _nullableSummary = _nullableSummary a1 `mappend` _nullableSummary a2
@@ -122,6 +126,7 @@ instance Monoid AnalysisSummary where
                     , _allocatorSummary = _allocatorSummary a1 `mappend` _allocatorSummary a2
                     , _refCountSummary = _refCountSummary a1 `mappend` _refCountSummary a2
                     , _scalarEffectSummary = _scalarEffectSummary a1 `mappend` _scalarEffectSummary a2
+                    , _errorHandlingSummary = _errorHandlingSummary a1 `mappend` _errorHandlingSummary a2
                     }
 
 -- | Apply a function that uniformly summarizes *all* of the
@@ -140,4 +145,5 @@ extractSummary summ f =
   , f (_allocatorSummary summ)
   , f (_refCountSummary summ)
   , f (_scalarEffectSummary summ)
+  , f (_errorHandlingSummary summ)
   ]

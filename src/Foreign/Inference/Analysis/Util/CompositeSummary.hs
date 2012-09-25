@@ -1,4 +1,4 @@
-{-# LANGUAGE RankNTypes, TemplateHaskell #-}
+{-# LANGUAGE RankNTypes, TemplateHaskell, DeriveGeneric #-}
 {-| This module defines a data type that can be used as the summary
 type for a composite analysis using all of the analyses defined in
 this package.
@@ -26,7 +26,10 @@ module Foreign.Inference.Analysis.Util.CompositeSummary (
   extractSummary
   ) where
 
+import GHC.Generics
+
 import Control.DeepSeq
+import Control.DeepSeq.Generics
 import Control.Lens
 import Data.Monoid
 
@@ -91,15 +94,12 @@ data AnalysisSummary =
                   , _refCountSummary :: !RefCountSummary
                   , _scalarEffectSummary :: !ScalarEffectSummary
                   }
-  deriving (Eq)
+  deriving (Eq, Generic)
 
 $(makeLenses ''AnalysisSummary)
 
 instance NFData AnalysisSummary where
-  rnf a@(AnalysisSummary s1 s2 s3 s4 s5 s6 s7 s8 s9) =
-    s1 `deepseq` s2 `deepseq` s3 `deepseq` s4 `deepseq`
-      s5 `deepseq` s6 `deepseq` s7 `deepseq` s8 `deepseq`
-      s9 `deepseq` a `seq` ()
+  rnf = genericRnf
 
 instance Monoid AnalysisSummary where
   mempty = AnalysisSummary { _nullableSummary = mempty

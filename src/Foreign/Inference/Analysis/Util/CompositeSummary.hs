@@ -60,6 +60,7 @@ data FunctionMetadata =
                    , functionCFG :: CFG
                    , functionCDG :: CDG
                    , functionDomTree :: DominatorTree
+                   , functionPostdomTree :: PostdominatorTree
                    }
 
 instance HasFunction FunctionMetadata where
@@ -71,12 +72,16 @@ instance HasCFG FunctionMetadata where
 instance HasDomTree FunctionMetadata where
   getDomTree = functionDomTree
 
+instance HasPostdomTree FunctionMetadata where
+  getPostdomTree = functionPostdomTree
+
 instance FuncLike FunctionMetadata where
   fromFunction f =
     FunctionMetadata { functionOriginal = f
                      , functionCFG = cfg
                      , functionCDG = controlDependenceGraph cfg
                      , functionDomTree = dominatorTree cfg
+                     , functionPostdomTree = postdominatorTree (reverseCFG cfg)
                      }
     where
       cfg = mkCFG f

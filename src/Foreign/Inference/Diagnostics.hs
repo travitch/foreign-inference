@@ -30,12 +30,7 @@ import Text.Printf
 
 class HasDiagnostics a where
   diagnosticLens :: Simple Lens a Diagnostics
-  diagnosticLens = lens (const mempty) (\a _ -> a)
-  -- addDiagnostics :: a -> Diagnostics -> a
-  -- addDiagnostics a _ = a
-
-  -- getDiagnostics :: a -> Diagnostics
-  -- getDiagnostics _ = mempty
+  diagnosticLens = lens (const mempty) const
 
 -- | A source location.
 data Location = Location { locationFilename :: String
@@ -138,3 +133,5 @@ formatDiags :: Set Diagnostic -> String
 formatDiags diags = unlines $ map show diagList
   where
     diagList = S.toList diags
+
+{-# ANN module "HLint: ignore Use if" #-}

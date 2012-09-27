@@ -320,8 +320,7 @@ indexPageFunctionEntry r linkFunc (f, internalName) = do
 
 indexPageArgument :: InterfaceReport -> (Int, Argument) -> Html
 indexPageArgument r (ix, arg) = do
-  H.span ! A.class_ "code-type" $ do
-    toHtml paramType
+  H.span ! A.class_ "code-type" $ toHtml paramType
   stringToHtml " " >> toHtml paramName >> stringToHtml " " >> indexArgumentAnnotations annots
   where
     paramType = show (argumentType arg)
@@ -333,7 +332,7 @@ indexPageArgument r (ix, arg) = do
 
 indexArgumentAnnotations :: [ParamAnnotation] -> Html
 indexArgumentAnnotations [] = return ()
-indexArgumentAnnotations annots = do
+indexArgumentAnnotations annots =
   H.span ! A.class_ "code-comment" $ do
     stringToHtml " /* ["
     commaSepList annots (toHtml . show)
@@ -341,8 +340,8 @@ indexArgumentAnnotations annots = do
 
 functionAnnotations :: [FuncAnnotation] -> Html
 functionAnnotations [] = return ()
-functionAnnotations annots = do
-  H.span ! A.class_ "code-comment" $ do
+functionAnnotations annots =
+  H.span ! A.class_ "code-comment" $
     stringToHtml " /* [" >> commaSepList annots (toHtml . show) >> stringToHtml "] */"
 
 -- Helpers
@@ -355,8 +354,7 @@ commaSepList :: [a] -> (a -> Html) -> Html
 commaSepList itms f =
   forM_ (zip itms commaTags) $ \(itm, tag) -> do
     f itm
-    when tag $ do
-      stringToHtml ", "
+    when tag (stringToHtml ", ")
   where
     commaTags = reverse $ False : replicate (length itms - 1) True
 

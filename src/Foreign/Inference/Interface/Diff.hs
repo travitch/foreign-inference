@@ -119,7 +119,7 @@ diffFunc f1 f2 =
 
     newAnnots = S.toList $ a2 `S.difference` a1
     oldAnnots = S.toList $ a1 `S.difference` a2
-    paramDiffs = map paramsDiffer (zip p1 p2)
+    paramDiffs = zipWith (curry paramsDiffer) p1 p2
 
 -- | Given two library interfaces, divide the functions defined in them into three
 -- categories:
@@ -179,7 +179,7 @@ diffBuilder d = mconcat [ addedFuncs, removedFuncs, changes ]
 
 diffAddRem :: String -> [ForeignFunction] -> Builder
 diffAddRem _ [] = mempty
-diffAddRem s fs = mconcat $ (fromString s) : map funcToBuilder fs
+diffAddRem s fs = mconcat $ fromString s : map funcToBuilder fs
 
 funcToBuilder :: ForeignFunction -> Builder
 funcToBuilder ff = mconcat [ fromString " * "
@@ -200,21 +200,23 @@ changeToBuilder (f, d) = mconcat $
     changed = functionDiffChangedParameters d
     newAttrs = functionDiffAddedAnnotations d
     oldAttrs = functionDiffRemovedAnnotations d
-    added = fromString $ concatMap (\attr -> "+" ++ show attr) newAttrs
-    removed = fromString $ concatMap (\attr -> "-" ++ show attr) oldAttrs
+    added = fromString $ concatMap (('+':) . show) newAttrs
+    removed = fromString $ concatMap (('-':) . show) oldAttrs
 
 paramChangeBuilder :: Maybe ParameterDiff -> Builder
 paramChangeBuilder Nothing = mempty
-paramChangeBuilder (Just d) = mconcat $ [
+paramChangeBuilder (Just d) = mconcat [
   fromString (concat [ "   ** "
                      , show (parameterDiffNameChange d)
                      , show (parameterDiffTypeChange d)
                      , " "
                      ]),
-  fromString $ concatMap (\attr -> "+" ++ show attr) newAnnots,
-  fromString $ concatMap (\attr -> "-" ++ show attr) oldAnnots,
+  fromString $ concatMap (('+':) . show) newAnnots,
+  fromString $ concatMap (('-':) . show) oldAnnots,
   fromString "\n"
   ]
   where
     newAnnots = parameterDiffAddedAnnotations d
     oldAnnots = parameterDiffRemovedAnnotations d
+
+{-# ANN module "HLint: ignore Use if" #-}

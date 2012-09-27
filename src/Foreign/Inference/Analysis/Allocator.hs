@@ -246,3 +246,5 @@ isNotPhi v =
 allocatorSummaryToTestFormat :: AllocatorSummary -> Map String (Maybe String)
 allocatorSummaryToTestFormat (AllocatorSummary s _ _) =
   M.fromList $ map ((show . functionName) &&& const Nothing) $ HS.toList s
+
+{-# ANN module "HLint: ignore Use if" #-}

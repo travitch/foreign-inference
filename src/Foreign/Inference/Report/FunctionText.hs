@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings #-}
+
 -- | This module contains a function to extract the definition of a
 -- function from its source file.  The source file is determined based
 -- on the Module metadata.
@@ -10,6 +10,7 @@ module Foreign.Inference.Report.FunctionText (
   ) where
 
 import Blaze.ByteString.Builder
+import Blaze.ByteString.Builder.Char.Utf8
 import Control.Applicative ( many )
 import Data.Ascii ( ascii )
 import Data.Attoparsec.ByteString.Lazy ( Parser )
@@ -57,9 +58,9 @@ matchedBraces = do
   _ <- P.word8 (ascii '{')
   content <- many contentAndSubBody
   _ <- P.word8 (ascii '}')
-  return $ mconcat [ fromByteString "{"
+  return $ mconcat [ fromString "{"
                    , mconcat content
-                   , fromByteString "}"
+                   , fromString "}"
                    ]
 
 contentAndSubBody :: Parser Builder
@@ -109,3 +110,5 @@ getFunctionText a func = do
 
       maybe Nothing mkTuple (P.maybeResult functionText)
     _ -> Nothing
+
+{-# ANN module "HLint: ignore Use if" #-}

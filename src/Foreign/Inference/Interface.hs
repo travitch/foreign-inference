@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings, ExistentialQuantification, DeriveDataTypeable #-}
+{-# LANGUAGE ExistentialQuantification, DeriveDataTypeable #-}
 {-# LANGUAGE TemplateHaskell, StandaloneDeriving, ViewPatterns #-}
 -- | This module defines an external representation of library
 -- interfaces.  Individual libraries are represented by the
@@ -422,9 +422,8 @@ functionToExternal summaries annots f =
                              }
   where
     vis = functionVisibility f
-    fannots = concat [ userFunctionAnnotations annots f
-                    , concatMap (summarizeFunction f) summaries
-                    ]
+    fannots = userFunctionAnnotations annots f ++
+                concatMap (summarizeFunction f) summaries
     fretType = case functionType f of
       TypeFunction rt _ _ -> rt
       t -> t
@@ -435,11 +434,10 @@ paramToExternal summaries annots (ix, arg) = do
   return Parameter { parameterType = ptype
                    , parameterName = identifierAsString (argumentName arg)
                    , parameterAnnotations =
-                     concat [ userParameterAnnotations annots f ix
+                     userParameterAnnotations annots f ix ++
                               -- The map fst here drops witness information -
                               -- we don't need to expose that in summaries.
-                            , concatMap (map fst . summarizeArgument arg) summaries
-                            ]
+                       concatMap (map fst . summarizeArgument arg) summaries
                    }
   where
     f = argumentFunction arg
@@ -574,3 +572,5 @@ toLinkage l = case l of
   LTCommon -> Just LinkDefault
   LTWeakAny -> Just LinkWeak
   LTWeakODR -> Just LinkWeak
+
+{-# ANN module "HLint: ignore Use if" #-}

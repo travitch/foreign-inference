@@ -14,7 +14,7 @@ import qualified Data.HashMap.Strict as M
 import Data.HashSet ( HashSet )
 import qualified Data.HashSet as HS
 import qualified Data.Set as S
-import Data.Maybe ( catMaybes, mapMaybe )
+import Data.Maybe ( catMaybes, fromMaybe, mapMaybe )
 import Data.Monoid
 import qualified Data.Text as T
 import Debug.Trace.LocationTH
@@ -106,7 +106,7 @@ collectEnums = go Nothing
                                 } acc =
       case T.null bsname of
         True ->
-          CEnum { enumName = maybe "" id name
+          CEnum { enumName = fromMaybe "" name
                 , enumValues = mapMaybe toEnumeratorValue enums
                 } : acc
         False ->
@@ -170,7 +170,7 @@ metadataStructTypeToCType (TypeStruct (Just name) members _,
                                                }) =
   let memberTypes = zip members cmembers
       mtys = mapM trNameAndType memberTypes
-  in CStruct (sanitizeStructName name) $ maybe [] id mtys
+  in CStruct (sanitizeStructName name) $ fromMaybe [] mtys
   where
     trNameAndType (llvmType, Just MetaDWDerivedType { metaDerivedTypeName = memberName
                                                }) = do
@@ -204,7 +204,7 @@ structMemberToCType t = case t of
   TypeStruct Nothing ts _ -> do
     tts <- mapM structMemberToCType ts
     return $! CAnonStruct tts
-  TypeVoid -> return $! CVoid -- Nothing
+  TypeVoid -> return CVoid
   TypeFP128 -> return $! CArray (CInt 8) 16
   -- Fake an 80 bit floating point number with an array of 10 bytes
   TypeX86FP80 -> return $! CArray (CInt 8) 10
@@ -218,7 +218,7 @@ paramMetaUnsigned :: Argument -> Bool
 paramMetaUnsigned a =
   case argumentMetadata a of
     [] -> False
-    [MetaDWLocal { metaLocalType = Just mt }] -> do
+    [MetaDWLocal { metaLocalType = Just mt }] ->
       case mt of
         MetaDWBaseType { metaBaseTypeEncoding = DW_ATE_unsigned } -> True
         MetaDWDerivedType { metaDerivedTypeParent = Just baseType } ->
@@ -281,7 +281,7 @@ typeSort ts = reverse $ topsort' g
     g = mkGraph ns es
 
     toNodeMap = M.fromList (zip (map fst ts) [0..])
-    ns = map (\(ix, t) -> LNode ix t) (zip [0..] ts)
+    ns = zipWith LNode [0..] ts
     es = concatMap toEdges ts
     toEdges (t@(TypeStruct _ members _), _) =
       case M.lookup t toNodeMap of
@@ -291,3 +291,5 @@ typeSort ts = reverse $ topsort' g
     toEdge srcid t = do
       dstid <- M.lookup t toNodeMap
       return $! LEdge (Edge srcid dstid) ()
+
+{-# ANN module "HLint: ignore Use if" #-}

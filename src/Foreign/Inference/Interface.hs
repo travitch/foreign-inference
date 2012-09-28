@@ -29,6 +29,7 @@ module Foreign.Inference.Interface (
   CType(..),
   Linkage(..),
   ErrorAction(..),
+  ErrorActionArgument(..),
   ParamAnnotation(..),
   FuncAnnotation(..),
   TypeAnnotation(..),

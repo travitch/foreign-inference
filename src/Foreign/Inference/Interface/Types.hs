@@ -10,7 +10,8 @@ module Foreign.Inference.Interface.Types (
   ParamAnnotation(..),
   TypeAnnotation(..),
   Linkage(..),
-  ErrorAction(..)
+  ErrorAction(..),
+  ErrorActionArgument(..)
   ) where
 
 import GHC.Generics

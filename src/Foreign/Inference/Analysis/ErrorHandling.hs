@@ -11,13 +11,14 @@ import GHC.Generics
 
 import Control.DeepSeq
 import Control.DeepSeq.Generics ( genericRnf )
-import Control.Lens ( Simple, makeLenses, (%~), (.~)  )
+import Control.Lens ( Simple, (%~), (.~), makeLenses )
 import Control.Monad ( foldM )
 import Control.Monad.Trans.Class
 import Control.Monad.Trans.Maybe
 import qualified Data.Foldable as F
 import Data.HashMap.Strict ( HashMap )
 import qualified Data.HashMap.Strict as HM
+import Data.List ( elemIndex )
 import Data.Monoid
 import Data.SBV
 import Data.Set ( Set )
@@ -66,8 +67,8 @@ instance HasDiagnostics ErrorSummary where
   diagnosticLens = errorDiagnostics
 
 data ErrorData =
-  ErrorData { _dependencySummary :: DependencySummary
-            , _indirectCallSummary :: IndirectCallSummary
+  ErrorData { dependencySummary :: DependencySummary
+            , indirectCallSummary :: IndirectCallSummary
             , _blockRetLabels :: BlockReturns
             }
 
@@ -188,7 +189,7 @@ cmpToFormula :: ErrorSummary
                 -> Value
                 -> MaybeT Analysis (SInt32 -> SBool, SInt32 -> SBool)
 cmpToFormula s rel v1 v2 = do
-  ds <- lift $ analysisEnvironment _dependencySummary
+  ds <- lift $ analysisEnvironment dependencySummary
   let v1' = callFuncOrConst v1
       v2' = callFuncOrConst v2
   case (v1', v2') of
@@ -227,6 +228,10 @@ cmpPredicateToRelation p =
 
 isTrue :: (SInt32 -> SBool) -> Bool
 isTrue = unsafePerformIO . isTheorem
+-- isTrue formula = unsafePerformIO $ do
+--   putStrLn "Calling z3"
+--   res <- isTheorem formula
+--   return res
 
 errRetVal :: [FuncAnnotation] -> Maybe Int
 errRetVal [] = Nothing
@@ -250,6 +255,37 @@ branchToErrorDescriptor bb = do
   rc <- liftMaybe $ blockReturn brs bb
   case valueContent' rc of
     ConstantC ConstantInt { constantIntValue = iv } ->
-      let act = ReturnConstantInt (S.singleton (fromIntegral iv))
-      in return $ S.singleton act
+      let ract = ReturnConstantInt (S.singleton (fromIntegral iv))
+          acts = foldr instToAction [] (basicBlockInstructions bb)
+      in return $ S.fromList (ract : acts)
     _ -> fail "Non-constant return value"
+
+instToAction ::Instruction -> [ErrorAction] -> [ErrorAction]
+instToAction i acc =
+  case i of
+    CallInst { callFunction = (valueContent' -> FunctionC f)
+             , callArguments = (map fst -> args)
+             } ->
+      let fname = identifierAsString (functionName f)
+          argActs = foldr callArgActions [] (zip [0..] args)
+      in FunctionCall fname argActs : acc
+    _ -> acc
+
+callArgActions :: (Int, Value)
+                  -> [(Int, ErrorActionArgument)]
+                  -> [(Int, ErrorActionArgument)]
+callArgActions (ix, v) acc =
+  case valueContent' v of
+    ArgumentC a ->
+      let atype = show (argumentType a)
+          aix = argumentIndex a
+      in (ix, ErrorArgument atype aix) : acc
+    ConstantC ConstantInt { constantIntValue = (fromIntegral -> iv) } ->
+      (ix, ErrorInt iv) : acc
+    _ -> acc
+
+argumentIndex :: Argument -> Int
+argumentIndex a = aix
+  where
+    f = argumentFunction a
+    Just aix = elemIndex a (functionParameters f)

@@ -1,4 +1,5 @@
-{-# LANGUAGE ViewPatterns, TemplateHaskell, RankNTypes, ScopedTypeVariables #-}
+{-# LANGUAGE RankNTypes, ScopedTypeVariables #-}
+{-# LANGUAGE TemplateHaskell, ViewPatterns, DeriveGeneric #-}
 {-|
 
 This analysis identifies functions that are allocators (in the style
@@ -32,9 +33,12 @@ module Foreign.Inference.Analysis.Allocator (
   allocatorSummaryToTestFormat
   ) where
 
+import GHC.Generics ( Generic )
+
 import Control.Arrow ( (&&&) )
 import Control.DeepSeq
-import Control.Lens
+import Control.DeepSeq.Generics ( genericRnf )
+import Control.Lens ( Simple, lens, view, set, (^.), (.~), makeLenses )
 import Data.Map ( Map )
 import qualified Data.Map as M
 import Data.Maybe ( isJust )
@@ -63,6 +67,7 @@ data AllocatorSummary =
                    , _allocatorDiagnostics :: Diagnostics
                    , _finalizerSummary :: FinalizerSummary
                    }
+  deriving (Generic)
 
 $(makeLenses ''AllocatorSummary)
 
@@ -75,7 +80,7 @@ instance Monoid AllocatorSummary where
     AllocatorSummary (HS.union s1 s2) (mappend d1 d2) (mappend f1 f2)
 
 instance NFData AllocatorSummary where
-  rnf a@(AllocatorSummary s d f) = s `deepseq` d `deepseq` f `deepseq` a `seq` ()
+  rnf = genericRnf
 
 instance HasDiagnostics AllocatorSummary where
   diagnosticLens = allocatorDiagnostics

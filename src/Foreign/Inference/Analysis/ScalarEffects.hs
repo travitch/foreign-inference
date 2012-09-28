@@ -1,4 +1,4 @@
-{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE RankNTypes, DeriveGeneric #-}
 -- | This anaysis identifies functions that have scalar effects on
 -- their arguments.
 --
@@ -16,8 +16,11 @@ module Foreign.Inference.Analysis.ScalarEffects (
   scalarEffectSubOne
   ) where
 
+import GHC.Generics ( Generic )
+
 import Control.DeepSeq
-import Control.Lens
+import Control.DeepSeq.Generics ( genericRnf )
+import Control.Lens ( Simple )
 import Control.Monad.Identity
 import qualified Data.HashMap.Strict as HM
 import Data.Monoid
@@ -32,7 +35,7 @@ import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
 
 data ScalarEffectSummary = ScalarEffectSummary !ScalarEffectResult
-                         deriving (Eq)
+                         deriving (Eq, Generic)
 
 instance HasDiagnostics ScalarEffectSummary
 
@@ -42,8 +45,7 @@ instance Monoid ScalarEffectSummary where
     ScalarEffectSummary (s1 `mappend` s2)
 
 instance NFData ScalarEffectSummary where
-  rnf e@(ScalarEffectSummary s) =
-    s `deepseq` e `seq` ()
+  rnf = genericRnf
 
 instance SummarizeModule ScalarEffectSummary where
   summarizeFunction _ _ = []

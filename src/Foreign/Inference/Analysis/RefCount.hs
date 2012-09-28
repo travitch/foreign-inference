@@ -1,4 +1,5 @@
-{-# LANGUAGE TemplateHaskell, ViewPatterns, RankNTypes, ScopedTypeVariables #-}
+{-# LANGUAGE TemplateHaskell, RankNTypes, ScopedTypeVariables #-}
+{-# LANGUAGE ViewPatterns, DeriveGeneric #-}
 -- | This analysis identifies the addRef and decRef functions for a library,
 -- along with the set of types that is reference counted.  This analysis is
 -- unsound and incomplete, but still useful.
@@ -27,9 +28,12 @@ module Foreign.Inference.Analysis.RefCount (
   refCountSummaryToTestFormat
   ) where
 
+import GHC.Generics ( Generic )
+
 import Control.Arrow
 import Control.DeepSeq
-import Control.Lens
+import Control.DeepSeq.Generics ( genericRnf )
+import Control.Lens ( Simple, makeLenses, view, set, lens, (%~), (^.), (.~) )
 import Data.Foldable ( find )
 import Data.HashSet ( HashSet )
 import qualified Data.HashSet as HS
@@ -89,11 +93,10 @@ data UnrefData =
             , unrefFuncPtrCalls :: [AbstractAccessPath]
             , unrefWitnesses :: [Witness]
             }
-  deriving (Eq)
+  deriving (Eq, Generic)
 
 instance NFData UnrefData where
-  rnf u@(UnrefData accPath fp ws) =
-    accPath `deepseq` fp `deepseq` ws `deepseq` u `seq` ()
+  rnf = genericRnf
 
 -- | Summary information for the reference counting analysis
 data RefCountSummary =
@@ -103,6 +106,7 @@ data RefCountSummary =
                   , _refCountedTypes :: HashMap (String, String) (HashSet Type)
                   , _refCountDiagnostics :: !Diagnostics
                   }
+  deriving (Generic)
 
 $(makeLenses ''RefCountSummary)
 
@@ -117,8 +121,7 @@ instance Monoid RefCountSummary where
                     }
 
 instance NFData RefCountSummary where
-  rnf r@(RefCountSummary s a rr rcts _) =
-    s `deepseq` a `deepseq` rr `deepseq` rcts `deepseq` r `seq` ()
+  rnf = genericRnf
 
 instance Eq RefCountSummary where
   (RefCountSummary s1 a1 r1 rcts1 _) == (RefCountSummary s2 a2 r2 rcts2 _) =

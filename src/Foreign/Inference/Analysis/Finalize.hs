@@ -1,5 +1,5 @@
 {-# LANGUAGE TypeSynonymInstances, FlexibleInstances, MultiParamTypeClasses, RankNTypes #-}
-{-# LANGUAGE ViewPatterns, TemplateHaskell #-}
+{-# LANGUAGE ViewPatterns, DeriveGeneric, TemplateHaskell #-}
 -- | Identify function arguments that are *finalized*.  An argument is
 -- finalized if, on every path, it is passed as a parameter to a
 -- function that finalizes it *or* the argument is NULL.
@@ -19,8 +19,11 @@ module Foreign.Inference.Analysis.Finalize (
   finalizerSummaryToTestFormat
   ) where
 
+import GHC.Generics ( Generic )
+
 import Control.DeepSeq
-import Control.Lens
+import Control.DeepSeq.Generics ( genericRnf )
+import Control.Lens ( Simple, (.~), makeLenses )
 import Control.Monad ( foldM )
 import Data.HashMap.Strict ( HashMap )
 import qualified Data.HashMap.Strict as HM
@@ -42,11 +45,9 @@ import Foreign.Inference.Analysis.IndirectCallResolver
 import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
 
--- import LLVM.Analysis.AccessPath
--- import Data.Maybe ( fromJust )
 -- import Text.Printf
-import Debug.Trace
-debug = flip trace
+-- import Debug.Trace
+-- debug = flip trace
 
 -- | If an argument is finalized, it will be in the map with its
 -- associated witnesses.  If no witnesses could be identified, the
@@ -56,6 +57,7 @@ data FinalizerSummary =
   FinalizerSummary { _finalizerSummary :: SummaryType
                    , _finalizerDiagnostics :: Diagnostics
                    }
+  deriving (Generic)
 
 $(makeLenses ''FinalizerSummary)
 
@@ -70,7 +72,7 @@ instance Monoid FinalizerSummary where
       merge l1 l2 = S.toList $ S.union (S.fromList l1) (S.fromList l2)
 
 instance NFData FinalizerSummary where
-  rnf f@(FinalizerSummary s d) = s `deepseq` d `deepseq` f `seq` ()
+  rnf = genericRnf
 
 instance HasDiagnostics FinalizerSummary where
   diagnosticLens = finalizerDiagnostics

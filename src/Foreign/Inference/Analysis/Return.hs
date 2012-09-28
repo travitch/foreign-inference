@@ -1,4 +1,4 @@
-{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE RankNTypes, DeriveGeneric #-}
 -- | This analysis identifies functions that never return.
 --
 -- These are functions that are guaranteed to never return because
@@ -10,8 +10,11 @@ module Foreign.Inference.Analysis.Return (
   identifyReturns
   ) where
 
+import GHC.Generics ( Generic )
+
 import Control.DeepSeq
-import Control.Lens
+import Control.DeepSeq.Generics ( genericRnf )
+import Control.Lens ( Simple )
 import Control.Monad.Identity
 import Data.Monoid
 import Data.HashSet ( HashSet )
@@ -27,7 +30,7 @@ import Foreign.Inference.Interface
 
 type SummaryType = HashSet Function
 data ReturnSummary = ReturnSummary !SummaryType
-                   deriving (Eq)
+                   deriving (Eq, Generic)
 
 instance HasDiagnostics ReturnSummary
 
@@ -37,7 +40,7 @@ instance Monoid ReturnSummary where
     ReturnSummary (s1 `mappend` s2)
 
 instance NFData ReturnSummary where
-  rnf r@(ReturnSummary s) = s `deepseq` r `seq` ()
+  rnf = genericRnf
 
 instance SummarizeModule ReturnSummary where
   summarizeFunction f (ReturnSummary summ) =

@@ -1,5 +1,5 @@
-{-# LANGUAGE ViewPatterns, MultiParamTypeClasses, TypeSynonymInstances, FlexibleInstances, RankNTypes #-}
-{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE MultiParamTypeClasses, TypeSynonymInstances, FlexibleInstances, RankNTypes #-}
+{-# LANGUAGE ViewPatterns, DeriveGeneric, TemplateHaskell #-}
 -- | This module defines a Nullable pointer analysis.  It actually
 -- identifies non-nullable pointers (the rest are nullable).
 --
@@ -70,9 +70,12 @@ module Foreign.Inference.Analysis.Nullable (
   nullSummaryToTestFormat
   ) where
 
+import GHC.Generics ( Generic )
+
 import Control.Arrow
 import Control.DeepSeq
-import Control.Lens
+import Control.DeepSeq.Generics ( genericRnf )
+import Control.Lens ( Simple, makeLenses, (.~) )
 import Control.Monad ( foldM )
 import Data.Map ( Map )
 import qualified Data.Map as M
@@ -81,7 +84,6 @@ import qualified Data.Set as S
 import Data.HashMap.Strict ( HashMap )
 import qualified Data.HashMap.Strict as HM
 import Data.Monoid
-import Debug.Trace.LocationTH
 
 import LLVM.Analysis
 import LLVM.Analysis.CDG
@@ -110,6 +112,7 @@ data NullableSummary =
   NullableSummary { _nullableSummary :: !SummaryType
                   , _nullableDiagnostics :: !Diagnostics
                   }
+  deriving (Generic)
 
 $(makeLenses ''NullableSummary)
 
@@ -119,7 +122,7 @@ instance Monoid NullableSummary where
     NullableSummary (s1 `mappend` s2) (d1 `mappend` d2)
 
 instance NFData NullableSummary where
-  rnf n@(NullableSummary s d) = d `deepseq` s `deepseq` n `seq` ()
+  rnf = genericRnf
 
 instance Eq NullableSummary where
   (NullableSummary s1 _) == (NullableSummary s2 _) = s1 == s2
@@ -416,7 +419,7 @@ mustExec' i ivs = do
     toBB v =
       case valueContent v of
         BasicBlockC bb -> bb
-        _ -> $failure ("Expected basic block: " ++ show v)
+        _ -> error ("Foreign.Inference.Analysis.Nullable.mustExec': Expected basic block: " ++ show v)
     isUnconditional UnconditionalBranchInst {} = True
     isUnconditional _ = False
     isNotBackedge g inst (_, br) = not (dominates g inst br)

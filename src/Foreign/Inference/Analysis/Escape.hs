@@ -1,5 +1,6 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
-{-# LANGUAGE TemplateHaskell, OverloadedStrings, FlexibleContexts, RankNTypes #-}
+{-# LANGUAGE OverloadedStrings, FlexibleContexts, RankNTypes #-}
+{-# LANGUAGE DeriveGeneric, TemplateHaskell #-}
 module Foreign.Inference.Analysis.Escape (
   EscapeSummary,
   identifyEscapes,
@@ -13,9 +14,12 @@ module Foreign.Inference.Analysis.Escape (
   useGraphvizRepr
   ) where
 
+import GHC.Generics ( Generic )
+
 import Control.Arrow
 import Control.DeepSeq
-import Control.Lens hiding ( from, to )
+import Control.DeepSeq.Generics ( genericRnf )
+import Control.Lens ( Simple, (^.), (%=), (%~), (.~), use, makeLenses )
 import Control.Monad.State.Strict
 import Control.Monad.Writer ( runWriter )
 import Data.GraphViz
@@ -66,10 +70,10 @@ instance Hashable EscapeClass where
 instance NFData EscapeClass
 
 data ArgumentDescriptor = ArgumentDescriptor Function Int
-                        deriving (Eq, Ord, Show)
+                        deriving (Eq, Ord, Show, Generic)
 
 instance NFData ArgumentDescriptor where
-  rnf (ArgumentDescriptor f i) = f `deepseq` i `seq` ()
+  rnf = genericRnf
 
 -- | The node labels for the Value Flow Graph
 data ValueFlowNode = Sink { sinkClass :: EscapeClass
@@ -81,7 +85,7 @@ data ValueFlowNode = Sink { sinkClass :: EscapeClass
                                  , fieldSourcePath :: AbstractAccessPath
                                  }
                    | AllocaSink EscapeClass Instruction Instruction
-                   deriving (Eq, Ord, Show)
+                   deriving (Eq, Ord, Show, Generic)
 
 instance Labellable ValueFlowNode where
   toLabelValue (Sink c i _) =
@@ -99,10 +103,7 @@ instance Labellable ValueFlowNode where
     in toLabelValue s
 
 instance NFData ValueFlowNode where
-  rnf (Sink c w p) = c `deepseq` w `deepseq` p `deepseq` ()
-  rnf (Location v) = v `deepseq` ()
-  rnf (FieldSource a p) = a `deepseq` p `deepseq` ()
-  rnf (AllocaSink c ai w) = c `deepseq` ai `deepseq` w `deepseq` ()
+  rnf = genericRnf
 
 data ValueFlowEdge = UnconditionalEdge
                    | ForwardEdge
@@ -168,10 +169,10 @@ data EscapeGraph = EscapeGraph {
   _escapeGraphValueMap :: HashMap Value (LNode ValueFlowGraph),
   _escapeGraphFieldSourceMap :: HashMap Value [LNode ValueFlowGraph],
   _escapeVFG :: ValueFlowGraph
-  } deriving (Eq)
+  } deriving (Eq, Generic)
 
 instance NFData EscapeGraph where
-  rnf (EscapeGraph m fm g) = g `deepseq` m `deepseq` fm `deepseq` ()
+  rnf = genericRnf
 
 $(makeLenses ''EscapeGraph)
 
@@ -185,6 +186,7 @@ data EscapeSummary =
                 , _escapeIntoArguments :: HashMap Argument (EscapeClass, Function, Int)
                 , _escapeDiagnostics :: Diagnostics
                 }
+  deriving (Generic)
 
 $(makeLenses ''EscapeSummary)
 
@@ -209,8 +211,7 @@ instance Monoid EscapeSummary where
                   }
 
 instance NFData EscapeSummary where
-  rnf r@(EscapeSummary g as was ei d) =
-    g `deepseq` as `deepseq` was `deepseq` d `deepseq` ei `deepseq` r `seq` ()
+  rnf = genericRnf
 
 instance HasDiagnostics EscapeSummary where
   diagnosticLens = escapeDiagnostics

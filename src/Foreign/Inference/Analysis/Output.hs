@@ -1,5 +1,5 @@
 {-# LANGUAGE TypeSynonymInstances, FlexibleInstances, MultiParamTypeClasses, RankNTypes, ScopedTypeVariables #-}
-{-# LANGUAGE ViewPatterns, TemplateHaskell #-}
+{-# LANGUAGE ViewPatterns, DeriveGeneric, TemplateHaskell #-}
 -- | This analysis identifies output parameters.
 --
 -- Output parameters are those pointer parameters whose target memory
@@ -25,9 +25,12 @@ module Foreign.Inference.Analysis.Output (
   outputSummaryToTestFormat
   ) where
 
+import GHC.Generics ( Generic )
+
 import Control.Arrow ( (&&&), second )
 import Control.DeepSeq
-import Control.Lens
+import Control.DeepSeq.Generics ( genericRnf )
+import Control.Lens ( Simple, makeLenses, lens, set, view, (%~), (^.) )
 import Control.Monad ( foldM )
 import Data.List ( find, groupBy )
 import Data.Map ( Map )
@@ -36,7 +39,6 @@ import Data.Maybe ( mapMaybe )
 import Data.Monoid
 import Data.Set ( Set )
 import qualified Data.Set as S
-import Debug.Trace.LocationTH
 import Text.Printf
 
 import LLVM.Analysis
@@ -86,6 +88,7 @@ data OutputSummary =
                 , _outputFieldSummary :: FieldSummaryType
                 , _outputDiagnostics :: Diagnostics
                 }
+  deriving (Generic)
 
 $(makeLenses ''OutputSummary)
 
@@ -106,8 +109,7 @@ instance Monoid OutputSummary where
     OutputSummary (M.union s1 s2) (M.union sf1 sf2) (mappend d1 d2)
 
 instance NFData OutputSummary where
-  rnf o@(OutputSummary s sf d) =
-    s `deepseq` sf `deepseq` d `deepseq` o `seq` ()
+  rnf = genericRnf
 
 instance HasDiagnostics OutputSummary where
   diagnosticLens = outputDiagnostics
@@ -421,7 +423,7 @@ merge lns i arg newVal info =
           in (lns %~ M.insert arg (ArgOut, S.singleton nw)) info
         ArgIn -> info
         ArgOutAlloc _ -> info -- FIXME: This should probably merge the two... or take newval
-        ArgBoth -> $failure "Infeasible path"
+        ArgBoth -> error "Foreign.Inference.Analysis.Output.merge(1): Infeasible path"
     Just (ArgIn, ws) ->
       case newVal of
         ArgOut ->
@@ -431,7 +433,7 @@ merge lns i arg newVal info =
           let nw = Witness i (show ArgBoth)
           in (lns %~ M.insert arg (ArgBoth, S.insert nw ws)) info
         ArgIn -> info
-        ArgBoth -> $failure "Infeasible path"
+        ArgBoth -> error "Foreign.Inference.Analysis.Output.merge(2): Infeasible path"
 
 removeArrayPtr :: Argument -> OutInfo -> OutInfo
 removeArrayPtr a (OI oi foi) = OI (M.delete a oi) foi
@@ -455,7 +457,7 @@ outputSummaryToTestFormat (OutputSummary s sf _) =
                   -> (Argument, [(Int, ArgumentDirection)])
     flattenArg allFields@(((a, _), _) : _) =
       (a, map flatten' allFields)
-    flattenArg [] = $failure "groupBy made an empty group"
+    flattenArg [] = error "Foreign.Inference.Analysis.Output.outputSummaryToTestFormat: groupBy made an empty group"
     flatten' ((_, ix), (dir, _)) = (ix, dir)
 
     dirToAnnot d =

@@ -1,4 +1,4 @@
-{-# LANGUAGE ViewPatterns, TemplateHaskell, RankNTypes #-}
+{-# LANGUAGE ViewPatterns, RankNTypes, DeriveGeneric, TemplateHaskell #-}
 -- | This module defines the Array Analysis from the PLDI 2009 paper.
 --
 -- The analysis identifies which pointer parameters of a function are
@@ -14,16 +14,18 @@ module Foreign.Inference.Analysis.Array (
   arraySummaryToTestFormat
   ) where
 
+import GHC.Generics ( Generic )
+
 import Control.Arrow
 import Control.DeepSeq
-import Control.Lens
+import Control.DeepSeq.Generics ( genericRnf )
+import Control.Lens ( Simple, (.~), makeLenses )
 import Data.List ( foldl' )
 import Data.HashMap.Strict ( HashMap )
 import qualified Data.HashMap.Strict as M
 import Data.Map ( Map )
 import qualified Data.Map as Map
 import Data.Monoid
-import Debug.Trace.LocationTH
 
 import LLVM.Analysis
 import LLVM.Analysis.CallGraphSCCTraversal
@@ -47,6 +49,7 @@ data ArraySummary =
   ArraySummary { _arraySummary :: SummaryType
                , _arrayDiagnostics :: Diagnostics
                }
+  deriving (Generic)
 
 $(makeLenses ''ArraySummary)
 
@@ -59,7 +62,7 @@ instance Monoid ArraySummary where
     ArraySummary (M.unionWith max s1 s2) (mappend d1 d2)
 
 instance NFData ArraySummary where
-  rnf a@(ArraySummary s d) = d `deepseq` s `deepseq` a `seq` ()
+  rnf = genericRnf
 
 instance HasDiagnostics ArraySummary where
   diagnosticLens = arrayDiagnostics
@@ -203,7 +206,7 @@ isArrayDeref ds summ inst = case valueContent' inst of
 buildArrayDeref :: Instruction -> [Value] -> Value -> [(Value, PointerUse)] -> [(Value, PointerUse)]
 buildArrayDeref inst idxs base acc =
   case idxs of
-    [] -> $failure ("GEP with no indices: " ++ show inst)
+    [] -> error ("Foreign.Inference.Analysis.buildArrayDeref: GEP with no indices: " ++ show inst)
     [_] -> (base, IndexOperation (toValue inst) idxs) : acc
     (valueContent' -> ConstantC ConstantInt { constantIntValue = 0 }) : _ -> acc
     _ -> (base, IndexOperation (toValue inst) idxs ) : acc
@@ -223,7 +226,7 @@ collectArrayArgs ds summ callee lst (ix, arg) =
       case filter isArrayAnnot annots of
         [] -> lst
         [PAArray depth] -> (arg, CallArgument depth) : lst
-        _ -> $failure "This summary should only produce singleton or empty lists"
+        _ -> error "Foreign.Inference.Analysis.Array: This summary should only produce singleton or empty lists"
 
 isArrayAnnot :: ParamAnnotation -> Bool
 isArrayAnnot (PAArray _) = True

@@ -18,7 +18,10 @@ import Control.Monad.Trans.Maybe
 import qualified Data.Foldable as F
 import Data.HashMap.Strict ( HashMap )
 import qualified Data.HashMap.Strict as HM
+import Data.IntMap ( IntMap )
+import qualified Data.IntMap as IM
 import Data.List ( elemIndex )
+import qualified Data.List.NonEmpty as NEL
 import Data.Monoid
 import Data.SBV
 import Data.Set ( Set )
@@ -29,13 +32,12 @@ import LLVM.Analysis
 import LLVM.Analysis.BlockReturnValue
 import LLVM.Analysis.CallGraphSCCTraversal
 import LLVM.Analysis.CDG
+import LLVM.Analysis.CFG
 import LLVM.Analysis.Dominance
 
 import Foreign.Inference.AnalysisMonad
 import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
-import Foreign.Inference.Analysis.IndirectCallResolver
-
 
 -- import Text.Printf
 import Debug.Trace
@@ -66,10 +68,65 @@ instance NFData ErrorSummary where
 instance HasDiagnostics ErrorSummary where
   diagnosticLens = errorDiagnostics
 
+-- | Take an ErrorSummary and extract the list of error handling
+-- patterns.  Assume that each function only reports errors in a
+-- single way and then find the common error reporting code used by
+-- each function.  After that, the resolution strategy comes in and
+-- perhaps even optimization.
+distillSummary :: ErrorSummary -> [ErrorDescriptor]
+distillSummary (ErrorSummary s _) =
+  case NEL.nonEmpty (HM.elems s) of
+    Nothing -> []
+    Just hdlrs ->
+      let funcErrorHandlers = fmap unifyErrorHandler hdlrs
+      in [F.foldr1 combineHandler funcErrorHandlers]
+
+-- | Note, this uses foldr1 but each set cannot be empty (since we use
+-- insertWith below, we can't have empty sets).
+unifyErrorHandler :: Set ErrorDescriptor -> ErrorDescriptor
+unifyErrorHandler = F.foldr1 combineHandler
+
+-- | For each action in the first set, find a corresponding action in
+-- the second set.  If there is a match, find the common part they
+-- share and insert it into the result.  Otherwise, discard it.
+combineHandler :: ErrorDescriptor -> ErrorDescriptor -> ErrorDescriptor
+combineHandler d0 = snd . F.foldr findCorresponding (d0, mempty)
+  where
+    findCorresponding act (targets, acc) =
+      case F.foldr (unifyErrorAction act) Nothing targets of
+        Nothing -> (targets, acc)
+        Just (act', t) ->
+          (S.delete t targets, S.insert act' acc)
+
+unifyErrorAction :: ErrorAction
+                    -> ErrorAction
+                    -> Maybe (ErrorAction, ErrorAction)
+                    -> Maybe (ErrorAction, ErrorAction)
+unifyErrorAction _ _ j@(Just _) = j
+unifyErrorAction a1 a2 Nothing =
+  case (a1, a2) of
+    (ReturnConstantInt s1, ReturnConstantInt s2) ->
+      return (ReturnConstantInt (s1 `S.union` s2), a2)
+    (AssignToGlobal g1 s1, AssignToGlobal g2 s2) ->
+      case g1 == g2 of
+        False -> Nothing
+        True -> return (AssignToGlobal g1 (s1 `S.union` s2), a2)
+    (AssignToCall c1 s1, AssignToCall c2 s2) ->
+      case c1 == c2 of
+        False -> Nothing
+        True -> return (AssignToCall c1 (s1 `S.union` s2), a2)
+    (FunctionCall f1 args1, FunctionCall f2 args2) ->
+      case f1 == f2 of
+        False -> Nothing
+        -- FIXME: Merge arguments.  Maybe change args to be
+        -- represented with an IntMap and use intersectionWith
+        True -> return (FunctionCall f1 mempty, a2)
+    _ -> Nothing
+
 data ErrorData =
   ErrorData { dependencySummary :: DependencySummary
-            , indirectCallSummary :: IndirectCallSummary
             , _blockRetLabels :: BlockReturns
+            , errorSeed :: [ErrorDescriptor]
             }
 
 $(makeLenses ''ErrorData)
@@ -82,27 +139,34 @@ instance SummarizeModule ErrorSummary where
     case HM.lookup f summ of
       Nothing -> []
       Just s ->
-        case F.toList s of
-          [] -> []
-          acts : _ -> [FAReportsErrors acts]
+        case NEL.nonEmpty (F.toList s) of
+          Nothing -> []
+          Just acts ->
+            [FAReportsErrors (F.foldr1 combineHandler acts)]
 
-identifyErrorHandling :: forall compositeSummary funcLike . (FuncLike funcLike, HasFunction funcLike, HasCDG funcLike, HasPostdomTree funcLike)
-                      => DependencySummary
-                      -> IndirectCallSummary
-                      -> Simple Lens compositeSummary ErrorSummary
-                      -> ComposableAnalysis compositeSummary funcLike
-identifyErrorHandling ds ics =
+identifyErrorHandling :: forall compositeSummary funcLike . (FuncLike funcLike, HasFunction funcLike, HasCDG funcLike, HasPostdomTree funcLike, HasCFG funcLike)
+                         => Module
+                         -> DependencySummary
+                         -> Simple Lens compositeSummary ErrorSummary
+                         -> ComposableAnalysis compositeSummary funcLike
+identifyErrorHandling m ds =
   composableAnalysisM runner errorAnalysis
   where
     runner a = runAnalysis a readOnlyData ()
-    readOnlyData = ErrorData ds ics mempty
+    readOnlyData = ErrorData ds mempty (distillSummary seed)
+
+    funcLikes :: [funcLike]
+    funcLikes = map fromFunction (moduleDefinedFunctions m)
+    analysis0 = foldM (flip errorAnalysis) mempty funcLikes
+    readOnly0 = ErrorData ds mempty mempty
+    seed = runAnalysis analysis0 readOnly0 ()
 
 -- | Find each function call for which we have an error descriptor.
 -- Then find the branch handling the error (if there is one) and add
 -- that summary to the ErrorSummary for this function.
 --
 -- Look for br (cmp (call)) patterns
-errorAnalysis :: (FuncLike funcLike, HasFunction funcLike, HasCDG funcLike, HasPostdomTree funcLike)
+errorAnalysis :: (FuncLike funcLike, HasFunction funcLike, HasCDG funcLike, HasPostdomTree funcLike, HasCFG funcLike)
                  => funcLike
                  -> ErrorSummary
                  -> Analysis ErrorSummary
@@ -113,11 +177,36 @@ errorAnalysis funcLike s =
     f = getFunction funcLike
     retLabels = labelBlockReturns funcLike
 
+-- FIXME: If the first check fails (for a lower-level library error
+-- handled), check to see if the block matches any of the error
+-- descriptors we have seen so far
+--
+-- lift $ analysisEnvironment errorSeed
+--
+-- If the block has a guaranteed return value and the error pattern
+-- has a RetConstantInt clause, use that as a filtering check (then
+-- remove the return from the pattern because it isn't in the same
+-- basic block).
 analyzeErrorChecks :: Function
                       -> ErrorSummary
                       -> BasicBlock
                       -> Analysis ErrorSummary
-analyzeErrorChecks f s bb =
+analyzeErrorChecks f s bb = do
+  takeFirst s [ handlesKnownError f s bb
+              , executesLearnedErrorPattern f s bb
+              ]
+
+takeFirst :: (Monad m) => a -> [m (Maybe a)] -> m a
+takeFirst def [] = return def
+takeFirst def (act:rest) = do
+  res <- act
+  maybe (takeFirst def rest) return res
+
+handlesKnownError :: Function
+                     -> ErrorSummary
+                     -> BasicBlock
+                     -> Analysis (Maybe ErrorSummary)
+handlesKnownError f s bb =
   case basicBlockTerminatorInstruction bb of
     BranchInst { branchCondition = (valueContent' ->
       InstructionC ICmpInst { cmpPredicate = p
@@ -126,14 +215,76 @@ analyzeErrorChecks f s bb =
                             })
                , branchTrueTarget = tt
                , branchFalseTarget = ft
-               } -> do
-      mErrDesc <- runMaybeT $ extractErrorHandlingCode s p v1 v2 tt ft
-      case mErrDesc of
-        Nothing -> return s
-        Just errDesc ->
-          let upd = errorSummary %~ HM.insertWith S.union f (S.singleton errDesc)
-          in return $ upd s
-    _ -> return s
+               } -> runMaybeT $ do
+      errDesc <- extractErrorHandlingCode s p v1 v2 tt ft
+      let upd = errorSummary %~ HM.insertWith S.union f (S.singleton errDesc)
+      return $ upd s
+    _ -> return Nothing
+
+executesLearnedErrorPattern :: Function
+                               -> ErrorSummary
+                               -> BasicBlock
+                               -> Analysis (Maybe ErrorSummary)
+executesLearnedErrorPattern f s bb = do
+  brs <- analysisEnvironment _blockRetLabels
+  errStyles <- analysisEnvironment errorSeed
+  return $ do
+    bret <- blockReturn brs bb
+    foldr (checkLearnedStyle f bb bret s) Nothing errStyles
+
+checkLearnedStyle :: Function
+                     -> BasicBlock
+                     -> Value
+                     -> ErrorSummary
+                     -> ErrorDescriptor
+                     -> Maybe ErrorSummary
+                     -> Maybe ErrorSummary
+checkLearnedStyle _ _ _ _ _ r@(Just _) = r
+checkLearnedStyle f bb rv s style Nothing = do
+  style' <- checkStyleRetVal rv style
+  -- See if the instructions in the block match the rest of the error
+  -- descriptor.  If so, add this function to the error summary with
+  -- 'style' as the error reporting method.
+  let unmatchedActions = foldr checkInstruction style' (basicBlockInstructions bb)
+  case S.null unmatchedActions of
+    False -> Nothing
+    True ->
+      let upd = errorSummary %~ HM.insertWith S.union f (S.singleton style)
+      in return $ upd s
+
+-- | Check to see if the returned value is a constant matching the
+-- expected return value in the error descriptor.  If it is, remove
+-- the return clause from the descriptor and return the rest.
+-- Otherwise return Nothing to indicate no match.
+checkStyleRetVal :: Value -> ErrorDescriptor -> Maybe ErrorDescriptor
+checkStyleRetVal rv desc = do
+  act@(ReturnConstantInt ivs) <- F.find isRetAction desc
+  case valueContent' rv of
+    ConstantC ConstantInt { constantIntValue = (fromIntegral -> irv) } ->
+      case irv `S.member` ivs of
+        False -> Nothing
+        True -> return $ S.delete act desc
+    _ -> Nothing
+
+isRetAction :: ErrorAction -> Bool
+isRetAction (ReturnConstantInt _) = True
+isRetAction _ = False
+
+-- | If the given instruction matches any actions in the error
+-- descriptor, remove the action from the descriptor.  If the
+-- descriptor is empty, we have found error reporting code.
+checkInstruction :: Instruction -> ErrorDescriptor -> ErrorDescriptor
+checkInstruction i desc = F.foldl' (removeIfMatchingInst i) desc desc
+
+removeIfMatchingInst :: Instruction -> ErrorDescriptor -> ErrorAction -> ErrorDescriptor
+removeIfMatchingInst i desc act =
+  case (i, act) of
+    (CallInst { callFunction = (valueContent' -> FunctionC f) }, FunctionCall calleeName _) ->
+      let fname = identifierAsString (functionName f)
+      in case fname == calleeName of
+        False -> desc
+        True -> S.delete act desc
+    _ -> desc
 
 -- 'analyzeErrorChecks' can stay basically the same.  Maybe it changes
 -- a bit and doesn't look directly for an ICmpInst in the predicate (it
@@ -248,14 +399,14 @@ isIntRet _ = False
 
 
 -- FIXME This needs to get all of the blocks that are in this branch
--- (successors of bb and control dependent on the branch)
+-- (successors of bb and control dependent on the branch).
 branchToErrorDescriptor :: BasicBlock -> MaybeT Analysis ErrorDescriptor
 branchToErrorDescriptor bb = do
   brs <- lift $ analysisEnvironment _blockRetLabels
   rc <- liftMaybe $ blockReturn brs bb
   case valueContent' rc of
-    ConstantC ConstantInt { constantIntValue = iv } ->
-      let ract = ReturnConstantInt (S.singleton (fromIntegral iv))
+    ConstantC ConstantInt { constantIntValue = (fromIntegral -> iv) } ->
+      let ract = ReturnConstantInt (S.singleton iv)
           acts = foldr instToAction [] (basicBlockInstructions bb)
       in return $ S.fromList (ract : acts)
     _ -> fail "Non-constant return value"
@@ -267,21 +418,21 @@ instToAction i acc =
              , callArguments = (map fst -> args)
              } ->
       let fname = identifierAsString (functionName f)
-          argActs = foldr callArgActions [] (zip [0..] args)
+          argActs = foldr callArgActions mempty (zip [0..] args)
       in FunctionCall fname argActs : acc
     _ -> acc
 
 callArgActions :: (Int, Value)
-                  -> [(Int, ErrorActionArgument)]
-                  -> [(Int, ErrorActionArgument)]
+                  -> IntMap ErrorActionArgument
+                  -> IntMap ErrorActionArgument
 callArgActions (ix, v) acc =
   case valueContent' v of
     ArgumentC a ->
       let atype = show (argumentType a)
           aix = argumentIndex a
-      in (ix, ErrorArgument atype aix) : acc
+      in IM.insert ix (ErrorArgument atype aix) acc
     ConstantC ConstantInt { constantIntValue = (fromIntegral -> iv) } ->
-      (ix, ErrorInt iv) : acc
+      IM.insert ix (ErrorInt iv) acc
     _ -> acc
 
 argumentIndex :: Argument -> Int

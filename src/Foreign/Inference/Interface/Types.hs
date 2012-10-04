@@ -19,6 +19,7 @@ import GHC.Generics
 import Control.DeepSeq
 import Control.DeepSeq.Generics ( genericRnf )
 import Data.Aeson
+import Data.IntMap ( IntMap )
 import Data.List ( intercalate )
 import Data.Set ( Set )
 import Text.Printf
@@ -77,12 +78,11 @@ instance NFData ErrorActionArgument where
 -- function to pass information back to the caller (either in-band
 -- return values or out-of-band routes).
 data ErrorAction = ReturnConstantInt (Set Int)
-                 | ReturnNULL
                  | AssignToGlobal String (Set Int)
                  | AssignToCall String (Set Int)
                    -- ^ Assign a constant int to the return value of a
                    -- call instruction
-                 | FunctionCall String [(Int, ErrorActionArgument)]
+                 | FunctionCall String (IntMap ErrorActionArgument)
                    -- ^ A call to a function.  The list should not be
                    -- ints, but more descriptive wrappers.  We are
                    -- interested in constants (string and int) and

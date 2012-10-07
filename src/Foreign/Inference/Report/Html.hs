@@ -1,5 +1,6 @@
-{-# LANGUAGE OverloadedStrings, TemplateHaskell #-}
-{-# OPTIONS_GHC -fno-warn-unused-do-bind #-}
+{-# LANGUAGE QuasiQuotes #-}
+{-# LANGUAGE OverloadedStrings #-}
+-- {-# OPTIONS_GHC -fno-warn-unused-do-bind #-}
 module Foreign.Inference.Report.Html (
   SummaryOption(..),
   htmlIndexPage,
@@ -16,13 +17,13 @@ import qualified Data.Map as M
 import Data.Monoid
 import Data.Text ( Text, pack )
 import qualified Data.Text as T
-import Debug.Trace.LocationTH
 import System.FilePath
+import Text.Blaze.Html.Renderer.String ( renderHtml )
+import Text.Hamlet ( shamlet )
+import Text.Shakespeare.Text
 import Text.Blaze.Html5 ( toValue, toHtml, (!), Html, AttributeValue )
 import qualified Text.Blaze.Html5 as H
 import qualified Text.Blaze.Html5.Attributes as A
-import qualified Text.Highlighting.Kate as K
-import Text.Highlighting.Kate.Types ( defaultFormatOpts, FormatOptions(..) )
 
 import LLVM.Analysis hiding ( toValue )
 
@@ -44,6 +45,30 @@ data SummaryOption = LinkDrilldowns -- ^ Include links to the drilldown pages fo
 -- FIXME: It would also be awesome to include call graph information
 -- (as in doxygen)
 htmlFunctionPage :: InterfaceReport -> Function -> FilePath -> Int -> ByteString -> Html
+htmlFunctionPage r f srcFile startLine functionText =
+  [shamlet|
+$doctype 5
+<html>
+  <head>
+    <title>#{pageTitle}
+    <link rel=stylesheet href="../style.css" type="text/css">
+    <link rel=stylesheet href="../codemirror.css" type="text/css">
+    <script type="text/javascript" src="../jquery-1.7.1.js">
+    <script type="text/javascript" src="../codemirror-compressed.js">
+  <body>
+    Breakdown of #{funcName} (defined in #{srcFile})
+    <div>
+      <ul>
+        $forall arg <- args
+          <li>^{drilldownArgumentEntry startLine r arg}
+    #{funcName} (#{sig}) -> <span class="code-type">#{show fretType}</span>
+    <div>
+      <form>
+        <textarea id="code" name="code">#{preprocessFunction functionText}
+    <script type="text/javascript">
+      #{H.preEscapedToMarkup (initialScript calledFunctions)}
+|]
+{-
 htmlFunctionPage r f srcFile startLine functionText = H.docTypeHtml $ do
   H.head $ do
     H.title (toHtml pageTitle)
@@ -66,12 +91,13 @@ htmlFunctionPage r f srcFile startLine functionText = H.docTypeHtml $ do
                                     }
     K.formatHtmlBlock fmtOpts highlightedSrc
     H.script ! A.type_ "text/javascript" $ H.preEscapedToMarkup (initialScript calledFunctions)
-
+-}
   where
     funcName = identifierContent (functionName f)
     pageTitle = funcName `mappend` " [function breakdown]"
     allInstructions = concatMap basicBlockInstructions (functionBody f)
     calledFunctions = foldr (extractCalledFunctionNames aliasReverseIndex) [] allInstructions
+    sig = commaSepList (zip [0..] args) (indexPageArgument r)
     m = reportModule r
     aliasReverseIndex = foldr indexAliases mempty (moduleAliases m)
     args = functionParameters f
@@ -83,6 +109,7 @@ htmlFunctionPage r f srcFile startLine functionText = H.docTypeHtml $ do
 -- against the filename.  If this fails, strip off extensions until
 -- something matches or there are no more extensions.  If it cannot be
 -- determined, assume C.
+{-
 sourceFileLanguage :: FilePath -> String
 sourceFileLanguage p
   | not (hasExtension p) = "C"
@@ -90,7 +117,7 @@ sourceFileLanguage p
     case K.languagesByFilename p of
       [] -> sourceFileLanguage (dropExtension p)
       lang : _ -> lang
-
+-}
 indexAliases :: GlobalAlias -> Map Function [GlobalAlias] -> Map Function [GlobalAlias]
 indexAliases a m =
   case globalAliasTarget a of
@@ -127,13 +154,17 @@ extractCalledFunctionNames aliasReverseIndex i acc =
         _ -> names
 
 initialScript :: [(Text, Text)] -> Text
-initialScript calledFuncNames = mconcat [ "$(window).bind(\"load\", function () {\n"
-                                        , "  initializeHighlighting();\n"
-                                        , "  linkCalledFunctions(["
-                                        , funcNameList
-                                        , "]);\n"
-                                        , "});"
-                                        ]
+initialScript calledFuncNames =
+  [st|
+$(window).bind("load", function() {
+        var editor = CodeMirror.fromTextArea(document.getElementById("code"), {
+        lineNumbers: true,
+        matchBrackets: true,
+        mode: "text/x-csrc"
+      });
+  linkCalledFunctions([#{funcNameList}]);
+  });
+|]
   where
     toJsTuple (txtName, target) = mconcat ["['", txtName, "', '", target, "']"]
     quotedNames = map toJsTuple calledFuncNames
@@ -141,13 +172,14 @@ initialScript calledFuncNames = mconcat [ "$(window).bind(\"load\", function () 
 
 
 drilldownArgumentEntry :: Int -> InterfaceReport -> Argument -> Html
-drilldownArgumentEntry startLine r arg = H.li $ do
-  H.span ! A.class_ "code-type" $ toHtml (show (argumentType arg))
-  H.a ! A.href "#" ! A.onclick (H.preEscapedToValue clickScript) $ toHtml argName
-  drilldownArgumentAnnotations startLine annots
+drilldownArgumentEntry startLine r arg =
+  [shamlet|
+<span class="code-type">#{show (argumentType arg)}</span>#
+  \ <a href="#" onclick="highlight('#{argName}');">#{argName}</a>#
+  \ #{drilldownArgumentAnnotations startLine annots}
+|]
   where
     argName = identifierContent (argumentName arg)
-    clickScript = mconcat [ "highlight('", argName, "');" ]
     annots = concatMap (summarizeArgument arg) (reportSummaries r)
 
 drilldownArgumentAnnotations :: Int -> [(ParamAnnotation, [Witness])] -> Html
@@ -189,7 +221,7 @@ instructionToLine i =
   case instructionSrcLoc i of
     Nothing -> Nothing
     Just (MetaSourceLocation _ r _ _) -> Just (fromIntegral r)
-    m -> $failure ("Expected source location: " ++ show (instructionMetadata i))
+    m -> error ("Foreign.Inference.Report.Html.instructionToLine: Expected source location: " ++ show (instructionMetadata i))
 
 -- | Generate an index page listing all of the functions in a module.
 -- Each listing shows the parameters and their inferred annotations.

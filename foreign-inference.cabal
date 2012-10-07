@@ -55,8 +55,7 @@ library
                  datalog, sbv >= 2,
                  -- For the reporting code
                  archive-inspection, directory, attoparsec >= 0.10 && < 1.0, ascii,
-                 blaze-html >= 0.5, highlighting-kate >= 0.5, blaze-builder >= 0.3,
-                 parallel-io, blaze-markup
+                 hamlet >= 1, blaze-builder, blaze-html, shakespeare-text, parallel-io
   ghc-options: -Wall -funbox-strict-fields
   ghc-prof-options: -auto-all
 

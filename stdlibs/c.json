@@ -1563,7 +1563,7 @@
         { "foreignFunctionName": "strdup",
           "foreignFunctionAnnotations": [{"FAAllocator": "free"}],
           "foreignFunctionLinkage": { "LinkDefault": [] },
-          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionReturnType": {"CPointer": {"CInt": 8}},
           "foreignFunctionParameters": [
               { "parameterAnnotations": [{"PANotNull":[]}, {"PAArray":1}, {"PAString":[]}, {"PAConst":[]}],
                 "parameterName": "s",
@@ -1574,7 +1574,7 @@
         { "foreignFunctionName": "strndup",
           "foreignFunctionAnnotations": [{"FAAllocator": "free"}],
           "foreignFunctionLinkage": { "LinkDefault": [] },
-          "foreignFunctionReturnType": {"CInt": 32},
+          "foreignFunctionReturnType": {"CPointer": {"CInt": 8}},
           "foreignFunctionParameters": [
               { "parameterAnnotations": [{"PANotNull":[]}, {"PAArray":1}, {"PAString":[]}, {"PAConst":[]}],
                 "parameterName": "s",

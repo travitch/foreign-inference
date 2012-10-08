@@ -17,8 +17,6 @@ import qualified Data.Map as M
 import Data.Monoid
 import Data.Text ( Text, pack )
 import qualified Data.Text as T
-import System.FilePath
-import Text.Blaze.Html.Renderer.String ( renderHtml )
 import Text.Hamlet ( shamlet )
 import Text.Shakespeare.Text
 import Text.Blaze.Html5 ( toValue, toHtml, (!), Html, AttributeValue )
@@ -61,37 +59,13 @@ $doctype 5
       <ul>
         $forall arg <- args
           <li>^{drilldownArgumentEntry startLine r arg}
-    #{funcName} (#{sig}) -> <span class="code-type">#{show fretType}</span>
-    <div>
-      <form>
-        <textarea id="code" name="code">#{preprocessFunction functionText}
+    <p>
+      #{funcName} (#{sig}) -> <span class="code-type">#{show fretType}</span>
+    <form>
+      <textarea id="code" name="code">#{preprocessFunction functionText}
     <script type="text/javascript">
       #{H.preEscapedToMarkup (initialScript calledFunctions)}
 |]
-{-
-htmlFunctionPage r f srcFile startLine functionText = H.docTypeHtml $ do
-  H.head $ do
-    H.title (toHtml pageTitle)
-    H.link ! A.href "../style.css" ! A.rel "stylesheet" ! A.type_ "text/css"
-    H.link ! A.href "../hk-tango.css" ! A.rel "stylesheet" ! A.type_ "text/css"
-    H.script ! A.type_ "text/javascript" ! A.src "../jquery-1.7.1.js" $ return ()
-    H.script ! A.type_ "text/javascript" ! A.src "../highlight.js" $ return ()
-  H.body $ do
-    stringToHtml "Breakdown of " >> toHtml funcName >> stringToHtml " defined in " >> toHtml srcFile
-    H.div $ do
-      H.ul $ forM_ (functionParameters f) (drilldownArgumentEntry startLine r)
-
-    toHtml funcName >> stringToHtml "(" >> commaSepList (zip [0..] args) (indexPageArgument r) >> stringToHtml ") -> "
-    H.span ! A.class_ "code-type" $ toHtml (show fretType)
-    let lang = sourceFileLanguage srcFile
-        highlightedSrc = K.highlightAs lang (preprocessFunction functionText)
-        fmtOpts = defaultFormatOpts { numberLines = True
-                                    , startNumber = startLine
-                                    , lineAnchors = True
-                                    }
-    K.formatHtmlBlock fmtOpts highlightedSrc
-    H.script ! A.type_ "text/javascript" $ H.preEscapedToMarkup (initialScript calledFunctions)
--}
   where
     funcName = identifierContent (functionName f)
     pageTitle = funcName `mappend` " [function breakdown]"
@@ -105,19 +79,6 @@ htmlFunctionPage r f srcFile startLine functionText = H.docTypeHtml $ do
       TypeFunction rt _ _ -> rt
       rtype -> rtype
 
--- | Determine the language type for the file.  Attempt a basic match
--- against the filename.  If this fails, strip off extensions until
--- something matches or there are no more extensions.  If it cannot be
--- determined, assume C.
-{-
-sourceFileLanguage :: FilePath -> String
-sourceFileLanguage p
-  | not (hasExtension p) = "C"
-  | otherwise =
-    case K.languagesByFilename p of
-      [] -> sourceFileLanguage (dropExtension p)
-      lang : _ -> lang
--}
 indexAliases :: GlobalAlias -> Map Function [GlobalAlias] -> Map Function [GlobalAlias]
 indexAliases a m =
   case globalAliasTarget a of

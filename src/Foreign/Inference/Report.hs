@@ -38,19 +38,19 @@ import Foreign.Inference.Report.Types
 
 highlightJs :: (FilePath, BS8.ByteString)
 highlightJs = ("highlight.js", $(embedFile "static/highlight.js"))
+codeHighlighterJs :: (FilePath, BS8.ByteString)
+codeHighlighterJs = ("code-highlighter.js", $(embedFile "static/code-highlighter.js"))
 codemirrorJs :: (FilePath, BS8.ByteString)
 codemirrorJs = ("codemirror-compressed.js", $(embedFile "static/codemirror-compressed.js"))
 codemirrorCss :: (FilePath, BS8.ByteString)
 codemirrorCss = ("codemirror.css", $(embedFile "static/codemirror.css"))
-codeCss :: (FilePath, BS8.ByteString)
-codeCss = ("hk-tango.css", $(embedFile "static/hk-tango.css"))
 jqueryJs :: (FilePath, BS8.ByteString)
 jqueryJs = ("jquery-1.7.1.js", $(embedFile "static/jquery-1.7.1.js"))
 styleCss :: (FilePath, BS8.ByteString)
 styleCss = ("style.css", $(embedFile "static/style.css"))
 
 staticFiles :: [(FilePath, BS8.ByteString)]
-staticFiles = [ codeCss, styleCss, highlightJs, jqueryJs, codemirrorJs, codemirrorCss ]
+staticFiles = [ styleCss, highlightJs, jqueryJs, codemirrorJs, codemirrorCss, codeHighlighterJs ]
 
 
 -- | Write the given report into the given directory.  An index.html file

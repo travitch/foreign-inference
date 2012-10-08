@@ -48,17 +48,21 @@ htmlFunctionPage r f srcFile startLine functionText =
 $doctype 5
 <html>
   <head>
-    <title>#{pageTitle}
+    <title>#{funcName} [function breakdown]
     <link rel=stylesheet href="../style.css" type="text/css">
     <link rel=stylesheet href="../codemirror.css" type="text/css">
     <script type="text/javascript" src="../jquery-1.7.1.js">
     <script type="text/javascript" src="../codemirror-compressed.js">
+    <script type="text/javascript" src="../highlight.js">
+    <script type="text/javascript" src="../code-highlighter.js">
   <body>
     Breakdown of #{funcName} (defined in #{srcFile})
     <div>
       <ul>
         $forall arg <- args
           <li>^{drilldownArgumentEntry startLine r arg}
+        $if not (null fannots)
+          <li>&rarr; <span class="code-comment">/* #{show fannots} */</span>
     <p>
       #{funcName} (#{sig}) -> <span class="code-type">#{show fretType}</span>
     <form>
@@ -68,16 +72,19 @@ $doctype 5
 |]
   where
     funcName = identifierContent (functionName f)
-    pageTitle = funcName `mappend` " [function breakdown]"
     allInstructions = concatMap basicBlockInstructions (functionBody f)
     calledFunctions = foldr (extractCalledFunctionNames aliasReverseIndex) [] allInstructions
-    sig = commaSepList (zip [0..] args) (indexPageArgument r)
+    sig = commaSepList args drilldownSignatureArgument
     m = reportModule r
     aliasReverseIndex = foldr indexAliases mempty (moduleAliases m)
     args = functionParameters f
     fretType = case functionType f of
       TypeFunction rt _ _ -> rt
       rtype -> rtype
+    allAnnots = libraryAnnotations $ reportDependencies r
+    fannots = concat [ userFunctionAnnotations allAnnots f
+                     , concatMap (summarizeFunction f) (reportSummaries r)
+                     ]
 
 indexAliases :: GlobalAlias -> Map Function [GlobalAlias] -> Map Function [GlobalAlias]
 indexAliases a m =
@@ -114,16 +121,21 @@ extractCalledFunctionNames aliasReverseIndex i acc =
               in zip aliasNames (repeat ic) ++ names
         _ -> names
 
+-- | This is the content of the script tag included after the code
+-- snippet in each drilldown.  It invokes the syntax highlighter and
+-- also links all of the functions called to their definitions (if
+-- available).
 initialScript :: [(Text, Text)] -> Int -> Text
 initialScript calledFuncNames startLine =
   [st|
 $(window).bind("load", function() {
-        var editor = CodeMirror.fromTextArea(document.getElementById("code"), {
-        lineNumbers: true,
-        firstLineNumber: #{show startLine},
-        matchBrackets: true,
-        mode: "text/x-csrc"
-      });
+  var editor = CodeMirror.fromTextArea(document.getElementById("code"), {
+    lineNumbers: true,
+    firstLineNumber: #{show startLine},
+    matchBrackets: true,
+    mode: "text/x-csrc"
+  });
+  initializeHighlighting();
   linkCalledFunctions([#{funcNameList}]);
   });
 |]
@@ -311,6 +323,15 @@ indexPageFunctionEntry r linkFunc (f, internalName) = do
     fretType = case functionType f of
       TypeFunction rt _ _ -> rt
       rtype -> rtype
+
+drilldownSignatureArgument :: Argument -> Html
+drilldownSignatureArgument arg =
+  [shamlet|
+<span class="code-type">#{paramType}</span> #{paramName}
+|]
+  where
+    paramType = show (argumentType arg)
+    paramName = identifierContent (argumentName arg)
 
 indexPageArgument :: InterfaceReport -> (Int, Argument) -> Html
 indexPageArgument r (ix, arg) = do

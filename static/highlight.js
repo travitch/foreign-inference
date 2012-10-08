@@ -21,7 +21,8 @@ function highlightLines(startLine, witnessLines) {
 }
 
 function linkCalledFunctions(fnames) {
-  $.map(fnames, function (fname, ix) { $('code').makeFunctionLink(fname[0], fname[1]); });
+// Search through the entire body since finding the code after Codemirror gets it is tricky.
+   $.map(fnames, function (fname, ix) { $('body').makeFunctionLink(fname[0], fname[1]); });
 }
 
 function initializeHighlighting() {

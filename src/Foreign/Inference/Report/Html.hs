@@ -64,7 +64,7 @@ $doctype 5
     <form>
       <textarea id="code" name="code">#{preprocessFunction functionText}
     <script type="text/javascript">
-      #{H.preEscapedToMarkup (initialScript calledFunctions)}
+      #{H.preEscapedToMarkup (initialScript calledFunctions startLine)}
 |]
   where
     funcName = identifierContent (functionName f)
@@ -114,12 +114,13 @@ extractCalledFunctionNames aliasReverseIndex i acc =
               in zip aliasNames (repeat ic) ++ names
         _ -> names
 
-initialScript :: [(Text, Text)] -> Text
-initialScript calledFuncNames =
+initialScript :: [(Text, Text)] -> Int -> Text
+initialScript calledFuncNames startLine =
   [st|
 $(window).bind("load", function() {
         var editor = CodeMirror.fromTextArea(document.getElementById("code"), {
         lineNumbers: true,
+        firstLineNumber: #{show startLine},
         matchBrackets: true,
         mode: "text/x-csrc"
       });

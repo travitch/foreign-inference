@@ -142,7 +142,7 @@ allocatorAnalysis (esumm, fsumm) funcLike s =
     _ -> return s { _finalizerSummary = fsumm }
   where
     f = getFunction funcLike
-    exitInst = functionExitInstruction f
+    Just exitInst = functionExitInstruction f
 
 -- | If the return value is always one of:
 --

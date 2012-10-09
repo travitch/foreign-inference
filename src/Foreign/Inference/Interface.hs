@@ -1,5 +1,5 @@
 {-# LANGUAGE ExistentialQuantification, DeriveDataTypeable #-}
-{-# LANGUAGE TemplateHaskell, StandaloneDeriving, ViewPatterns #-}
+{-# LANGUAGE TemplateHaskell, StandaloneDeriving, ViewPatterns, CPP #-}
 -- | This module defines an external representation of library
 -- interfaces.  Individual libraries are represented by the
 -- 'LibraryInterface'.  The analysis reads these in and writes these
@@ -86,6 +86,21 @@ import LLVM.Analysis.AccessPath
 import Foreign.Inference.Interface.Metadata
 import Foreign.Inference.Interface.Types
 
+#if defined(RELOCATE)
+getStaticFiles :: IO (HashMap FilePath SBS.ByteString)
+getStaticFiles = return $ M.fromList $(embedDir "stdlibs")
+#else
+import Data.List ( stripPrefix )
+import Paths_foreign_inference
+
+getStaticFiles :: IO (HashMap FilePath SBS.ByteString)
+getStaticFiles = do
+  statDir <- getDataDir
+  dat <- getDir statDir
+  let strip' p = fromMaybe p (stripPrefix "stdlibs/" p)
+  return $ M.fromList (map (first strip') dat)
+#endif
+
 -- import Debug.Trace
 -- debug = flip trace
 
@@ -93,16 +108,6 @@ import Foreign.Inference.Interface.Types
 summaryExtension :: String
 summaryExtension = "json"
 
-libc :: SBS.ByteString
-libc = $(embedFile "stdlibs/c.json")
-libm :: SBS.ByteString
-libm = $(embedFile "stdlibs/m.json")
-libdl :: SBS.ByteString
-libdl = $(embedFile "stdlibs/dl.json")
-libpthread :: SBS.ByteString
-libpthread = $(embedFile "stdlibs/pthread.json")
-llvmIntrinsics :: SBS.ByteString
-llvmIntrinsics = $(embedFile "stdlibs/llvm.json")
 
 data InterfaceException = DependencyMissing FilePath
                         | DependencyDecodeError FilePath
@@ -267,14 +272,20 @@ loadDependencies = loadDependencies' [CStdLib, LLVMLib]
 -- automatically loading standard library summaries.
 loadDependencies' :: [StdLib] -> [FilePath] -> [String] -> IO DependencySummary
 loadDependencies' includeStd summaryDirs deps = do
-  let baseDeps = foldl' addStdlibDeps M.empty includeStd
+  staticFiles <- getStaticFiles
+  let baseDeps = foldl' (addStdlibDeps staticFiles) M.empty includeStd
   m <- loadTransDeps summaryDirs deps S.empty baseDeps
   let rcIx = indexRefCounts m
       rcObjs = indexStructuralSuperclasses m
   return $! DependencySummary m mempty rcIx rcObjs
   where
-    addStdlibDeps m CStdLib =
-      let lc = decodeInterface libc
+    errMsg n = error ("Foreign.Inference.Interface.loadDependencies': could not find interface " ++ n)
+    addStdlibDeps sfiles m CStdLib =
+      let libc = M.lookupDefault (errMsg "libc") "c.json" sfiles
+          libm = M.lookupDefault (errMsg "libm") "m.json" sfiles
+          libdl = M.lookupDefault (errMsg "libdl") "dl.json" sfiles
+          libpthread = M.lookupDefault (errMsg "libpthread") "pthread.json" sfiles
+          lc = decodeInterface libc
           lm = decodeInterface libm
           ldl = decodeInterface libdl
           lpthread = decodeInterface libpthread
@@ -284,8 +295,9 @@ loadDependencies' includeStd summaryDirs deps = do
                       , libraryFunctions lpthread
                       ]
       in foldl' mergeFunction m fs
-    addStdlibDeps m LLVMLib =
-      let ll = decodeInterface llvmIntrinsics
+    addStdlibDeps sfiles m LLVMLib =
+      let llvmIntrinsics = M.lookupDefault (errMsg "llvmIntrinsics") "llvm.json" sfiles
+          ll = decodeInterface llvmIntrinsics
       in foldl' mergeFunction m (libraryFunctions ll)
 
 

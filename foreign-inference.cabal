@@ -13,11 +13,17 @@ extra-source-files: README.md
 data-files: stdlibs/*.json,
             static/*.css,
             static/jquery-1.7.1.js,
-            static/highlight.js
+            static/highlight.js,
+            static/codemirror-compressed.js,
+            static/code-highlighter.js
 description: This is a smarter automatic binding generator.  It uses
              program analysis to infer most of the annotations that would
              normally be required for such a tool.  The analysis frontend
              is IIGlue.  A python ctypes code generator is included: IIGen.
+
+flag Relocate
+  description: Allow generated binaries to be filesystem position independent
+  default: False
 
 library
   default-language: Haskell2010
@@ -51,13 +57,18 @@ library
                  aeson >= 0.4.0.0, loch-th >= 0.2, temporary, process, data-ordlist,
                  llvm-analysis, deepseq, deepseq-generics, lens >= 1,
                  failure >= 0.2, regex-tdfa, transformers >= 0.2 && < 0.4, hbgl,
-                 file-embed >= 0.0.4.2, hjsmin, graphviz, semigroups,
+                 hjsmin, graphviz, semigroups, file-embed >= 0.0.4.2,
                  datalog, sbv >= 2,
                  -- For the reporting code
                  archive-inspection, directory, attoparsec >= 0.10 && < 1.0, ascii,
                  hamlet >= 1, blaze-builder, blaze-html, shakespeare-text, parallel-io
   ghc-options: -Wall -funbox-strict-fields
   ghc-prof-options: -auto-all
+
+  if flag(Relocate)
+    cpp-options: -DRELOCATE=1
+  else
+    other-modules: Paths_foreign_inference
 
 
 test-suite ArrayTests

@@ -1,4 +1,7 @@
-{-# LANGUAGE OverloadedStrings, TemplateHaskell #-}
+{-# LANGUAGE OverloadedStrings, CPP #-}
+#if defined(RELOCATE)
+{-# LANGUAGE TemplateHaskell #-}
+#endif
 -- | This module provides some functions to generate HTML reports for
 -- a Module and its inferred annotations.  This module handles the
 -- extraction of source code (from tarballs/zip files) and mapping
@@ -21,9 +24,7 @@ import GHC.Conc ( getNumCapabilities )
 
 import Control.Concurrent.ParallelIO.Local
 import Data.ByteString.Lazy.Char8 ( ByteString )
-import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Lazy as LBS
-import Data.FileEmbed
 import qualified Data.Map as M
 import System.Directory ( createDirectoryIfMissing )
 import System.FilePath
@@ -36,21 +37,37 @@ import Foreign.Inference.Report.FunctionText
 import Foreign.Inference.Report.Html
 import Foreign.Inference.Report.Types
 
-highlightJs :: (FilePath, BS8.ByteString)
-highlightJs = ("highlight.js", $(embedFile "static/highlight.js"))
-codeHighlighterJs :: (FilePath, BS8.ByteString)
-codeHighlighterJs = ("code-highlighter.js", $(embedFile "static/code-highlighter.js"))
-codemirrorJs :: (FilePath, BS8.ByteString)
-codemirrorJs = ("codemirror-compressed.js", $(embedFile "static/codemirror-compressed.js"))
-codemirrorCss :: (FilePath, BS8.ByteString)
-codemirrorCss = ("codemirror.css", $(embedFile "static/codemirror.css"))
-jqueryJs :: (FilePath, BS8.ByteString)
-jqueryJs = ("jquery-1.7.1.js", $(embedFile "static/jquery-1.7.1.js"))
-styleCss :: (FilePath, BS8.ByteString)
-styleCss = ("style.css", $(embedFile "static/style.css"))
+#if defined(RELOCATE)
+import Data.FileEmbed
+import qualified Data.ByteString as BS
 
-staticFiles :: [(FilePath, BS8.ByteString)]
-staticFiles = [ styleCss, highlightJs, jqueryJs, codemirrorJs, codemirrorCss, codeHighlighterJs ]
+staticFiles :: [(FilePath, BS.ByteString)]
+staticFiles = $(embedDir "static")
+
+-- | Install a file from the project share directory to the target
+-- report directory (top-level).
+installStaticFiles :: FilePath -> IO ()
+installStaticFiles dst = do
+  let install (name, content) = BS.writeFile (dst </> name) content
+  mapM_ install staticFiles
+
+#else
+import System.Directory ( copyFile, getDirectoryContents )
+
+import Paths_foreign_inference
+
+installStaticFiles :: FilePath -> IO ()
+installStaticFiles dst = do
+  src <- getDataDir
+  files <- getDirectoryContents (src </> "static")
+  let doCopy f = do
+        case f == "." || f == ".." of
+          True -> return ()
+          False -> copyFile (src </> "static" </> f) (dst </> f)
+  mapM_ doCopy files
+
+#endif
+
 
 
 -- | Write the given report into the given directory.  An index.html file
@@ -80,7 +97,7 @@ writeHTMLReport r dir = do
   withPool caps $ \p -> parallel_ p actions
 
   -- Copy over static resources (like css and js)
-  mapM_ (installStaticFile dir) staticFiles
+  installStaticFiles dir
 
 
 -- | This is like 'writeHTMLReport', except it only writes out the
@@ -98,13 +115,7 @@ writeHTMLSummary r dir = do
   LBS.writeFile indexFile (renderHtml indexPage)
 
   -- Copy over static resources (like css and js)
-  mapM_ (installStaticFile dir) staticFiles
-
--- | Install a file from the project share directory to the target
--- report directory (top-level).
-installStaticFile :: FilePath -> (FilePath, BS8.ByteString) -> IO ()
-installStaticFile dir (name, content) =
-  BS8.writeFile (dir </> name) content
+  installStaticFiles dir
 
 writeFunctionBodyPage :: InterfaceReport
                          -> FilePath

@@ -1,11 +1,11 @@
-function highlight(argName) {
-  // First, remove all highlighting since we are about to highlight something else
-  $('.highlight').removeClass('highlight');
-  $('.witness-reason').remove();
+// function highlight(argName) {
+//   // First, remove all highlighting since we are about to highlight something else
+//   $('.highlight').removeClass('highlight');
+//   $('.witness-reason').remove();
 
-  // Now just highlight what we find in the code section
-  $('code').highlight(argName, false, 'highlight');
-}
+//   // Now just highlight what we find in the code section
+//   $('code').highlight(argName, false, 'highlight');
+// }
 
 function highlightLines(startLine, witnessLines) {
   if(witnessLines.length == 0) return;
@@ -27,19 +27,20 @@ function linkCalledFunctions(fnames) {
 
 function initializeHighlighting() {
   var linkFunc = function(txtName, fname) {
-    var regex = new RegExp('(<[^>]*>)|(\\b'+ txtName.replace(/([-.*+?^${}()|[\]\/\\])/g,"\\$1") +')', 'g');
+    var target = txtName.replace(/([-.*+?^${}()|[\]\/\\])/g, "\\$1");
+    var regex = new RegExp('(<[^>]*>)|(\\b'+ target +')', 'g');
     return this.html(this.html().replace(regex, function(a, b, c){
       var url = fname + ".html";
       return (a.charAt(0) == '<') ? a : '<a href="'+ url +'">' + c + '</a>';
     }));
   };
 
-  var highlightFunc = function(search, insensitive, klass) {
-    var regex = new RegExp('(<[^>]*>)|(\\b'+ search.replace(/([-.*+?^${}()|[\]\/\\])/g,"\\$1") +')', insensitive ? 'ig' : 'g');
-    return this.html(this.html().replace(regex, function(a, b, c){
-      return (a.charAt(0) == '<') ? a : '<strong class="'+ klass +'">' + c + '</strong>';
-    }));
-	};
+  // var highlightFunc = function(search, insensitive, klass) {
+  //   var regex = new RegExp('(<[^>]*>)|(\\b'+ search.replace(/([-.*+?^${}()|[\]\/\\])/g,"\\$1") +')', insensitive ? 'ig' : 'g');
+  //   return this.html(this.html().replace(regex, function(a, b, c){
+  //     return (a.charAt(0) == '<') ? a : '<strong class="'+ klass +'">' + c + '</strong>';
+  //   }));
+	// };
 
-  jQuery.fn.extend({ makeFunctionLink: linkFunc, highlight: highlightFunc });
+  jQuery.fn.extend({ makeFunctionLink: linkFunc });
 }

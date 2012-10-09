@@ -129,7 +129,7 @@ initialScript :: [(Text, Text)] -> Int -> Text
 initialScript calledFuncNames startLine =
   [st|
 $(window).bind("load", function() {
-  var editor = CodeMirror.fromTextArea(document.getElementById("code"), {
+  editor = CodeMirror.fromTextArea(document.getElementById("code"), {
     lineNumbers: true,
     firstLineNumber: #{show startLine},
     matchBrackets: true,
@@ -149,7 +149,7 @@ drilldownArgumentEntry :: Int -> InterfaceReport -> Argument -> Html
 drilldownArgumentEntry startLine r arg =
   [shamlet|
 <span class="code-type">#{show (argumentType arg)}</span>#
-  \ <a href="#" onclick="highlight('#{argName}');">#{argName}</a>#
+  \ <a href="#" onclick="editor.highlightText('highlight', '#{argName}');">#{argName}</a>#
   \ #{drilldownArgumentAnnotations startLine annots}
 |]
   where

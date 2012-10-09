@@ -15,7 +15,7 @@ import Data.Maybe ( mapMaybe )
 import Data.Map ( Map )
 import qualified Data.Map as M
 import Data.Monoid
-import Data.Text ( Text, pack )
+import Data.Text ( Text )
 import qualified Data.Text as T
 import Text.Hamlet ( shamlet )
 import Text.Shakespeare.Text
@@ -148,9 +148,10 @@ $(window).bind("load", function() {
 drilldownArgumentEntry :: Int -> InterfaceReport -> Argument -> Html
 drilldownArgumentEntry startLine r arg =
   [shamlet|
-<span class="code-type">#{show (argumentType arg)}</span>#
-  \ <a href="#" onclick="editor.highlightText('highlight', '#{argName}');">#{argName}</a>#
-  \ #{drilldownArgumentAnnotations startLine annots}
+<span class="code-type">#{show (argumentType arg)}
+  <a href="#" onclick="editor.highlightText('highlight', '#{argName}');">
+    #{argName}
+  #{drilldownArgumentAnnotations startLine annots}
 |]
   where
     argName = identifierContent (argumentName arg)
@@ -158,26 +159,18 @@ drilldownArgumentEntry startLine r arg =
 
 drilldownArgumentAnnotations :: Int -> [(ParamAnnotation, [Witness])] -> Html
 drilldownArgumentAnnotations _ [] = return ()
-drilldownArgumentAnnotations startLine annots = do
-  H.span ! A.class_ "code-comment" $ do
-    stringToHtml " /* ["
-    commaSepList annots mkAnnotLink
-    stringToHtml "] */"
+drilldownArgumentAnnotations startLine annots =
+  [shamlet| <span class="code-comment"> /* [ #{annotListing} ] */ </span> |]
   where
+    annotListing = commaSepList annots mkAnnotLink
+    showWL (Witness i s) = do
+      l <- instructionToLine i
+      return $! mconcat [ "[", show l, ", '", s, "']" ]
     mkAnnotLink (a, witnessLines)
       | null witnessLines = toHtml (show a)
       | otherwise =
-        H.a ! A.href "#" ! A.onclick (H.preEscapedToValue clickScript) $ toHtml (show a)
-      where
-        clickScript = mconcat [ "highlightLines("
-                              , pack (show startLine)
-                              , ", ["
-                              , pack (intercalate "," (mapMaybe showWL witnessLines))
-                              , "]);"
-                              ]
-        showWL (Witness i s) = do
-          l <- instructionToLine i
-          return $! mconcat [ "[", show l, ", '", s, "']" ]
+        let clickScript = [st|highlightLines(#{show startLine}, [#{intercalate "," (mapMaybe showWL witnessLines)}]);|]
+        in [shamlet| <a href="#" onclick="#{H.preEscapedToMarkup clickScript}">#{show a} |]
 
 instructionSrcLoc :: Instruction -> Maybe Metadata
 instructionSrcLoc i =

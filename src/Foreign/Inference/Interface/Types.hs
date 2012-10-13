@@ -78,6 +78,7 @@ instance NFData ErrorActionArgument where
 -- function to pass information back to the caller (either in-band
 -- return values or out-of-band routes).
 data ErrorAction = ReturnConstantInt (Set Int)
+                 | ReturnConstantPtr (Set Int)
                  | AssignToGlobal String (Set Int)
                  | AssignToCall String (Set Int)
                    -- ^ Assign a constant int to the return value of a

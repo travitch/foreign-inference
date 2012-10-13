@@ -80,16 +80,60 @@ data IndirectCallSummary =
 instance Show IndirectCallSummary where
   show = show . summaryTargets
 
+-- If i is a Load of a global with an initializer (or a GEP of a
+-- global with a complex initializer), just use the initializer to
+-- determine the points-to set.  Obviously this isn't general.
+--
+-- Eventually, this should call down to a real (field-based) points-to
+-- analysis for other values.
 indirectCallInitializers :: IndirectCallSummary -> Value -> [Value]
 indirectCallInitializers s v =
   case valueContent' v of
-    InstructionC i -> fromMaybe [] $ do
+    -- Here, walk the initializer if it isn't a simple integer
+    -- constant We discard the first index because while the global
+    -- variable is a pointer type, the initializer is not (because all
+    -- globals get an extra indirection as r-values)
+    InstructionC li@LoadInst { loadAddress = (valueContent' ->
+      ConstantC ConstantValue { constantInstruction = (valueContent' ->
+        InstructionC GetElementPtrInst { getElementPtrValue = (valueContent' ->
+          GlobalVariableC GlobalVariable { globalVariableInitializer = Just i })
+                                       , getElementPtrIndices = (valueContent -> ConstantC ConstantInt { constantIntValue = 0 }) :ixs
+                                       })})} ->
+      maybe (lookupInst li) (:[]) $ resolveInitializer i ixs
+    InstructionC li@LoadInst { loadAddress = (valueContent' ->
+      GlobalVariableC GlobalVariable { globalVariableInitializer = Just i })} ->
+      case valueContent' i of
+        -- All globals have some kind of initializer; if it is a zero
+        -- or constant (non-function) initializer, just ignore it and
+        -- use the more complex fallback.
+        ConstantC _ -> lookupInst li
+        _ -> [i]
+    InstructionC i -> lookupInst i
+    _ -> []
+  where
+    lookupInst i = fromMaybe [] $ do
       accPath <- accessPath i
       let absPath = abstractAccessPath accPath
       return $! indirectCallLookup s absPath
-    _ -> []
 
-{-# NOINLINE indirectCallLookup #-}
+resolveInitializer :: Value -> [Value] -> Maybe Value
+resolveInitializer v [] = return v
+resolveInitializer v (ix:ixs) = do
+  intVal <- fromConstantInt ix
+  case valueContent v of
+    ConstantC ConstantArray { constantArrayValues = vs } ->
+      if length vs <= intVal then Nothing else resolveInitializer (vs !! intVal) ixs
+    ConstantC ConstantStruct { constantStructValues = vs } ->
+      if length vs <= intVal then Nothing else resolveInitializer (vs !! intVal) ixs
+    _ -> Nothing
+
+fromConstantInt :: Value -> Maybe Int
+fromConstantInt v =
+  case valueContent v of
+    ConstantC ConstantInt { constantIntValue = iv } ->
+      return $ fromIntegral iv
+    _ -> Nothing
+
 indirectCallLookup :: IndirectCallSummary -> AbstractAccessPath -> [Value]
 indirectCallLookup s = HS.toList . absPathLookup s
 

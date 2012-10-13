@@ -117,7 +117,7 @@ indirectCallInitializers s v =
       return $! indirectCallLookup s absPath
 
 resolveInitializer :: Value -> [Value] -> Maybe Value
-resolveInitializer v [] = return v
+resolveInitializer v [] = return (stripBitcasts v)
 resolveInitializer v (ix:ixs) = do
   intVal <- fromConstantInt ix
   case valueContent v of

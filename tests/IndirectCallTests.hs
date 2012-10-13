@@ -56,4 +56,4 @@ isIndirectCallInst i =
 targetNames :: Value -> Set String -> Set String
 targetNames v = S.insert (identifierAsString n)
   where
-    Just n = valueName (stripBitcasts v)
+    Just n = valueName v

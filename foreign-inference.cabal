@@ -139,3 +139,12 @@ test-suite InstructionEscapeTests
   build-depends: llvm-analysis, llvm-data-interop, bytestring, mtl,
                  base > 3 && < 5, filepath, containers, HUnit, foreign-inference
   ghc-options: -Wall -rtsopts
+
+test-suite IndirectCallTests
+  default-language: Haskell2010
+  type: exitcode-stdio-1.0
+  main-is: IndirectCallTests.hs
+  hs-source-dirs: tests
+  build-depends: llvm-analysis, llvm-data-interop, base, containers, HUnit,
+                 foreign-inference, filepath
+  ghc-options: -Wall

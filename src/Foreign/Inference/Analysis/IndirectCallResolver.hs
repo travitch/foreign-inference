@@ -100,17 +100,17 @@ indirectCallInitializers s@(ICS pta _) v =
           GlobalVariableC GlobalVariable { globalVariableInitializer = Just i })
                                        , getElementPtrIndices = (valueContent -> ConstantC ConstantInt { constantIntValue = 0 }) :ixs
                                        })})} ->
-      maybe (lookupInst la) (:[]) $ resolveInitializer i ixs
+      maybe (lookupInst li) (:[]) $ resolveInitializer i ixs
     InstructionC li@LoadInst { loadAddress = la@(valueContent' ->
       GlobalVariableC GlobalVariable { globalVariableInitializer = Just i })} ->
       case valueContent' i of
         -- All globals have some kind of initializer; if it is a zero
         -- or constant (non-function) initializer, just ignore it and
         -- use the more complex fallback.
-        ConstantC _ -> lookupInst la
+        ConstantC _ -> lookupInst li
         _ -> [i]
-    InstructionC LoadInst { loadAddress = la } ->
-      lookupInst la
+    InstructionC li@LoadInst { loadAddress = la } ->
+      lookupInst li
     InstructionC i -> lookupInst i
     _ -> []
   where

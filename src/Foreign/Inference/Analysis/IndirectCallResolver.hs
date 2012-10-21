@@ -41,12 +41,13 @@ import Data.List ( elemIndex )
 import Data.Maybe ( fromMaybe )
 import Data.Monoid
 
-import Database.Datalog
+-- import Database.Datalog
 
 import LLVM.Analysis
 import LLVM.Analysis.AccessPath
 import LLVM.Analysis.ClassHierarchy
 import LLVM.Analysis.PointsTo
+import LLVM.Analysis.PointsTo.Andersen
 
 -- import Text.Printf
 -- import Debug.Trace
@@ -59,26 +60,26 @@ instance PointsToAnalysis IndirectCallSummary where
   pointsTo = indirectCallInitializers
   resolveIndirectCall = indirectCallTargets
 
-data CallSummary = ArgumentPosition Function Int
-                   -- ^ For describing call argument positions and
-                   -- formal positions
-                 | Path AbstractAccessPath
-                   -- ^ Paths that are assigned to
-                 | Target Value
-                 deriving (Eq, Ord, Show)
+-- data CallSummary = ArgumentPosition Function Int
+--                    -- ^ For describing call argument positions and
+--                    -- formal positions
+--                  | Path AbstractAccessPath
+--                    -- ^ Paths that are assigned to
+--                  | Target Value
+--                  deriving (Eq, Ord, Show)
 
-instance Hashable CallSummary where
-  hash (ArgumentPosition f i) = 1 `combine` hash f `combine` hash i
-  hash (Path p) = 2 `combine` hash p
-  hash (Target f) = 3 `combine` hash f
+-- instance Hashable CallSummary where
+--   hash (ArgumentPosition f i) = 1 `combine` hash f `combine` hash i
+--   hash (Path p) = 2 `combine` hash p
+--   hash (Target f) = 3 `combine` hash f
 
 data IndirectCallSummary =
-  ICS { summaryTargets :: HashMap AbstractAccessPath (HashSet Value)
+  ICS { summaryTargets :: Andersen -- HashMap AbstractAccessPath (HashSet Value)
       , resolverCHA :: CHA
       }
 
-instance Show IndirectCallSummary where
-  show = show . summaryTargets
+-- instance Show IndirectCallSummary where
+--   show = show . summaryTargets
 
 -- If i is a Load of a global with an initializer (or a GEP of a
 -- global with a complex initializer), just use the initializer to
@@ -87,34 +88,37 @@ instance Show IndirectCallSummary where
 -- Eventually, this should call down to a real (field-based) points-to
 -- analysis for other values.
 indirectCallInitializers :: IndirectCallSummary -> Value -> [Value]
-indirectCallInitializers s v =
+indirectCallInitializers s@(ICS pta _) v =
   case valueContent' v of
     -- Here, walk the initializer if it isn't a simple integer
     -- constant We discard the first index because while the global
     -- variable is a pointer type, the initializer is not (because all
     -- globals get an extra indirection as r-values)
-    InstructionC li@LoadInst { loadAddress = (valueContent' ->
+    InstructionC li@LoadInst { loadAddress = la@(valueContent' ->
       ConstantC ConstantValue { constantInstruction = (valueContent' ->
         InstructionC GetElementPtrInst { getElementPtrValue = (valueContent' ->
           GlobalVariableC GlobalVariable { globalVariableInitializer = Just i })
                                        , getElementPtrIndices = (valueContent -> ConstantC ConstantInt { constantIntValue = 0 }) :ixs
                                        })})} ->
-      maybe (lookupInst li) (:[]) $ resolveInitializer i ixs
-    InstructionC li@LoadInst { loadAddress = (valueContent' ->
+      maybe (lookupInst la) (:[]) $ resolveInitializer i ixs
+    InstructionC li@LoadInst { loadAddress = la@(valueContent' ->
       GlobalVariableC GlobalVariable { globalVariableInitializer = Just i })} ->
       case valueContent' i of
         -- All globals have some kind of initializer; if it is a zero
         -- or constant (non-function) initializer, just ignore it and
         -- use the more complex fallback.
-        ConstantC _ -> lookupInst li
+        ConstantC _ -> lookupInst la
         _ -> [i]
+    InstructionC LoadInst { loadAddress = la } ->
+      lookupInst la
     InstructionC i -> lookupInst i
     _ -> []
   where
-    lookupInst i = fromMaybe [] $ do
-      accPath <- accessPath i
-      let absPath = abstractAccessPath accPath
-      return $! indirectCallLookup s absPath
+    lookupInst i = pointsTo pta (toValue i)
+    -- lookupInst i = fromMaybe [] $ do
+    --   accPath <- accessPath i
+    --   let absPath = abstractAccessPath accPath
+    --   return $! indirectCallLookup s absPath
 
 resolveInitializer :: Value -> [Value] -> Maybe Value
 resolveInitializer v [] = return (stripBitcasts v)
@@ -134,8 +138,8 @@ fromConstantInt v =
       return $ fromIntegral iv
     _ -> Nothing
 
-indirectCallLookup :: IndirectCallSummary -> AbstractAccessPath -> [Value]
-indirectCallLookup s = HS.toList . absPathLookup s
+-- indirectCallLookup :: IndirectCallSummary -> AbstractAccessPath -> [Value]
+-- indirectCallLookup s = HS.toList . absPathLookup s
 
 -- | Resolve the targets of an indirect call instruction.  This works
 -- with both C++ virtual function dispatch and some other common
@@ -160,22 +164,22 @@ indirectCallTargets ics i =
 -- closure (and unify function actual arguments with formals).  Note
 -- that it can't be as polymorphic as certain other datalog functions
 -- since it takes no arguments.
-pathQuery :: QueryBuilder (Either DatalogError) CallSummary (Query CallSummary)
-pathQuery = do
-  fptrToField <- relationPredicateFromName "fptrToField"
-  fptrAsArg <- relationPredicateFromName "fptrAsArg"
-  argToField <- relationPredicateFromName "argToField"
-  initializes <- inferencePredicate "initializes"
+-- pathQuery :: QueryBuilder (Either DatalogError) CallSummary (Query CallSummary)
+-- pathQuery = do
+--   fptrToField <- relationPredicateFromName "fptrToField"
+--   fptrAsArg <- relationPredicateFromName "fptrAsArg"
+--   argToField <- relationPredicateFromName "argToField"
+--   initializes <- inferencePredicate "initializes"
 
-  let f = LogicVar "F"
-      p = LogicVar "P"
-      pos = LogicVar "POS"
+--   let f = LogicVar "F"
+--       p = LogicVar "P"
+--       pos = LogicVar "POS"
 
-  (initializes, [f, p]) |- [ lit fptrToField [ f, p ] ]
-  (initializes, [f, p]) |- [ lit fptrAsArg [ pos, f ]
-                           , lit argToField [ pos, p ]
-                           ]
-  issueQuery initializes [ f, p ]
+--   (initializes, [f, p]) |- [ lit fptrToField [ f, p ] ]
+--   (initializes, [f, p]) |- [ lit fptrAsArg [ pos, f ]
+--                            , lit argToField [ pos, p ]
+--                            ]
+--   issueQuery initializes [ f, p ]
 
 -- | Look up the initializers for this abstract access path.  The key
 -- here is that we get both the initializers we know for this path,
@@ -183,29 +187,38 @@ pathQuery = do
 -- if the path is a.b.c.d, we also care about initializers for b.c.d
 -- (and c.d).  The recursive walk is in the reducedPathResults
 -- segment.
-absPathLookup :: IndirectCallSummary -> AbstractAccessPath -> HashSet Value
-absPathLookup s@(ICS targets _) absPath =
-  pathInits `HS.union` reducedPathResults
-  where
-    pathInits = HM.lookupDefault mempty absPath targets
-    reducedPathResults =
-      case reduceAccessPath absPath of
-        Nothing -> mempty
-        Just rpath -> absPathLookup s rpath
+-- absPathLookup :: IndirectCallSummary -> AbstractAccessPath -> HashSet Value
+-- absPathLookup s@(ICS targets _) absPath =
+--   pathInits `HS.union` reducedPathResults
+--   where
+--     pathInits = HM.lookupDefault mempty absPath targets
+--     reducedPathResults =
+--       case reduceAccessPath absPath of
+--         Nothing -> mempty
+--         Just rpath -> absPathLookup s rpath
 
 -- | Run the initializer analysis: a cheap pass to identify a subset
 -- of possible function pointers that object fields can point to.
 {-# NOINLINE identifyIndirectCallTargets #-}
 identifyIndirectCallTargets :: Module -> IndirectCallSummary
-identifyIndirectCallTargets m = ICS targets (runCHA m)
+identifyIndirectCallTargets m =
+  ICS (runPointsToAnalysisWith ignoreNonFptr m) (runCHA m)
   where
-    facts = either throw id $ do
-      db <- buildDatabase m
-      queryDatabase db pathQuery
-    targets = foldr addTarget mempty facts
-    addTarget [Target f, Path p] = HM.insertWith HS.union p (HS.singleton f)
-    addTarget _ = error "identifyIndirectCallTargets: database schema mismatch"
+    ignoreNonFptr = const False -- ignoreNonFptrType . valueType
+    ignoreNonFptrType t =
+      case t of
+        TypeFunction _ _ _ -> False
+        TypePointer t' _ -> ignoreNonFptrType t'
+        _ -> True
 
+  -- where
+  --   facts = either throw id $ do
+  --     db <- buildDatabase m
+  --     queryDatabase db pathQuery
+  --   targets = foldr addTarget mempty facts
+  --   addTarget [Target f, Path p] = HM.insertWith HS.union p (HS.singleton f)
+  --   addTarget _ = error "identifyIndirectCallTargets: database schema mismatch"
+{-
 
 buildDatabase :: Module -> Either DatalogError (Database CallSummary)
 buildDatabase m = makeDatabase $ do
@@ -318,3 +331,4 @@ factsForInstruction fptrToField fptrAsArg argToField i =
         _ -> return ()
     someField (AccessField _) = True
     someField _ = False
+-}

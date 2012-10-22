@@ -50,11 +50,10 @@ $doctype 5
   <head>
     <title>#{funcName} [function breakdown]
     <link rel=stylesheet href="../style.css" type="text/css">
-    <link rel=stylesheet href="../codemirror.css" type="text/css">
-    <script type="text/javascript" src="../jquery-1.7.1.js">
-    <script type="text/javascript" src="../codemirror-compressed.js">
+    <link rel=stylesheet href="../jquery.snippet.css" type="text/css">
+    <script type="text/javascript" src="../jquery-1.8.2.min.js">
+    <script type="text/javascript" src="../jquery.snippet.js">
     <script type="text/javascript" src="../highlight.js">
-    <script type="text/javascript" src="../code-highlighter.js">
   <body>
     Breakdown of #{funcName} (defined in #{srcFile})
     <div>
@@ -65,8 +64,8 @@ $doctype 5
           <li>&rarr; <span class="code-comment">/* #{show fannots} */</span>
     <p>
       #{funcName} (#{sig}) -> <span class="code-type">#{show fretType}</span>
-    <form>
-      <textarea id="code" name="code">#{preprocessFunction functionText}
+    <pre id="code" name="code">
+      #{preprocessFunction functionText}
     <script type="text/javascript">
       #{H.preEscapedToMarkup (initialScript calledFunctions startLine)}
 |]
@@ -129,12 +128,7 @@ initialScript :: [(Text, Text)] -> Int -> Text
 initialScript calledFuncNames startLine =
   [st|
 $(window).bind("load", function() {
-  editor = CodeMirror.fromTextArea(document.getElementById("code"), {
-    lineNumbers: true,
-    firstLineNumber: #{show startLine},
-    matchBrackets: true,
-    mode: "text/x-csrc"
-  });
+  $("pre#code").snippet("c", {style: "darkness", showNum: true, startNum: #{show startLine}});
   initializeHighlighting();
   linkCalledFunctions([#{funcNameList}]);
   });

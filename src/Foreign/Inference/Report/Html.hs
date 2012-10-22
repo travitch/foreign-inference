@@ -128,7 +128,7 @@ initialScript :: [(Text, Text)] -> Int -> Text
 initialScript calledFuncNames startLine =
   [st|
 $(window).bind("load", function() {
-  $("pre#code").snippet("c", {style: "darkness", showNum: true, startNum: #{show startLine}});
+  $("pre#code").snippet("c", {style: "emacs", showNum: true, startNum: #{show startLine}});
   initializeHighlighting();
   linkCalledFunctions([#{funcNameList}]);
   });

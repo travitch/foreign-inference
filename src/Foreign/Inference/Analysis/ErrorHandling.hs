@@ -12,7 +12,7 @@ import GHC.Generics
 import Control.DeepSeq
 import Control.DeepSeq.Generics ( genericRnf )
 import Control.Lens ( Simple, (%~), (.~), makeLenses )
-import Control.Monad ( foldM )
+import Control.Monad ( foldM, when )
 import Control.Monad.Trans.Class
 import Control.Monad.Trans.Maybe
 import qualified Data.Foldable as F
@@ -42,9 +42,9 @@ import Foreign.Inference.Internal.FlattenValue
 import Foreign.Inference.Analysis.IndirectCallResolver
 
 -- import Text.Printf
-import Debug.Trace
-debug :: a -> String -> a
-debug = flip trace
+-- import Debug.Trace
+-- debug :: a -> String -> a
+-- debug = flip trace
 
 type ErrorDescriptor = Set ErrorAction
 type SummaryType = HashMap Function (Set ErrorDescriptor)
@@ -103,7 +103,7 @@ mergeIdenticalHandlers h acc =
 -- | Note, this uses foldr1 but each set cannot be empty (since we use
 -- insertWith below, we can't have empty sets).
 unifyErrorHandler :: (Function, Set ErrorDescriptor) -> ErrorDescriptor
-unifyErrorHandler (f, s) = h `debug` (identifierAsString (functionName f) ++ ": " ++ show h)
+unifyErrorHandler (_, s) = h -- `debug` (identifierAsString (functionName f) ++ ": " ++ show h)
   where
     h = F.foldr1 combineHandler s
 
@@ -118,6 +118,8 @@ combineHandler d0 = snd . F.foldr findCorresponding (d0, mempty)
         Nothing -> (targets, acc)
         Just (act', t) ->
           (S.delete t targets, S.insert act' acc)
+-- FIXME: Discard outlier error actions when combining the error actions
+-- for a single function
 
 unifyErrorAction :: ErrorAction
                     -> ErrorAction
@@ -197,7 +199,7 @@ errorAnalysis :: (FuncLike funcLike, HasFunction funcLike, HasCDG funcLike, HasP
                  -> Analysis ErrorSummary
 errorAnalysis funcLike s =
   analysisLocal (blockRetLabels .~ retLabels) $
-    foldM (analyzeErrorChecks f) s (functionBody f) `debug` ("Analyzing function " ++ show (functionName f))
+    foldM (analyzeErrorChecks f) s (functionBody f) -- `debug` ("Analyzing function " ++ show (functionName f))
   where
     f = getFunction funcLike
     retLabels = labelBlockReturns funcLike
@@ -240,39 +242,26 @@ checkTransitiveError :: IndirectCallSummary
 checkTransitiveError _ _ _ _ _ j@(Just _) = j
 checkTransitiveError ics ds s f rv Nothing =
   case valueContent' rv of
-    InstructionC CallInst { callFunction = callee } -> do
-      summ <- singleCalleeSummary ics ds s callee
-      FAReportsErrors errActs <- F.find isErrRetAnnot summ
-      let upd = errorSummary %~ HM.insertWith S.union f (S.singleton errActs)
-      return $ upd s
+    InstructionC CallInst { callFunction = callee } ->
+      let callees = callTargets ics callee
+      in foldr (recordTransitiveError f ds s) Nothing callees
     _ -> Nothing
 
--- | This is a wrapper around 'lookupFunctionSummary' that resolves
--- indirect call targets.  Currently it only works for indirect calls
--- with only a single target.  There are many options for multi-target
--- indirect calls: (1) choose a single representative, (2) merge
--- (probably won't work in general), or (3) record all possible
--- summaries.  Another possibility is to take the "max" - the caller
--- should be prepared to handle any and all of the possible return
--- values.
-singleCalleeSummary :: IndirectCallSummary
-                       -> DependencySummary
-                       -> ErrorSummary
-                       -> Value
-                       -> Maybe [FuncAnnotation]
-singleCalleeSummary ics ds s callee = do
-  f <- case valueContent' callee of
-    FunctionC _ -> return callee
-    ExternalFunctionC _ -> return callee
-    _ -> case indirectCallInitializers ics callee of
-      [singleTarget] ->
-        let vn = valueName singleTarget
-            dbgTgt = maybe (show singleTarget) show vn
-        in return singleTarget `debug` ("  Single target: " ++ dbgTgt)
-      cs -> Nothing `debug` (concatMap (show . valueName) cs)
-  ann <- lookupFunctionSummary ds s f
-  return ann `debug` ("    " ++ show ann)
+recordTransitiveError :: Function -> DependencySummary -> ErrorSummary
+                         -> Value -> Maybe ErrorSummary -> Maybe ErrorSummary
+recordTransitiveError _ _ _ _ j@(Just _) = j
+recordTransitiveError f ds s callee Nothing = do
+  summ <- lookupFunctionSummary ds s callee
+  FAReportsErrors errActs <- F.find isErrRetAnnot summ
+  let upd = errorSummary %~ HM.insertWith S.union f (S.singleton errActs)
+  return $ upd s
 
+callTargets :: IndirectCallSummary -> Value -> [Value]
+callTargets ics callee =
+  case valueContent' callee of
+    FunctionC _ -> [callee]
+    ExternalFunctionC _ -> [callee]
+    _ -> indirectCallInitializers ics callee
 
 isErrRetAnnot :: FuncAnnotation -> Bool
 isErrRetAnnot (FAReportsErrors _) = True
@@ -425,9 +414,9 @@ extractErrorHandlingCode f s p v1 v2 tt ft = do
   rel <- cmpPredicateToRelation p
   (trueFormula, falseFormula) <- cmpToFormula s rel v1 v2
   case isTrue trueFormula of
-    True -> branchToErrorDescriptor f tt `debug` "-->Taking first branch"
+    True -> branchToErrorDescriptor f tt -- `debug` "-->Taking first branch"
     False -> case isTrue falseFormula of
-      True -> branchToErrorDescriptor f ft `debug` "-->Taking second branch"
+      True -> branchToErrorDescriptor f ft -- `debug` "-->Taking second branch"
       False -> fail "Error not checked"
 
 liftMaybe :: Maybe a -> MaybeT Analysis a
@@ -446,17 +435,16 @@ cmpToFormula s rel v1 v2 = do
       v2' = callFuncOrConst v2
   case (v1', v2') of
     (FuncallOperand callee, ConstIntOperand i) -> do
-      fsumm <- liftMaybe $ singleCalleeSummary ics ds s callee
-      rv <- liftMaybe $ errRetVal fsumm
-      return () `debug` ("  Err Retval: " ++ show rv)
+      let callees = callTargets ics callee
+      rv <- errorReturnValue ds s callees
       let i' = fromIntegral i
           rv' = fromIntegral rv
           trueFormula = \(x :: SInt32) -> (x .== rv') ==> (x `rel` i')
           falseFormula = \(x :: SInt32) -> (x .== rv') ==> bnot (x `rel` i')
       return (trueFormula, falseFormula)
     (ConstIntOperand i, FuncallOperand callee) -> do
-      fsumm <- liftMaybe $ singleCalleeSummary ics ds s callee
-      rv <- liftMaybe $ errRetVal fsumm
+      let callees = callTargets ics callee
+      rv <- errorReturnValue ds s callees
       let i' = fromIntegral i
           rv' = fromIntegral rv
           trueFormula = \(x :: SInt32) -> (x .== rv') ==> (i' `rel` x)
@@ -486,6 +474,23 @@ isTrue = unsafePerformIO . isTheorem
 --   res <- isTheorem formula
 --   return res
 
+errorReturnValue :: DependencySummary -> ErrorSummary -> [Value] -> MaybeT Analysis Int
+errorReturnValue _ _ [] = fail "No call targets"
+errorReturnValue ds s [callee] = do
+  fsumm <- liftMaybe $ lookupFunctionSummary ds s callee
+  liftMaybe $ errRetVal fsumm
+errorReturnValue ds s (callee:rest) = do
+  fsumm <- liftMaybe $ lookupFunctionSummary ds s callee
+  rv <- liftMaybe $ errRetVal fsumm
+  mapM_ (checkOtherErrorReturns rv) rest
+  return rv
+  where
+    checkOtherErrorReturns rv c = do
+      fsumm <- liftMaybe $ lookupFunctionSummary ds s c
+      rv' <- liftMaybe $ errRetVal fsumm
+      when (rv' /= rv) $ emitWarning Nothing "ErrorAnalysis" ("Mismatched error return codes for indirect call " ++ show (valueName callee))
+
+
 errRetVal :: [FuncAnnotation] -> Maybe Int
 errRetVal [] = Nothing
 errRetVal (FAReportsErrors es : _) = do
@@ -513,15 +518,15 @@ isIntRet _ = False
 branchToErrorDescriptor :: Function -> BasicBlock -> MaybeT Analysis ErrorDescriptor
 branchToErrorDescriptor f bb = do
   brs <- lift $ analysisEnvironment _blockRetLabels
-  let rcs = blockReturns brs bb `debug` show brs
-  constantRcs <- liftMaybe $ mapM retValToConstantInt rcs `debug` show rcs
-  case null constantRcs `debug` show constantRcs of
+  let rcs = blockReturns brs bb -- `debug` show brs
+  constantRcs <- liftMaybe $ mapM retValToConstantInt rcs -- `debug` show rcs
+  case null constantRcs {- `debug` show constantRcs -} of
     True -> fail "Non-constant return value"
     False ->
       let rcon = if functionReturnsPointer f then ReturnConstantPtr else ReturnConstantInt
           ract = rcon (S.fromList constantRcs)
           acts = foldr instToAction [ract] (basicBlockInstructions bb)
-      in return $ S.fromList acts `debug` show constantRcs
+      in return $ S.fromList acts -- `debug` show constantRcs
 
 retValToConstantInt :: Value -> Maybe Int
 retValToConstantInt v =

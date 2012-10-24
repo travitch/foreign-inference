@@ -18,7 +18,7 @@ import GHC.Generics ( Generic )
 
 import Control.DeepSeq
 import Control.DeepSeq.Generics ( genericRnf )
-import Control.Lens ( Simple, (^.), (%=), (%~), (.~), use, makeLenses )
+import Control.Lens ( Simple, (^.), (%~), (.~), use, makeLenses )
 import Control.Monad.Writer ( runWriter )
 import qualified Data.Foldable as F
 import Data.Hashable
@@ -332,9 +332,9 @@ buildValueFlowGraph ics ds summ is =
               let c = setExpFor sa <=! setExpFor sv
               in (c : incs, fsrcs)
 
-        CallInst { callFunction = callee, callArguments = (map fst -> args) } ->
+        CallInst { callFunction = callee, callArguments = (map (stripBitcasts . fst) -> args) } ->
           addCallConstraints i acc callee args
-        InvokeInst { invokeFunction = callee, invokeArguments = (map fst -> args) } ->
+        InvokeInst { invokeFunction = callee, invokeArguments = (map (stripBitcasts . fst) -> args) } ->
           addCallConstraints i acc callee args
         SelectInst { selectTrueValue = (valueContent' -> tv)
                    , selectFalseValue = (valueContent' -> fv)
@@ -348,7 +348,7 @@ buildValueFlowGraph ics ds summ is =
           in (cs ++ incs, fsrcs)
         _ -> acc
 
-    addCallConstraints callInst acc@(incs, fsrcs) callee args =
+    addCallConstraints callInst (incs, fsrcs) callee args =
       case valueContent' callee of
         FunctionC f ->
           let indexedArgs = zip [0..] args
@@ -360,32 +360,49 @@ buildValueFlowGraph ics ds summ is =
           case indirectCallInitializers ics callee of
             -- No targets known; all pointer arguments indirectly escape
             [] -> (foldr (addIndirectEscape callInst) incs args, fsrcs)
-            _ -> acc
+            -- We have at least one target; take it as a representative
+            (repr:_) ->
+              let indexedArgs = zip [0..] args
+              in (foldr (addContractEscapes callInst repr) incs indexedArgs, fsrcs)
+
+    argEscapeConstraint callInst etype actual incs =
+      -- FIXME; figure out how to use the index in a field escape here
+      let s = sinkExp etype callInst Nothing
+          c = s <=! setExpFor actual
+      in c : incs
+
+    addContractEscapes callInst repr (ix, actual) incs =
+      ifPointer actual incs $
+        case lookupArgumentSummary ds summ repr ix of
+          -- If we don't have a summary for oure representative, treat
+          -- it as an indirect call with no known target (we could do
+          -- better by looking at the next possible representative, if
+          -- any).
+          Nothing -> addIndirectEscape callInst actual incs
+          Just pannots ->
+            case F.find isEscapeAnnot pannots of
+              -- If we don't find an escape annotation, we generate a
+              -- BrokenContractEscape since the argument will only
+              -- escape if the function pointer breaks a contract
+              Nothing -> argEscapeConstraint callInst BrokenContractEscape actual incs
+              Just PAEscape -> argEscapeConstraint callInst DirectEscape actual incs
+              Just PAContractEscape -> argEscapeConstraint callInst BrokenContractEscape actual incs
+              Just PAFptrEscape -> argEscapeConstraint callInst IndirectEscape actual incs
+              _ -> incs
 
     addActualConstraint callInst callee (ix, actual) incs =
       fromMaybe incs $ do
         pannots <- lookupArgumentSummary ds summ callee ix
         escAnnot <- F.find isEscapeAnnot pannots
         case escAnnot of
-          PAEscape ->
-            let s = sinkExp DirectEscape callInst Nothing
-                c = s <=! setExpFor actual
-            in return $ c : incs
-          PAContractEscape ->
-            let s = sinkExp BrokenContractEscape callInst Nothing
-                c = s <=! setExpFor actual
-            in return $ c : incs
-          PAFptrEscape ->
-            let s = sinkExp IndirectEscape callInst Nothing
-                c = s <=! setExpFor actual
-            in return $ c : incs
+          PAEscape -> return $ argEscapeConstraint callInst DirectEscape actual incs
+          PAContractEscape -> return $ argEscapeConstraint callInst BrokenContractEscape actual incs
+          PAFptrEscape -> return $ argEscapeConstraint callInst IndirectEscape actual incs
           _ -> Nothing
 
     addIndirectEscape callInst actual incs =
       ifPointer actual incs $
-        let s = sinkExp IndirectEscape callInst Nothing
-            c = s <=! setExpFor actual
-        in c : incs
+        argEscapeConstraint callInst IndirectEscape actual incs
 
 isEscapeAnnot :: ParamAnnotation -> Bool
 isEscapeAnnot a =

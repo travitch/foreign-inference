@@ -20,6 +20,7 @@ import Control.DeepSeq
 import Control.DeepSeq.Generics ( genericRnf )
 import Control.Lens ( Simple, (^.), (%=), (%~), (.~), use, makeLenses )
 import Control.Monad.Writer ( runWriter )
+import qualified Data.Foldable as F
 import Data.Hashable
 import Data.HashMap.Strict ( HashMap )
 import qualified Data.HashMap.Strict as HM
@@ -242,6 +243,7 @@ summarizeArgumentEscapes eg a s =
               , argumentFieldsEscape eg a s
               ]
 
+toSink :: SetExp -> Constructor
 toSink (ConstructedTerm e _ []) = e
 
 entireArgumentEscapes :: EscapeGraph -> Argument -> EscapeSummary -> Maybe EscapeSummary
@@ -331,9 +333,9 @@ buildValueFlowGraph ics ds summ is =
               in (c : incs, fsrcs)
 
         CallInst { callFunction = callee, callArguments = (map fst -> args) } ->
-          addCallConstraints acc callee args
+          addCallConstraints i acc callee args
         InvokeInst { invokeFunction = callee, invokeArguments = (map fst -> args) } ->
-          addCallConstraints acc callee args
+          addCallConstraints i acc callee args
         SelectInst { selectTrueValue = (valueContent' -> tv)
                    , selectFalseValue = (valueContent' -> fv)
                    } ->
@@ -346,8 +348,54 @@ buildValueFlowGraph ics ds summ is =
           in (cs ++ incs, fsrcs)
         _ -> acc
 
-    addCallConstraints acc callee args = acc
---        case valueContent' callee of
+    addCallConstraints callInst acc@(incs, fsrcs) callee args =
+      case valueContent' callee of
+        FunctionC f ->
+          let indexedArgs = zip [0..] args
+          in (foldr (addActualConstraint callInst f) incs indexedArgs, fsrcs)
+        ExternalFunctionC ef ->
+          let indexedArgs = zip [0..] args
+          in (foldr (addActualConstraint callInst ef) incs indexedArgs, fsrcs)
+        _ ->
+          case indirectCallInitializers ics callee of
+            -- No targets known; all pointer arguments indirectly escape
+            [] -> (foldr (addIndirectEscape callInst) incs args, fsrcs)
+            _ -> acc
+
+    addActualConstraint callInst callee (ix, actual) incs =
+      fromMaybe incs $ do
+        pannots <- lookupArgumentSummary ds summ callee ix
+        escAnnot <- F.find isEscapeAnnot pannots
+        case escAnnot of
+          PAEscape ->
+            let s = sinkExp DirectEscape callInst Nothing
+                c = s <=! setExpFor actual
+            in return $ c : incs
+          PAContractEscape ->
+            let s = sinkExp BrokenContractEscape callInst Nothing
+                c = s <=! setExpFor actual
+            in return $ c : incs
+          PAFptrEscape ->
+            let s = sinkExp IndirectEscape callInst Nothing
+                c = s <=! setExpFor actual
+            in return $ c : incs
+          _ -> Nothing
+
+    addIndirectEscape callInst actual incs =
+      ifPointer actual incs $
+        let s = sinkExp IndirectEscape callInst Nothing
+            c = s <=! setExpFor actual
+        in c : incs
+
+isEscapeAnnot :: ParamAnnotation -> Bool
+isEscapeAnnot a =
+  case a of
+    PAEscape -> True
+    PAArgEscape _ -> True
+    PAContractEscape -> True
+    PAFptrEscape -> True
+    _ -> False
+-- Ignore PAWillEscape for now...
 
 
 -- Given a GetElementPtrInst, return its base and the path accessed
@@ -376,15 +424,6 @@ mustEscapeLocation v =
     InstructionC PhiNode {} ->
       any mustEscapeLocation (flattenValue v)
     _ -> False
-
-
-{-
-data Constructor = Sink { sinkClass :: EscapeClass
-                        , sinkWitness :: Instruction
-                        , sinkIntoArgument :: Maybe ArgumentDescriptor
-                        }
-                 deriving (Eq, Ord, Show, Generic)
--}
 
 {-
 

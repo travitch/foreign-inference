@@ -1,6 +1,6 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 {-# LANGUAGE OverloadedStrings, FlexibleContexts, RankNTypes #-}
-{-# LANGUAGE DeriveGeneric, TemplateHaskell #-}
+{-# LANGUAGE DeriveGeneric, ViewPatterns, TemplateHaskell #-}
 module Foreign.Inference.Analysis.Escape (
   EscapeSummary,
   identifyEscapes,
@@ -10,25 +10,19 @@ module Foreign.Inference.Analysis.Escape (
   -- * Testing
   EscapeClass(..),
   escapeResultToTestFormat,
-  escapeUseGraphs,
-  useGraphvizRepr
+  -- escapeUseGraphs,
+  -- useGraphvizRepr
   ) where
 
 import GHC.Generics ( Generic )
 
-import Control.Arrow
 import Control.DeepSeq
 import Control.DeepSeq.Generics ( genericRnf )
 import Control.Lens ( Simple, (^.), (%=), (%~), (.~), use, makeLenses )
-import Control.Monad.State.Strict
 import Control.Monad.Writer ( runWriter )
-import Data.GraphViz
 import Data.Hashable
 import Data.HashMap.Strict ( HashMap )
 import qualified Data.HashMap.Strict as HM
-import Data.List ( find, partition, transpose )
-import Data.List.NonEmpty ( NonEmpty, nonEmpty )
-import qualified Data.List.NonEmpty as NEL
 import Data.Map ( Map )
 import qualified Data.Map as M
 import Data.Maybe ( fromMaybe, mapMaybe )
@@ -37,22 +31,21 @@ import qualified Data.Set as S
 import Data.Monoid
 import Text.Printf
 
-import Data.Graph.Interface
-import Data.Graph.LazyHAMT
-import Data.Graph.Algorithms.Matching.DFS
-
 import LLVM.Analysis
 import LLVM.Analysis.AccessPath
 import LLVM.Analysis.CallGraphSCCTraversal
 
+import Constraints.Set.Solver
+
 import Foreign.Inference.Diagnostics ( HasDiagnostics(..), Diagnostics )
 import Foreign.Inference.Interface
+import Foreign.Inference.Internal.FlattenValue
 import Foreign.Inference.Analysis.IndirectCallResolver
 
-import System.IO.Unsafe
+-- import System.IO.Unsafe
 -- import Text.Printf
--- import Debug.Trace
--- debug = flip trace
+import Debug.Trace
+debug = flip trace
 
 -- | The ways a value can escape from a function
 data EscapeClass = DirectEscape
@@ -75,109 +68,32 @@ data ArgumentDescriptor = ArgumentDescriptor Function Int
 instance NFData ArgumentDescriptor where
   rnf = genericRnf
 
--- | The node labels for the Value Flow Graph
-data ValueFlowNode = Sink { sinkClass :: EscapeClass
-                          , sinkWitness :: Instruction
-                          , sinkIntoArgument :: Maybe ArgumentDescriptor
-                          }
-                   | Location { locationValue :: Value }
-                   | FieldSource { fieldSourceArgument :: Argument
-                                 , fieldSourcePath :: AbstractAccessPath
-                                 }
-                   | AllocaSink EscapeClass Instruction Instruction
-                   deriving (Eq, Ord, Show, Generic)
+data Constructor = Sink { sinkClass :: EscapeClass
+                        , sinkWitness :: Instruction
+                        , sinkIntoArgument :: Maybe ArgumentDescriptor
+                        }
+                 deriving (Eq, Ord, Show, Generic)
 
-instance Labellable ValueFlowNode where
-  toLabelValue (Sink c i _) =
-    let s :: String
-        s = printf "%s(%s)" (show i) (show c)
-    in toLabelValue s
-  toLabelValue (Location v) = toLabelValue (show v)
-  toLabelValue (FieldSource a p) =
-    let s :: String
-        s = printf "%s -> %s" (show a) (show p)
-    in toLabelValue s
-  toLabelValue (AllocaSink c ai w) =
-    let s :: String
-        s = printf "%s(%s)" (show ai) (show c)
-    in toLabelValue s
+data Var = Location !Value
+         | FieldSource { fieldSourceArgument :: !Argument
+                       , fieldSourcePath :: AbstractAccessPath
+                       }
+         deriving (Eq, Ord, Show, Generic)
 
-instance NFData ValueFlowNode where
-  rnf = genericRnf
-
-data ValueFlowEdge = UnconditionalEdge
-                   | ForwardEdge
-                   | BackwardEdge
-                   deriving (Eq, Ord, Show)
-
-instance NFData ValueFlowEdge
-
-type ValueFlowGraph = Gr ValueFlowNode ValueFlowEdge
-
--- Rules:
---
--- Each value gets a single node.  Nodes can be created from any
--- location.
---
--- Field source nodes are only created by the fieldSource function.
--- These are load instructions and arguments that are proxied to
--- function calls that let an argument escape.  There can be more than
--- one for a given value (because of the second condition).  The
--- important thing is that, after all other nodes are created, each
--- field source @fs@ has value root @v@.  For all edges @v@->@x@, add
--- new edg @fs@->@x@.
-data GraphState = GraphState {
-  _graphStateValueMap :: HashMap Value (LNode ValueFlowGraph),
-  -- ^ A map of values to their representative nodes
-  _graphStateFieldSourceMap :: HashMap Value [LNode ValueFlowGraph],
-  -- ^ A map of values that act as field sources to their graph nodes.
-  _graphStateEdges :: HashMap Int [LEdge ValueFlowGraph],
-  -- ^ All of the edges, mapped from their srcid.  This is useful
-  -- because we need to be able to get all edges rooted at a node to
-  -- deal with fieldSources
-  _graphStateSinks :: [LNode ValueFlowGraph],
-  -- ^ All of the sink nodes generated
-  _graphStateFieldStores :: HashMap Value [(AbstractAccessPath, Int, Instruction)],
-  -- ^ A map of base values to which the mapped value is stored into
-  -- the associated path by an instruction.  These are corroborated
-  -- with callFieldEscapes.
-  _graphStateCallFieldEscapes :: HashMap Value [(AbstractAccessPath, Int)],
-  -- ^ A map of values passed to call arguments that let a field
-  -- escape to the sink nodes representing those escapes.  It is
-  -- annotated with the field that it allows to escape so that can be
-  -- compared with the path in the fieldStores.
-  _graphStateIdSrc :: Int
-  -- ^ A source of unique identifiers for graph nodes
-  }
-
-$(makeLenses ''GraphState)
-
-emptyGraphState :: GraphState
-emptyGraphState = GraphState { _graphStateValueMap = mempty
-                             , _graphStateFieldSourceMap = mempty
-                             , _graphStateEdges = mempty
-                             , _graphStateSinks = mempty
-                             , _graphStateFieldStores = mempty
-                             , _graphStateCallFieldEscapes = mempty
-                             , _graphStateIdSrc = 0
-                             }
-
-instance (Eq a, Eq b, Ord a, Ord b) => Eq (Gr a b) where
-  (==) = graphEqual
+type SetExp = SetExpression Var Constructor
+type ValueFlowGraph = SolvedSystem Var Constructor
 
 data EscapeGraph = EscapeGraph {
-  _escapeGraphValueMap :: HashMap Value (LNode ValueFlowGraph),
-  _escapeGraphFieldSourceMap :: HashMap Value [LNode ValueFlowGraph],
+  _escapeGraphFieldSourceMap :: HashMap Argument [AbstractAccessPath],
   _escapeVFG :: ValueFlowGraph
   } deriving (Eq, Generic)
 
-instance NFData EscapeGraph where
-  rnf = genericRnf
+instance NFData EscapeGraph
 
 $(makeLenses ''EscapeGraph)
 
 -- | The monad in which we construct the value flow graph
-type GraphBuilder = State GraphState
+-- type GraphBuilder = State GraphState
 
 data EscapeSummary =
   EscapeSummary { _escapeGraph :: HashMap Function EscapeGraph
@@ -282,17 +198,19 @@ instructionEscapeCore :: (Instruction -> Bool)
                          -> Instruction
                          -> EscapeSummary
                          -> Maybe Instruction
-instructionEscapeCore ignorePred i (EscapeSummary egs _ _ _ _) = do
-  ln <- HM.lookup (toValue i) m
-  let reached = reachableSinks eg (unlabelNode ln) g ignorePred
-  case filter (not . allocaSink) reached of
-    [] -> Nothing
-    (Sink _ w _) : _ -> return w
-    _ -> error "Non-sink in reachableSinks result 1"
-  where
-    Just f = instructionFunction i
-    errMsg = error ("Missing summary for function " ++ show (functionName f))
-    eg@(EscapeGraph m _ g) = HM.lookupDefault errMsg f egs
+instructionEscapeCore ignorePred i (EscapeSummary egs _ _ _ _) = undefined
+
+  -- do
+  -- ln <- HM.lookup (toValue i) m
+  -- let reached = reachableSinks eg (unlabelNode ln) g ignorePred
+  -- case filter (not . allocaSink) reached of
+  --   [] -> Nothing
+  --   (Sink _ w _) : _ -> return w
+  --   _ -> error "Non-sink in reachableSinks result 1"
+  -- where
+  --   Just f = instructionFunction i
+  --   errMsg = error ("Missing summary for function " ++ show (functionName f))
+  --   eg@(EscapeGraph m _ g) = HM.lookupDefault errMsg f egs
 
 summarizeEscapeArgument :: Argument -> EscapeSummary -> [(ParamAnnotation, [Witness])]
 summarizeEscapeArgument a er =
@@ -311,137 +229,37 @@ summarizeEscapeArgument a er =
         BrokenContractEscape -> PAContractEscape
         ArgumentEscape ix -> PAArgEscape ix
 
+takeFirst :: a -> [Maybe a] -> a
+takeFirst def [] = def
+takeFirst def (act:rest) =
+  case act of
+    Nothing -> takeFirst def rest
+    Just thing -> thing
+
 summarizeArgumentEscapes :: EscapeGraph -> Argument -> EscapeSummary -> EscapeSummary
 summarizeArgumentEscapes eg a s =
-  case entireArgumentEscapes eg a s of
-    (True, s') -> s'
-    (False, s') -> argumentFieldsEscape eg a s'
+  takeFirst s [ entireArgumentEscapes eg a s
+              , argumentFieldsEscape eg a s
+              ]
 
--- | This is basically DFS.  It is parameterized by a predicate that
--- returns True if the Instruction labelling a sink (and its
--- associated sink) should be ignored.  This is needed for
--- instructionEscapesWith (so we can say "this instruction escapes
--- ignoring this other instruction").
---
--- Also note that for any reachable store, a follow up query must be
--- issued to see if any sinks are reachable following store edges
--- (once that functionality is implemented).  Be sure to remember
--- stores that have been processed so that it doesn't loop forever.
--- The recursive traversals should occur here so that clients only
--- need to look for sinks.
-reachableSinks :: EscapeGraph -> Int -> ValueFlowGraph -> (Instruction -> Bool) -> [ValueFlowNode]
-reachableSinks eg nodeId g ignoredPred =
-  let topReached = doReach False nodeId g
-      reachedStores = mapMaybe isStoreNode topReached
-      backReached = findBackReached mempty reachedStores []
-  in filter isSinkNode (unique (topReached ++ backReached))
+toSink (ConstructedTerm e _ []) = e
+
+entireArgumentEscapes :: EscapeGraph -> Argument -> EscapeSummary -> Maybe EscapeSummary
+entireArgumentEscapes (EscapeGraph _ eg) a s = do
+  ts@(_:_) <- leastSolution eg (Location (toValue a))
+  let sink:_ = map toSink ts
+  return $ (escapeArguments %~ HM.insert a (sinkClass sink, sinkWitness sink)) s
+
+argumentFieldsEscape :: EscapeGraph -> Argument -> EscapeSummary -> Maybe EscapeSummary
+argumentFieldsEscape (EscapeGraph fields eg) a s = do
+  fieldPaths <- HM.lookup a fields
+  return $ foldr fieldEscapes s fieldPaths
   where
-    findBackReached _ [] reached = reached
-    findBackReached visited (nid:rest) reached =
-      case nid `S.member` visited of
-        False ->
-          let rs = doReach True nid g
-          in findBackReached (S.insert nid visited) rest (rs ++ reached)
-        True -> findBackReached visited rest reached
-    unique = S.toList . S.fromList
-    isStoreNode (Location v) =
-      case valueContent' v of
-        InstructionC StoreInst { storeAddress = sa } ->
-          fmap unlabelNode $ HM.lookup sa (eg ^. escapeGraphValueMap)
-        _ -> Nothing
-    isStoreNode _ = Nothing
-    isSinkNode (Sink _ _ _) = True
-    isSinkNode (AllocaSink _ _ _) = True
-    isSinkNode _ = False
-    doReach followBackedge nid =
-      xdfsWith (contextNeighbors followBackedge) contextToReached [nid]
-    contextNeighbors followBackedge c =
-      mapMaybe (sinkWitnessNotIgnored followBackedge) (lsuc' c)
-    sinkWitnessNotIgnored followBackedge (nid, e) =
-      case (followBackedge, e) of
-        (False, BackwardEdge) -> Nothing
-        _ ->
-          case lab g nid of
-            Nothing -> error "Missing label in reachableSinks"
-            Just (Sink _ w _) ->
-              case not (ignoredPred w) of
-                True -> Just nid
-                False -> Nothing
-            _ -> Just nid
-    contextToReached (Context _ (LNode _ l) _) = l
-
-allocaSink :: ValueFlowNode -> Bool
-allocaSink (AllocaSink _ _ _) = True
-allocaSink _ = False
-
-entireArgumentEscapes :: EscapeGraph -> Argument -> EscapeSummary -> (Bool, EscapeSummary)
-entireArgumentEscapes eg a s =
-  case HM.lookup (toValue a) (eg ^. escapeGraphValueMap) of
-    Nothing -> (False, s)
-    Just (LNode nid _) ->
-      let reached = reachableSinks eg nid (eg ^. escapeVFG) (const False)
-      in case partition allocaSink reached of
-        -- No non-field escapes, so signal the caller to try to check
-        -- for those.
-        ([], []) -> (False, s)
-        (allocaSinks, []) ->
-          case find allocaSinkEscapes allocaSinks of
-            -- No edges from the alloca reach a sink, so it does not
-            -- escape and the values that "escape" into it also do not
-            -- escape.
-            Nothing -> (True, s)
-            Just (AllocaSink eclass _ w) ->
-              (True, (escapeArguments %~ HM.insert a (DirectEscape, w)) s)
-            _ -> error "Non-alloca sink in the allocaSinks list"
-        -- The argument escapes (ONLY) into another argument.  We need
-        -- to record this to propagate the information to the caller.
-        (_, [Sink eclass w (Just (ArgumentDescriptor f ix))]) ->
-          (False, (escapeIntoArguments %~ HM.insert a (eclass, f, ix)) s)
-        -- Otherwise, this argument escapes normally.  Just take the
-        -- first one for now (we could record them all...)
-        (_, (Sink eclass w _):_) ->
-          (True, (escapeArguments %~ HM.insert a (eclass, w)) s)
-        (_, _) -> error "entireArgumentEscapes: Non-sink in sink list"
-  where
-    -- | If at least one of the alloca sinks can reach another sink,
-    -- the value escapes normally.
-    allocaSinkEscapes (AllocaSink _ allocaInst _) =
-      case HM.lookup (toValue allocaInst) (eg ^. escapeGraphValueMap) of
-        -- No edges to or from the alloca inst
-        Nothing -> False
-        Just (LNode aid _) ->
-          case reachableSinks eg aid (eg ^. escapeVFG) (const False) of
-            [] -> False
-            _ -> True
-    allocaSinkEscapes _ = error "allocaSinkEscapes: Non AllocaSink in alloca sinks list"
-
-argumentFieldsEscape :: EscapeGraph -> Argument -> EscapeSummary -> EscapeSummary
-argumentFieldsEscape eg a s =
-  case HM.lookup (toValue a) (eg ^. escapeGraphFieldSourceMap) of
-    -- No fields escape either
-    Nothing -> s
-    Just fieldSrcs -> foldr checkFieldEscapes s fieldSrcs
-  where
-    checkFieldEscapes (LNode fldSrcId (FieldSource arg p)) summ =
-      let reached = reachableSinks eg fldSrcId (eg ^. escapeVFG) (const False)
-      in case filter (not . allocaSink) reached of
-        [] -> summ
-        (Sink eclass w _) : _ ->
-          let newEsc = S.singleton (eclass, p, w)
-          in (escapeFields %~ HM.insertWith S.union arg newEsc) summ
-        _ -> error "Non-sink found in reachableSinks result 3"
-    checkFieldEscapes _ _ = error "argumentFieldsEscape: Non FieldSource in fieldSrcs list"
-
-isSink :: Maybe Value -> Maybe Value
-isSink v = do
-  v' <- v
-  case valueContent' v' of
-    ArgumentC _ -> Just v'
-    GlobalVariableC _ -> Just v'
-    ExternalValueC _ -> Just v'
-    InstructionC (CallInst {}) -> Just v'
-    InstructionC (InvokeInst {}) -> Just v'
-    _ -> Nothing
+    fieldEscapes fldPath acc = fromMaybe acc $ do
+      ts@(_:_) <- leastSolution eg (FieldSource a fldPath)
+      let sink:_ = map toSink ts
+          entry = S.singleton (sinkClass sink, fldPath, sinkWitness sink)
+      return $ (escapeFields %~ HM.insertWith S.union a entry) acc
 
 -- | A helper to abstract the pointer type tests.  If the value @v@ is
 -- not a pointer, return @defVal@.  Otherwise, return @isPtrVal@.
@@ -453,14 +271,125 @@ ifPointer v defVal isPtrVal =
     TypePointer _ _ -> isPtrVal
     _ -> defVal
 
-dumpGraph :: ValueFlowGraph -> ValueFlowGraph
-dumpGraph g = unsafePerformIO $ do
-  let dg = useGraphvizRepr g
-  runGraphvizCanvas' dg Gtk
-  return g
+buildValueFlowGraph :: IndirectCallSummary
+                       -> DependencySummary
+                       -> EscapeSummary
+                       -> [Instruction]
+                       -> EscapeGraph
+buildValueFlowGraph ics ds summ is =
+  EscapeGraph fieldSrcs sys
+  where
+    (inclusionSystem, fieldSrcs) = foldr addInclusion ([], mempty) is
+    Just sys = solveSystem (constraintSystem inclusionSystem)
+
+    sinkExp klass witness argDesc = atom (Sink klass witness argDesc)
+    setExpFor v =
+      case valueContent' v of
+        InstructionC i@GetElementPtrInst { } ->
+          case argumentBasedField i of
+            Nothing -> setVariable (Location v)
+            Just (a, aap) -> setVariable (FieldSource a aap)
+        _ -> setVariable (Location v)
+
+    addInclusion :: Instruction
+                    -> ([Inclusion Var Constructor], HashMap Argument [AbstractAccessPath])
+                    -> ([Inclusion Var Constructor], HashMap Argument [AbstractAccessPath])
+    addInclusion i acc@(incs, fsrcs) =
+      case i of
+        RetInst { retInstValue = Just (valueContent' -> rv) } ->
+          let s = sinkExp DirectEscape i Nothing
+              c = s <=! setExpFor rv
+          in (c : incs, fsrcs)
+        -- If this is a load of an argument field, we need to make it
+        -- into a FieldSource and see what happens to it later.
+        -- Record the argument/access path in a map somewhere for
+        -- later lookup (otherwise we can't find the variable)
+        GetElementPtrInst {} ->
+          case argumentBasedField i of
+            Just (a, aap) ->
+              let c = setExpFor (toValue i) <=! setVariable (FieldSource a aap)
+                  srcs' = HM.insertWith (++) a [aap] fsrcs
+              in (c : incs, srcs')
+            Nothing -> acc
+        LoadInst { loadAddress = la } ->
+          ifPointer i acc $
+            case argumentBasedField i of
+              Just _ ->
+                let c = setExpFor (toValue i) <=! setExpFor la
+                in (c : incs, fsrcs)
+              _ -> acc
+        StoreInst { storeAddress = sa
+                  , storeValue = sv
+                  }
+          | mustEscapeLocation sa ->
+            let s = sinkExp DirectEscape i Nothing
+                c = s <=! setExpFor sv
+            in (c : incs, fsrcs)
+          | otherwise ->
+              -- May escape later if the alloca escapes
+              let c = setExpFor sa <=! setExpFor sv
+              in (c : incs, fsrcs)
+
+        CallInst { callFunction = callee, callArguments = (map fst -> args) } ->
+          addCallConstraints acc callee args
+        InvokeInst { invokeFunction = callee, invokeArguments = (map fst -> args) } ->
+          addCallConstraints acc callee args
+        SelectInst { selectTrueValue = (valueContent' -> tv)
+                   , selectFalseValue = (valueContent' -> fv)
+                   } ->
+          let c1 = setExpFor (toValue i) <=! setExpFor tv
+              c2 = setExpFor (toValue i) <=! setExpFor fv
+          in (c1 : c2 : incs, fsrcs)
+        PhiNode { phiIncomingValues = (map (stripBitcasts . fst) -> ivs) } ->
+          let toIncl v = setExpFor (toValue i) <=! setExpFor v
+              cs = map toIncl ivs
+          in (cs ++ incs, fsrcs)
+        _ -> acc
+
+    addCallConstraints acc callee args = acc
+--        case valueContent' callee of
+
+
+-- Given a GetElementPtrInst, return its base and the path accessed
+-- IFF the base was an Argument.
+argumentBasedField :: Instruction -> Maybe (Argument, AbstractAccessPath)
+argumentBasedField li = do
+  accPath <- accessPath li
+  case valueContent' (accessPathBaseValue accPath) of
+    ArgumentC a -> return (a, abstractAccessPath accPath)
+    _ -> Nothing
+
+mustEscapeLocation :: Value -> Bool
+mustEscapeLocation v =
+  case valueContent' v of
+    GlobalVariableC _ -> True
+    ExternalValueC _ -> True
+    ArgumentC _ -> True
+    InstructionC CallInst {} -> True
+    InstructionC InvokeInst {} -> True
+    InstructionC LoadInst { loadAddress = la } ->
+      mustEscapeLocation la
+    InstructionC GetElementPtrInst { getElementPtrValue = base } ->
+      mustEscapeLocation base
+    InstructionC SelectInst { } ->
+      any mustEscapeLocation (flattenValue v)
+    InstructionC PhiNode {} ->
+      any mustEscapeLocation (flattenValue v)
+    _ -> False
+
+
+{-
+data Constructor = Sink { sinkClass :: EscapeClass
+                        , sinkWitness :: Instruction
+                        , sinkIntoArgument :: Maybe ArgumentDescriptor
+                        }
+                 deriving (Eq, Ord, Show, Generic)
+-}
+
+{-
 
 buildValueFlowGraph :: IndirectCallSummary
-                       -> DependencySummary -- (ExternalFunction -> Int -> Bool)
+                       -> DependencySummary
                        -> EscapeSummary
                        -> [Instruction]
                        -> EscapeGraph
@@ -933,6 +862,22 @@ argEscapeType summ a = do
   (e, _) <- HM.lookup a (summ ^. escapeArguments)
   return e
 
+
+escapeUseGraphs :: EscapeSummary -> [(String, ValueFlowGraph)]
+escapeUseGraphs = map (second (^. escapeVFG)) . map (first (show . functionName)) . HM.toList . (^. escapeGraph)
+
+useGraphvizParams :: GraphvizParams n ValueFlowNode el () ValueFlowNode
+useGraphvizParams =
+  nonClusteredParams { fmtNode = \(_, l) -> [toLabel l]
+                     , fmtEdge = \_ -> []
+                     }
+
+useGraphvizRepr :: ValueFlowGraph -> DotGraph Int
+useGraphvizRepr g = graphElemsToDot useGraphvizParams ns es
+  where
+    ns = map toNodeTuple $ labNodes g
+    es = map toEdgeTuple $ labEdges g
+-}
 -- Testing
 
 -- | Extract the arguments for each function that escape.  The keys of
@@ -971,18 +916,3 @@ escapeResultToTestFormat er =
       case abstractAccessPathComponents fld of
         [AccessDeref, AccessField ix] -> Just $ (tag, printf "%s.<%d>" aname ix)
         _ -> Nothing
-
-escapeUseGraphs :: EscapeSummary -> [(String, ValueFlowGraph)]
-escapeUseGraphs = map (second (^. escapeVFG)) . map (first (show . functionName)) . HM.toList . (^. escapeGraph)
-
-useGraphvizParams :: GraphvizParams n ValueFlowNode el () ValueFlowNode
-useGraphvizParams =
-  nonClusteredParams { fmtNode = \(_, l) -> [toLabel l]
-                     , fmtEdge = \_ -> []
-                     }
-
-useGraphvizRepr :: ValueFlowGraph -> DotGraph Int
-useGraphvizRepr g = graphElemsToDot useGraphvizParams ns es
-  where
-    ns = map toNodeTuple $ labNodes g
-    es = map toEdgeTuple $ labEdges g

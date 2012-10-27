@@ -10,18 +10,22 @@
 function highlightLines(startLine, witnessLines) {
   if(witnessLines.length == 0) return;
 
-  $('a').removeClass('highlight');
+  // Clear old witnesses
   $('.witness-reason').remove();
 
-  for(var i = 0; i < witnessLines.length; ++i) {
-    $('#'+witnessLines[i][0]).addClass('highlight');
-    var reason = '<em class="witness-reason">[' + witnessLines[i][1] + ']</em>';
-    $('#'+witnessLines[i][0]).append(reason);
+  // Find the code listing and append a witness to each
+  // line (wrapped helpfully in a <li></li>)
+  var codeChildren = $("pre ol.codelist").children();
+  for(var i = 0; i < witnessLines.length; ++ i) {
+    var lineNo = witnessLines[i][0] - startLine;
+    var lineItem = codeChildren[lineNo];
+    var witness = '<span class="witness-reason code-comment"> /* ' +
+    witnessLines[i][1] + ' */</span>';
+      $(lineItem).append(witness);
   }
 }
 
 function linkCalledFunctions(fnames) {
-// Search through the entire body since finding the code after Codemirror gets it is tricky.
    $.map(fnames, function (fname, ix) { $('body').makeFunctionLink(fname[0], fname[1]); });
 }
 

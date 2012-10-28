@@ -213,7 +213,7 @@ data ModuleSummary = forall a . (SummarizeModule a) => ModuleSummary a
 -- constructs in 'Module's.
 class SummarizeModule s where
   summarizeArgument :: Argument -> s -> [(ParamAnnotation, [Witness])]
-  summarizeFunction :: Function -> s -> [FuncAnnotation]
+  summarizeFunction :: Function -> s -> [(FuncAnnotation, [Witness])]
   -- | Annotate types.  The default implementation just returns the
   -- empty list
   summarizeType :: CType -> s -> [(TypeAnnotation, [Witness])]
@@ -436,7 +436,7 @@ functionToExternal summaries annots f =
   where
     vis = functionVisibility f
     fannots = userFunctionAnnotations annots f ++
-                concatMap (summarizeFunction f) summaries
+                concatMap (map fst . summarizeFunction f) summaries
     fretType = case functionType f of
       TypeFunction rt _ _ -> rt
       t -> t
@@ -489,7 +489,7 @@ lookupFunctionSummary ds ms val =
   case valueContent' val of
     FunctionC f ->
       let fannots = userFunctionAnnotations (libraryAnnotations ds) f
-      in return $! fannots ++ summarizeFunction f ms
+      in return $! fannots ++ map fst (summarizeFunction f ms)
     ExternalFunctionC ef -> do
       let fname = identifierContent $ externalFunctionName ef
           summ = depSummary ds

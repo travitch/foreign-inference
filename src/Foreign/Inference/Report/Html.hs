@@ -60,8 +60,8 @@ $doctype 5
       <ul>
         $forall arg <- args
           <li>^{drilldownArgumentEntry startLine r arg}
-        $if not (null fannots)
-          <li>&rarr; <span class="code-comment">/* #{show fannots} */</span>
+        $if not (null fannots) || not (null uannots)
+          <li>&rarr; <span class="code-comment">/* #{show uannots} #{htmlFannots} */</span>
     <p>
       #{funcName} (#{sig}) -> <span class="code-type">#{show fretType}</span>
     <pre id="code" name="code">
@@ -81,9 +81,12 @@ $doctype 5
       TypeFunction rt _ _ -> rt
       rtype -> rtype
     allAnnots = libraryAnnotations $ reportDependencies r
-    fannots = concat [ userFunctionAnnotations allAnnots f
-                     , concatMap (summarizeFunction f) (reportSummaries r)
-                     ]
+    uannots = userFunctionAnnotations allAnnots f
+    fannots = concatMap (summarizeFunction f) (reportSummaries r)
+    htmlFannots = drilldownFunctionAnnotations startLine fannots
+    -- fannots = concat [ userFunctionAnnotations allAnnots f
+    --                  , concatMap (summarizeFunction f) (reportSummaries r)
+    --                  ]
 
 indexAliases :: GlobalAlias -> Map Function [GlobalAlias] -> Map Function [GlobalAlias]
 indexAliases a m =
@@ -160,6 +163,20 @@ drilldownArgumentAnnotations startLine annots =
     showWL (Witness i s) = do
       l <- instructionToLine i
       return $! mconcat [ "[", show l, ", '", s, "']" ]
+    mkAnnotLink (a, witnessLines)
+      | null witnessLines = toHtml (show a)
+      | otherwise =
+        let clickScript = [st|highlightLines(#{show startLine}, [#{intercalate "," (mapMaybe showWL witnessLines)}]);|]
+        in [shamlet| <a href="#" onclick="#{H.preEscapedToMarkup clickScript}">#{show a} |]
+
+drilldownFunctionAnnotations :: Int -> [(FuncAnnotation, [Witness])] -> Html
+drilldownFunctionAnnotations _ [] = return ()
+drilldownFunctionAnnotations startLine annots =
+  commaSepList annots mkAnnotLink
+  where
+    showWL (Witness i s) = do
+      l <- instructionToLine i
+      return $ mconcat [ "[", show l, ", '", s, "']" ]
     mkAnnotLink (a, witnessLines)
       | null witnessLines = toHtml (show a)
       | otherwise =
@@ -300,7 +317,7 @@ indexPageFunctionEntry r linkFunc (f, internalName) = do
   where
     allAnnots = libraryAnnotations $ reportDependencies r
     fannots = concat [ userFunctionAnnotations allAnnots f
-                     , concatMap (summarizeFunction f) (reportSummaries r)
+                     , concatMap (map fst . summarizeFunction f) (reportSummaries r)
                      ]
     fname = identifierContent (functionName f)
     -- Use a bit of trickery to flag when we need to insert commas

@@ -100,10 +100,10 @@ instance SummarizeModule AllocatorSummary where
         case automaticFinalizersForType finSumm (functionReturnType f) of
           -- If there is no allocator, assume we just free it...  this
           -- isn't necessarily safe.
-          [] -> [FAAllocator "free"]
-          [fin] -> [FAAllocator (identifierAsString (functionName fin))]
+          [] -> [(FAAllocator "free", [])]
+          [fin] -> [(FAAllocator (identifierAsString (functionName fin)), [])]
           -- There was more than one, can't guess
-          _ -> [FAAllocator ""]
+          _ -> [(FAAllocator "", [])]
 
 identifyAllocators :: forall compositeSummary funcLike . (FuncLike funcLike, HasFunction funcLike)
                       => DependencySummary

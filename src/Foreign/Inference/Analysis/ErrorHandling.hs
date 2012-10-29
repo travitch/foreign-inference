@@ -69,7 +69,14 @@ import Foreign.Inference.Analysis.IndirectCallResolver
 -- debug :: a -> String -> a
 -- debug = flip trace
 
-type ErrorDescriptor = (Set ErrorAction, [Witness])
+data ErrorDescriptor = ErrorDescriptor { errorActions :: Set ErrorAction
+                                       , errorWitnesses :: [Witness]
+                                       }
+                     deriving (Eq, Ord, Generic)
+
+instance NFData ErrorDescriptor where
+  rnf = genericRnf
+
 type SummaryType = HashMap Function (Set ErrorDescriptor)
 data ErrorSummary =
   ErrorSummary { _errorSummary :: SummaryType
@@ -145,11 +152,12 @@ mergeIdenticalHandlers h acc =
 -- insertWith below, we can't have empty sets).
 unifyErrorHandler :: (Function, Set ErrorDescriptor) -> ErrorDescriptor
 unifyErrorHandler (_, s) =
-  if S.null complexPatterns then F.foldr1 combineHandler s -- unifiedComplex
+  if S.null complexPatterns && S.null (errorActions unifiedComplex)
+  then F.foldr1 combineHandler s -- unifiedComplex
   else unifiedComplex
   where
     unifiedComplex = F.foldr1 combineHandler complexPatterns
-    complexPatterns = S.filter ((>1) . S.size . fst) s
+    complexPatterns = S.filter ((>1) . S.size . errorActions) s
 --    h = F.foldr1 combineHandler s
 
 -- | For each action in the first set, find a corresponding action in
@@ -159,7 +167,8 @@ unifyErrorHandler (_, s) =
 -- We can just discard witnesses here since the second pass will
 -- re-capture them
 combineHandler :: ErrorDescriptor -> ErrorDescriptor -> ErrorDescriptor
-combineHandler (d0, _) (other, _) = (dN, [])
+combineHandler (ErrorDescriptor d0 _) (ErrorDescriptor other _) =
+  ErrorDescriptor dN []
   where
     dN = snd $ F.foldr findCorresponding (d0, mempty) other
     findCorresponding act (targets, acc) =
@@ -217,9 +226,9 @@ instance SummarizeModule ErrorSummary where
         case NEL.nonEmpty (F.toList s) of
           Nothing -> []
           Just descs ->
-            let (acts, _) = F.foldr1 combineHandler descs
-                ws = concat $ map snd (NEL.toList descs)
-            in [(FAReportsErrors acts, ws)]
+            let acts = F.foldr1 combineHandler descs
+                ws = concat $ map errorWitnesses (NEL.toList descs)
+            in [(FAReportsErrors (errorActions acts), ws)]
 
 identifyErrorHandling :: forall compositeSummary funcLike . (FuncLike funcLike, HasFunction funcLike, HasCDG funcLike, HasPostdomTree funcLike, HasCFG funcLike)
                          => Module
@@ -306,20 +315,13 @@ recordTransitiveError f ds s i callee Nothing = do
   summ <- lookupFunctionSummary ds s callee
   FAReportsErrors errActs <- F.find isErrRetAnnot summ
   let w = Witness i "transitive error"
-      upd = errorSummary %~ HM.insertWith S.union f (S.singleton (errActs, [w]))
+      d = ErrorDescriptor errActs [w]
+      upd = errorSummary %~ HM.insertWith S.union f (S.singleton d)
   return $ upd s
 
-callTargets :: IndirectCallSummary -> Value -> [Value]
-callTargets ics callee =
-  case valueContent' callee of
-    FunctionC _ -> [callee]
-    ExternalFunctionC _ -> [callee]
-    _ -> indirectCallInitializers ics callee
 
-isErrRetAnnot :: FuncAnnotation -> Bool
-isErrRetAnnot (FAReportsErrors _) = True
-isErrRetAnnot _ = False
-
+-- | If the function handles an error from a callee that we already
+-- know about, this will tell us what this caller does in response.
 handlesKnownError :: Function
                      -> ErrorSummary
                      -> BasicBlock
@@ -337,10 +339,27 @@ handlesKnownError f s bb =
       errDesc <- extractErrorHandlingCode f s p v1 v2 tt ft
       let w1 = Witness ci "check error return"
           w2 = Witness bi "return error code"
-          upd = errorSummary %~ HM.insertWith S.union f (S.singleton (errDesc, [w1,w2]))
+          d = ErrorDescriptor errDesc [w1, w2]
+          upd = errorSummary %~ HM.insertWith S.union f (S.singleton d)
       return $ upd s
     _ -> return Nothing
 
+-- |
+matchActionAndGeneralizeReturn :: Function
+                                  -> ErrorSummary
+                                  -> BasicBlock
+                                  -> Analysis (Maybe ErrorSummary)
+matchActionAndGeneralizeReturn f s bb = undefined
+
+-- | This needs to change.  Add two new checkers (in addition to this
+-- one).  We want to informally generalize error handling patterns.
+-- One generalization is to ignore the error code returned (as long as
+-- the code we are examining returns a constant int) and check the
+-- rest of the pattern (usually a function call).
+--
+-- The other generalization is to look at just the return codes
+-- (except 0,1) and look at what new functions are called in the
+-- error-handling block.
 executesLearnedErrorPattern :: Function
                                -> ErrorSummary
                                -> BasicBlock
@@ -360,7 +379,7 @@ checkLearnedStyle :: Function
                      -> Maybe ErrorSummary
                      -> Maybe ErrorSummary
 checkLearnedStyle _ _ _ _ _ r@(Just _) = r
-checkLearnedStyle f bb rv s (style, _) Nothing = do
+checkLearnedStyle f bb rv s (ErrorDescriptor style _) Nothing = do
   style' <- checkStyleRetVal rv style
   -- See if the instructions in the block match the rest of the error
   -- descriptor.  If so, add this function to the error summary with
@@ -369,7 +388,8 @@ checkLearnedStyle f bb rv s (style, _) Nothing = do
   case S.null unmatchedActions of
     False -> Nothing
     True ->
-      let upd = errorSummary %~ HM.insertWith S.union f (S.singleton (style, ws))
+      let d = ErrorDescriptor style ws
+          upd = errorSummary %~ HM.insertWith S.union f (S.singleton d)
       in return $ upd s
 
 -- | Check to see if the returned value is a constant matching the
@@ -402,17 +422,6 @@ checkStyleRetVal rv desc = do
                 True -> return $ S.delete act desc
             _ -> Nothing
     _ -> error "Foreign.Inference.Analysis.ErrorHandling.checkStyleRetVal: Unexpected non-ret action"
-
-hasPointerType :: Value -> Bool
-hasPointerType v =
-  case valueType v of
-    TypePointer _ _ -> True
-    _ -> False
-
-isRetAction :: ErrorAction -> Bool
-isRetAction (ReturnConstantInt _) = True
-isRetAction (ReturnConstantPtr _) = True
-isRetAction _ = False
 
 -- | If the given instruction matches any actions in the error
 -- descriptor, remove the action from the descriptor.  If the
@@ -567,6 +576,27 @@ isIntRet (ReturnConstantInt _) = True
 isIntRet (ReturnConstantPtr _) = True
 isIntRet _ = False
 
+callTargets :: IndirectCallSummary -> Value -> [Value]
+callTargets ics callee =
+  case valueContent' callee of
+    FunctionC _ -> [callee]
+    ExternalFunctionC _ -> [callee]
+    _ -> indirectCallInitializers ics callee
+
+isErrRetAnnot :: FuncAnnotation -> Bool
+isErrRetAnnot (FAReportsErrors _) = True
+isErrRetAnnot _ = False
+
+hasPointerType :: Value -> Bool
+hasPointerType v =
+  case valueType v of
+    TypePointer _ _ -> True
+    _ -> False
+
+isRetAction :: ErrorAction -> Bool
+isRetAction (ReturnConstantInt _) = True
+isRetAction (ReturnConstantPtr _) = True
+isRetAction _ = False
 
 -- FIXME This needs to get all of the blocks that are in this branch
 -- (successors of bb and control dependent on the branch).

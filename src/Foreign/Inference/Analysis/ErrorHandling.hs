@@ -1,5 +1,28 @@
 {-# LANGUAGE ViewPatterns, RankNTypes, ScopedTypeVariables #-}
 {-# LANGUAGE DeriveGeneric, TemplateHaskell #-}
+-- | This analysis attempts to automatically identify error-handling
+-- code in libraries.
+--
+-- The error laws are:
+--
+--  * (Transitive error) If function F returns the result of calling
+--    callee C directly, and C has error handling pattern P, then F
+--    has error handling pattern P.
+--
+--  * (Known error) If function F checks the result of calling C for
+--    an error condition and performs some action ending in a constant
+--    integer error return code, that is error handling code.  Actions
+--    are assigning to globals and calling functions. (Note: may need
+--    to make this a non-zero return).
+--
+--  * (Generalize return) If F calls any (all?) of the functions in an
+--    error descriptor and then returns a constant int I, I is a new
+--    error code used in this library.
+--
+--  * (Generalize action) If a function F returns a constant int I
+--    that is the return code for a known error handling pattern, then
+--    the functions called on that branch are a new error handling
+--    pattern.
 module Foreign.Inference.Analysis.ErrorHandling (
   ErrorSummary,
   identifyErrorHandling,

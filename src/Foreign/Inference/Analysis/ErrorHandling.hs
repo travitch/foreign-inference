@@ -273,12 +273,12 @@ analyzeErrorChecks f s bb = do
               , executesLearnedErrorPattern f s bb
               , returnsTransitiveError f s
               ]
-
-takeFirst :: (Monad m) => a -> [m (Maybe a)] -> m a
-takeFirst def [] = return def
-takeFirst def (act:rest) = do
-  res <- act
-  maybe (takeFirst def rest) return res
+  where
+    takeFirst :: (Monad m) => a -> [m (Maybe a)] -> m a
+    takeFirst def [] = return def
+    takeFirst def (act:rest) = do
+      res <- act
+      maybe (takeFirst def rest) return res
 
 returnsTransitiveError :: Function -> ErrorSummary -> Analysis (Maybe ErrorSummary)
 returnsTransitiveError f s = do

@@ -152,7 +152,7 @@ mergeIdenticalHandlers h acc =
 -- insertWith below, we can't have empty sets).
 unifyErrorHandler :: (Function, Set ErrorDescriptor) -> ErrorDescriptor
 unifyErrorHandler (_, s) =
-  if S.null complexPatterns && S.null (errorActions unifiedComplex)
+  if S.null complexPatterns || S.null (errorActions unifiedComplex)
   then F.foldr1 combineHandler s -- unifiedComplex
   else unifiedComplex
   where

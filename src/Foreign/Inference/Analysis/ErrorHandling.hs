@@ -73,7 +73,7 @@ data ErrorDescriptor =
                   , errorReturns :: ErrorReturn
                   , errorWitnesses :: [Witness]
                   }
-  deriving (Eq, Ord, Generic)
+  deriving (Eq, Ord, Generic, Show)
 
 instance NFData ErrorDescriptor where
   rnf = genericRnf

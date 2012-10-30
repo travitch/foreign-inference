@@ -281,14 +281,15 @@ matchActionAndGeneralizeReturn f brets s bb =
     edesc <- branchToErrorDescriptor f brets bb
     st <- lift $ analysisGet
     let fs = errorFunctions st
-    case F.any (isErrorFuncCall fs) (errorActions edesc) of
-      False -> fail "No error function match"
-      True -> do
-        case errorReturns edesc of
-          ReturnConstantPtr _ -> fail "Ptr return"
-          ReturnConstantInt is -> do
-            lift $ analysisPut st { errorCodes = errorCodes st `S.union` is }
-            return $! HM.insertWith S.union f (S.singleton edesc) s
+    FunctionCall ecall _ <- liftMaybe $ F.find (isErrorFuncCall fs) (errorActions edesc)
+    case errorReturns edesc of
+      ReturnConstantPtr _ -> fail "Ptr return"
+      ReturnConstantInt is -> do
+        let ti = basicBlockTerminatorInstruction bb
+            w = Witness ti ("Called " ++ ecall)
+            d = edesc { errorWitnesses = [w] }
+        lift $ analysisPut st { errorCodes = errorCodes st `S.union` is }
+        return $! HM.insertWith S.union f (S.singleton d) s
 
 isErrorFuncCall :: Set String -> ErrorAction -> Bool
 isErrorFuncCall funcSet errAct =

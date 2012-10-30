@@ -11,7 +11,8 @@ module Foreign.Inference.Interface.Types (
   TypeAnnotation(..),
   Linkage(..),
   ErrorAction(..),
-  ErrorActionArgument(..)
+  ErrorActionArgument(..),
+  ErrorReturn(..)
   ) where
 
 import GHC.Generics
@@ -77,9 +78,7 @@ instance NFData ErrorActionArgument where
 -- actions is that they are the program actions that can allow the
 -- function to pass information back to the caller (either in-band
 -- return values or out-of-band routes).
-data ErrorAction = ReturnConstantInt (Set Int)
-                 | ReturnConstantPtr (Set Int)
-                 | AssignToGlobal String (Set Int)
+data ErrorAction = AssignToGlobal String (Set Int)
                  | AssignToCall String (Set Int)
                    -- ^ Assign a constant int to the return value of a
                    -- call instruction
@@ -98,6 +97,16 @@ instance ToJSON ErrorAction
 instance NFData ErrorAction where
   rnf = genericRnf
 
+data ErrorReturn = ReturnConstantInt (Set Int)
+                 | ReturnConstantPtr (Set Int)
+                 deriving (Show, Read, Generic, Eq, Ord)
+
+instance FromJSON ErrorReturn
+instance ToJSON ErrorReturn
+
+instance NFData ErrorReturn where
+  rnf = genericRnf
+
 -- | The annotations that can apply at the 'ForeignFunction' level.
 -- The FAVarArg annotation is not inferred but is still necessary.
 --
@@ -108,7 +117,7 @@ data FuncAnnotation = FAAllocator String -- ^ Record the associated finalizer
                     | FANoRet -- ^ The function does not return to the caller
                     | FAVarArg
                     | FACondFinalizer
-                    | FAReportsErrors (Set ErrorAction)
+                    | FAReportsErrors (Set ErrorAction) ErrorReturn
                     deriving (Show, Read, Generic, Eq, Ord)
 instance FromJSON FuncAnnotation
 instance ToJSON FuncAnnotation

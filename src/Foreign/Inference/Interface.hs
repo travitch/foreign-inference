@@ -30,6 +30,7 @@ module Foreign.Inference.Interface (
   Linkage(..),
   ErrorAction(..),
   ErrorActionArgument(..),
+  ErrorReturn(..),
   ParamAnnotation(..),
   FuncAnnotation(..),
   TypeAnnotation(..),

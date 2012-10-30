@@ -35,6 +35,7 @@ import Control.Lens
 import Data.Monoid
 
 import LLVM.Analysis
+import LLVM.Analysis.BlockReturnValue
 import LLVM.Analysis.Dominance
 import LLVM.Analysis.CDG
 import LLVM.Analysis.CFG
@@ -61,7 +62,11 @@ data FunctionMetadata =
                    , functionCDG :: CDG
                    , functionDomTree :: DominatorTree
                    , functionPostdomTree :: PostdominatorTree
+                   , functionBlockReturns :: BlockReturns
                    }
+
+instance HasBlockReturns FunctionMetadata where
+  getBlockReturns = functionBlockReturns
 
 instance HasFunction FunctionMetadata where
   getFunction = functionOriginal
@@ -82,6 +87,7 @@ instance FuncLike FunctionMetadata where
                      , functionCDG = controlDependenceGraph cfg
                      , functionDomTree = dominatorTree cfg
                      , functionPostdomTree = postdominatorTree (reverseCFG cfg)
+                     , functionBlockReturns = labelBlockReturns cfg
                      }
     where
       cfg = mkCFG f

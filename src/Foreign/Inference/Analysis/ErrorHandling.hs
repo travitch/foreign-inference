@@ -81,11 +81,8 @@ instance NFData ErrorDescriptor where
 -- | The error summary is the type exposed to callers, mapping each
 -- function to its error handling methods.
 type SummaryType = HashMap Function (Set ErrorDescriptor)
-data ErrorSummary =
-  ErrorSummary { errorSummary :: SummaryType
-               , errorDiagnostics :: Diagnostics
-               }
-  deriving (Generic)
+data ErrorSummary = ErrorSummary SummaryType Diagnostics
+                  deriving (Generic)
 
 instance Eq ErrorSummary where
   (ErrorSummary s1 _) == (ErrorSummary s2 _) = s1 == s2

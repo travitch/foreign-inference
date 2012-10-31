@@ -1,5 +1,5 @@
 {-# LANGUAGE ViewPatterns, RankNTypes, ScopedTypeVariables #-}
-{-# LANGUAGE DeriveGeneric, TemplateHaskell #-}
+{-# LANGUAGE DeriveGeneric #-}
 -- | This analysis attempts to automatically identify error-handling
 -- code in libraries.
 --

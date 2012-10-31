@@ -396,12 +396,13 @@ relevantInducedFacts funcLike i v1 v2 =
         case br of
           UnconditionalBranchInst {} ->
             return $ buildRelevantFacts target singlePred acc
-          BranchInst { branchTrueTarget = tt
+          bi@BranchInst { branchTrueTarget = tt
                      , branchCondition = (valueContent' ->
             InstructionC ICmpInst { cmpPredicate = p
                                   , cmpV1 = val1
                                   , cmpV2 = val2
                                   })}
+            | not (S.member bi cdeps) -> Nothing
             | val1 == target || val2 == target ->
               let doNeg = if bb == tt then id else bnot
                   fact' = augmentFact acc val1 val2 p doNeg
@@ -455,6 +456,7 @@ extractErrorHandlingCode f brets inducedFacts s p v1 v2 tt ft = do
     True -> branchToErrorDescriptor f brets tt -- `debug` "-->Taking first branch"
     False -> case isSat falseFormula of
       True -> branchToErrorDescriptor f brets ft -- `debug` "-->Taking second branch"
+      False -> fail "Error not checked"
 
 cmpToFormula :: (SInt32 -> SBool)
                 -> SummaryType
@@ -625,7 +627,6 @@ isErrorFuncCall funcSet errAct =
   case errAct of
     FunctionCall s _ -> S.member s funcSet
     _ -> False
-      False -> fail "Error not checked"
 
 liftMaybe :: Maybe a -> MaybeT Analysis a
 liftMaybe Nothing = fail "liftMaybe"

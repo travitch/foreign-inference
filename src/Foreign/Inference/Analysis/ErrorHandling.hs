@@ -157,15 +157,17 @@ instance SummarizeModule ErrorSummary where
       Nothing -> return [(FAReportsErrors mempty retcodes, ws)]
       Just uacts -> return [(FAReportsErrors uacts retcodes, ws)]
 
+-- | FIXME: Prefer error actions of size one (should discard extraneous
+-- actions like cleanup code).
 unifyErrorActions :: NonEmpty ErrorDescriptor -> Maybe (Set ErrorAction)
-unifyErrorActions d0 = F.foldr unifyActions (Just d) ds
+unifyErrorActions d0 = foldr unifyActions (Just d) ds
   where
     (d:|ds) = fmap errorActions d0
     unifyActions _ Nothing = Nothing
-    unifyActions s1 acc@(Just s2) =
-      if s1 == s2
-      then acc
-      else Nothing
+    unifyActions s1 acc@(Just s2)
+      | S.size s1 == 1 && S.size s2 /= 1 = Just s1
+      | s1 == s2 = acc
+      | otherwise = Nothing
 
 -- | Merge all return values; if ints and ptrs are mixed, prefer the
 -- ints

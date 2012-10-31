@@ -262,11 +262,24 @@ handlesKnownError f brets s bb =
                , branchFalseTarget = ft
                } -> runMaybeT $ do
       errDesc <- extractErrorHandlingCode f brets s p v1 v2 tt ft
+      let acts = errorActions errDesc
+      when (S.size acts == 1) $ do
+        st <- analysisGet
+        case F.find isFuncallAct acts of
+          Just (FunctionCall fname _) ->
+            analysisPut st { errorFunctions = S.insert fname (errorFunctions st) }
+          _ -> return ()
       let w1 = Witness ci "check error return"
           w2 = Witness bi "return error code"
           d = errDesc { errorWitnesses = [w1, w2] }
       return $! HM.insertWith S.union f (S.singleton d) s
     _ -> return Nothing
+
+isFuncallAct :: ErrorAction -> Bool
+isFuncallAct a =
+  case a of
+    FunctionCall _ _ -> True
+    _ -> False
 
 -- | Try to generalize (learn new error codes) based on called error
 -- functions

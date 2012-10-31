@@ -263,6 +263,11 @@ handlesKnownError f brets s bb =
                } -> runMaybeT $ do
       errDesc <- extractErrorHandlingCode f brets s p v1 v2 tt ft
       let acts = errorActions errDesc
+      -- Only add a function to the errorFunctions set if the error
+      -- action consists of *only* a single function call.  This is a
+      -- heuristic to filter out actions that contain cleanup code
+      -- that we would like to ignore (e.g., fclose, which is not an
+      -- error reporting function).
       when (S.size acts == 1) $ do
         st <- analysisGet
         case F.find isFuncallAct acts of

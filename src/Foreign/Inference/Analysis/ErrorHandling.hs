@@ -26,8 +26,6 @@
 module Foreign.Inference.Analysis.ErrorHandling (
   ErrorSummary,
   identifyErrorHandling,
-  -- * Testing
-  -- allocatorSummaryToTestFormat
   ) where
 
 import GHC.Generics

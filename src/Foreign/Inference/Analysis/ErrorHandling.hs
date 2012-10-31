@@ -390,28 +390,24 @@ relevantInducedFacts funcLike i v1 v2 =
     -- up since we don't know any more facts for sure.
     buildRelevantFacts target bb acc
       | S.null cdeps = acc
-      | otherwise =
-        case basicBlockPredecessors cfg bb of
-          [singlePred] ->
-            let br = basicBlockTerminatorInstruction singlePred
-            in case br of
-              UnconditionalBranchInst {} ->
-                buildRelevantFacts target singlePred acc
-              BranchInst { branchTrueTarget = tt
-                         , branchCondition = (valueContent' ->
-                InstructionC ICmpInst { cmpPredicate = p
-                                      , cmpV1 = val1
-                                      , cmpV2 = val2
-                                      })} ->
-                case val1 == target || val2 == target of
-                  -- Skip irrelevant facts
-                  False -> buildRelevantFacts target singlePred acc
-                  True ->
-                    let doNeg = if bb == tt then id else bnot
-                        fact' = augmentFact acc val1 val2 p doNeg
-                    in buildRelevantFacts target singlePred fact'
-              _ -> acc
-          _ -> acc
+      | otherwise = fromMaybe acc $ do
+        singlePred <- singlePredecessor cfg bb
+        let br = basicBlockTerminatorInstruction singlePred
+        case br of
+          UnconditionalBranchInst {} ->
+            return $ buildRelevantFacts target singlePred acc
+          BranchInst { branchTrueTarget = tt
+                     , branchCondition = (valueContent' ->
+            InstructionC ICmpInst { cmpPredicate = p
+                                  , cmpV1 = val1
+                                  , cmpV2 = val2
+                                  })}
+            | val1 == target || val2 == target ->
+              let doNeg = if bb == tt then id else bnot
+                  fact' = augmentFact acc val1 val2 p doNeg
+              in return $ buildRelevantFacts target singlePred fact'
+            | otherwise -> return $ buildRelevantFacts target singlePred acc
+          _ -> Nothing
 
 augmentFact :: (SInt32 -> SBool) -> Value -> Value -> CmpPredicate
                -> (SBool -> SBool) -> (SInt32 -> SBool)
@@ -423,19 +419,6 @@ augmentFact fact val1 val2 p doNeg = fromMaybe fact $ do
     (_, ConstantC ConstantInt { constantIntValue = (fromIntegral -> iv)}) ->
       return $ \(x :: SInt32) -> doNeg (x `rel` iv) &&& fact x
     _ -> return fact
-
-
-isFuncallAct :: ErrorAction -> Bool
-isFuncallAct a =
-  case a of
-    FunctionCall _ _ -> True
-    _ -> False
-
-isErrorFuncCall :: Set String -> ErrorAction -> Bool
-isErrorFuncCall funcSet errAct =
-  case errAct of
-    FunctionCall s _ -> S.member s funcSet
-    _ -> False
 
 data CmpOperand = FuncallOperand Value -- the callee (external func or func)
                 | ConstIntOperand Int
@@ -472,11 +455,6 @@ extractErrorHandlingCode f brets inducedFacts s p v1 v2 tt ft = do
     True -> branchToErrorDescriptor f brets tt -- `debug` "-->Taking first branch"
     False -> case isSat falseFormula of
       True -> branchToErrorDescriptor f brets ft -- `debug` "-->Taking second branch"
-      False -> fail "Error not checked"
-
-liftMaybe :: Maybe a -> MaybeT Analysis a
-liftMaybe Nothing = fail "liftMaybe"
-liftMaybe (Just a) = return a
 
 cmpToFormula :: (SInt32 -> SBool)
                 -> SummaryType
@@ -629,3 +607,26 @@ argumentIndex a = aix
   where
     f = argumentFunction a
     Just aix = elemIndex a (functionParameters f)
+
+singlePredecessor :: CFG -> BasicBlock -> Maybe BasicBlock
+singlePredecessor cfg bb =
+  case basicBlockPredecessors cfg bb of
+    [singlePred] -> return singlePred
+    _ -> Nothing
+
+isFuncallAct :: ErrorAction -> Bool
+isFuncallAct a =
+  case a of
+    FunctionCall _ _ -> True
+    _ -> False
+
+isErrorFuncCall :: Set String -> ErrorAction -> Bool
+isErrorFuncCall funcSet errAct =
+  case errAct of
+    FunctionCall s _ -> S.member s funcSet
+    _ -> False
+      False -> fail "Error not checked"
+
+liftMaybe :: Maybe a -> MaybeT Analysis a
+liftMaybe Nothing = fail "liftMaybe"
+liftMaybe (Just a) = return a

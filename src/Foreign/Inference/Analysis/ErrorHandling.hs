@@ -62,9 +62,9 @@ import Foreign.Inference.Internal.FlattenValue
 import Foreign.Inference.Analysis.IndirectCallResolver
 
 -- import Text.Printf
--- import Debug.Trace
--- debug :: a -> String -> a
--- debug = flip trace
+import Debug.Trace
+debug :: a -> String -> a
+debug = flip trace
 
 -- | An ErrorDescriptor describes a site in the program handling an
 -- error (along with a witness).
@@ -410,7 +410,7 @@ relevantInducedFacts funcLike i v1 v2 =
 augmentFact :: (SInt32 -> SBool) -> Value -> Value -> CmpPredicate
                -> (SBool -> SBool) -> (SInt32 -> SBool)
 augmentFact fact val1 val2 p doNeg = fromMaybe fact $ do
-  rel <- cmpPredicateToRelation p
+  (rel, _) <- cmpPredicateToRelation p
   case (valueContent' val1, valueContent' val2) of
     (ConstantC ConstantInt { constantIntValue = (fromIntegral -> iv) }, _) ->
       return $ \(x :: SInt32) -> doNeg (iv `rel` x) &&& fact x
@@ -457,47 +457,53 @@ extractErrorHandlingCode f brets inducedFacts s p v1 v2 tt ft = do
 
 cmpToFormula :: (SInt32 -> SBool)
                 -> SummaryType
-                -> (SInt32 -> SInt32 -> SBool)
+                -> (SInt32 -> SInt32 -> SBool, Bool)
                 -> Value
                 -> Value
                 -> MaybeT Analysis (SInt32 -> SBool, SInt32 -> SBool)
-cmpToFormula inducedFacts s rel v1 v2 = do
+cmpToFormula inducedFacts s (rel, isIneqCmp) v1 v2 = do
   ics <- lift $ analysisEnvironment indirectCallSummary
   ds <- lift $ analysisEnvironment dependencySummary
+  st <- lift analysisGet
   let v1' = callFuncOrConst v1
       v2' = callFuncOrConst v2
+      ecs = errorCodes st
   case (v1', v2') of
-    (FuncallOperand callee, ConstIntOperand i) -> do
-      let callees = callTargets ics callee
-      rv <- errorReturnValue ds s callees
-      let i' = fromIntegral i
-          rv' = fromIntegral rv
-          trueFormula = \(x :: SInt32) -> (x .== rv') &&& (x `rel` i') &&& inducedFacts x
-          falseFormula = \(x :: SInt32) -> (x .== rv') &&& bnot (x `rel` i') &&& inducedFacts x
-      return (trueFormula, falseFormula)
-    (ConstIntOperand i, FuncallOperand callee) -> do
-      let callees = callTargets ics callee
-      rv <- errorReturnValue ds s callees
-      let i' = fromIntegral i
-          rv' = fromIntegral rv
-          trueFormula = \(x :: SInt32) -> (x .== rv') &&& (i' `rel` x) &&& inducedFacts x
-          falseFormula = \(x :: SInt32) -> (x .== rv') &&& bnot (i' `rel` x) &&& inducedFacts x
-      return (trueFormula, falseFormula)
+    (FuncallOperand callee, ConstIntOperand i)
+      | S.member i ecs && isIneqCmp -> fail "Ignore inequality against error codes"
+      | otherwise -> do
+        let callees = callTargets ics callee
+        rv <- errorReturnValue ds s callees
+        let i' = fromIntegral i
+            rv' = fromIntegral rv
+            trueFormula = \(x :: SInt32) -> (x .== rv') &&& (x `rel` i') &&& inducedFacts x
+            falseFormula = \(x :: SInt32) -> (x .== rv') &&& bnot (x `rel` i') &&& inducedFacts x
+        return (trueFormula, falseFormula)
+    (ConstIntOperand i, FuncallOperand callee)
+      | S.member i ecs && isIneqCmp -> fail "Ignore inequality against error codes"
+      | otherwise -> do
+        let callees = callTargets ics callee
+        rv <- errorReturnValue ds s callees
+        let i' = fromIntegral i
+            rv' = fromIntegral rv
+            trueFormula = \(x :: SInt32) -> (x .== rv') &&& (i' `rel` x) &&& inducedFacts x
+            falseFormula = \(x :: SInt32) -> (x .== rv') &&& bnot (i' `rel` x) &&& inducedFacts x
+        return (trueFormula, falseFormula)
     _ -> fail "cmpToFormula"
 
-cmpPredicateToRelation :: CmpPredicate -> Maybe (SInt32 -> SInt32 -> SBool)
+cmpPredicateToRelation :: CmpPredicate -> Maybe (SInt32 -> SInt32 -> SBool, Bool)
 cmpPredicateToRelation p =
   case p of
-    ICmpEq -> return (.==)
-    ICmpNe -> return (./=)
-    ICmpUgt -> return (.>)
-    ICmpUge -> return (.>=)
-    ICmpUlt -> return (.<)
-    ICmpUle -> return (.<=)
-    ICmpSgt -> return (.>)
-    ICmpSge -> return (.>=)
-    ICmpSlt -> return (.<)
-    ICmpSle -> return (.<=)
+    ICmpEq -> return ((.==), False)
+    ICmpNe -> return ((./=), False)
+    ICmpUgt -> return ((.>), True)
+    ICmpUge -> return ((.>=), False)
+    ICmpUlt -> return ((.<), True)
+    ICmpUle -> return ((.<=), False)
+    ICmpSgt -> return ((.>), True)
+    ICmpSge -> return ((.>=), False)
+    ICmpSlt -> return ((.<), True)
+    ICmpSle -> return ((.<=), False)
     _ -> fail "cmpPredicateToRelation is a floating point comparison"
 
 isSat :: (SInt32 -> SBool) -> Bool
@@ -519,7 +525,9 @@ errorReturnValue ds s (callee:rest) = do
       rv' <- liftMaybe $ errRetVal fsumm
       when (rv' /= rv) $ emitWarning Nothing "ErrorAnalysis" ("Mismatched error return codes for indirect call " ++ show (valueName callee))
 
-
+-- FIXME: Whatever is calling this needs to be modified to be able to
+-- check *multiple* error codes.  It is kind of doing the right thing
+-- now just because sorted order basically works here
 errRetVal :: [FuncAnnotation] -> Maybe Int
 errRetVal [] = Nothing
 errRetVal (FAReportsErrors _ ract : _) = do

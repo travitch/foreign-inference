@@ -559,18 +559,18 @@ isErrRetAnnot _ = False
 -- (successors of bb and control dependent on the branch).
 branchToErrorDescriptor :: Function -> BlockReturns -> BasicBlock
                            -> MaybeT Analysis ErrorDescriptor
-branchToErrorDescriptor f brs bb = do
-  let rcs = blockReturns brs bb -- `debug` show brs
-  constantRcs <- liftMaybe $ mapM retValToConstantInt rcs -- `debug` show rcs
-  case null constantRcs {- `debug` show constantRcs -} of
-    True -> fail "Non-constant return value"
-    False ->
-      let rcon = if functionReturnsPointer f
-                 then ReturnConstantPtr
-                 else ReturnConstantInt
-          ract = rcon (S.fromList constantRcs)
-          acts = foldr instToAction [] (basicBlockInstructions bb)
-      in return $! ErrorDescriptor (S.fromList acts) ract [] -- `debug` show constantRcs
+branchToErrorDescriptor f brs bb
+  | length rcs /= 1 = fail "More than one return value possible"
+  | otherwise = do
+    constantRc <- liftMaybe $ retValToConstantInt (rcs !! 0)
+    let rcon = if functionReturnsPointer f
+               then ReturnConstantPtr
+               else ReturnConstantInt
+        ract = rcon (S.singleton constantRc)
+        acts = foldr instToAction [] (basicBlockInstructions bb)
+    return $! ErrorDescriptor (S.fromList acts) ract [] -- `debug` show constantRcs
+  where
+    rcs = blockReturns brs bb
 
 retValToConstantInt :: Value -> Maybe Int
 retValToConstantInt v =

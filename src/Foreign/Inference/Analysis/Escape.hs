@@ -46,8 +46,8 @@ import Foreign.Inference.Analysis.IndirectCallResolver
 
 -- import System.IO.Unsafe
 -- import Text.Printf
-import Debug.Trace
-debug = flip trace
+-- import Debug.Trace
+-- debug = flip trace
 
 -- | The ways a value can escape from a function
 data EscapeClass = DirectEscape
@@ -86,13 +86,11 @@ type SetExp = SetExpression Var Constructor
 type ValueFlowGraph = SolvedSystem Var Constructor
 
 data EscapeGraph = EscapeGraph {
-  _escapeGraphFieldSourceMap :: HashMap Argument [AbstractAccessPath],
-  _escapeVFG :: ValueFlowGraph
+  escapeGraphFieldSourceMap :: HashMap Argument [AbstractAccessPath],
+  escapeVFG :: ValueFlowGraph
   } deriving (Eq, Generic)
 
 instance NFData EscapeGraph
-
-$(makeLenses ''EscapeGraph)
 
 -- | The monad in which we construct the value flow graph
 -- type GraphBuilder = State GraphState
@@ -200,7 +198,23 @@ instructionEscapeCore :: (Instruction -> Bool)
                          -> Instruction
                          -> EscapeSummary
                          -> Maybe Instruction
-instructionEscapeCore ignorePred i (EscapeSummary egs _ _ _ _) = undefined
+instructionEscapeCore ignorePred i (EscapeSummary egs _ _ _ _) = do
+  f <- instructionFunction i
+  EscapeGraph _ eg <- HM.lookup f egs
+  ts@(_:_) <- leastSolution eg (Location (toValue i))
+  let sinks = map toSink ts
+      sinks' = filter (not . ignorePred . sinkWitness) sinks
+  case sinks' of
+    [] -> Nothing
+    s:_ -> return (sinkWitness s)
+
+{-
+entireArgumentEscapes :: EscapeGraph -> Argument -> EscapeSummary -> Maybe EscapeSummary
+entireArgumentEscapes (EscapeGraph _ eg) a s = do
+  ts@(_:_) <- leastSolution eg (Location (toValue a))
+  let sink:_ = map toSink ts
+  return $ (escapeArguments %~ HM.insert a (sinkClass sink, sinkWitness sink)) s
+-}
 
   -- do
   -- ln <- HM.lookup (toValue i) m
@@ -246,6 +260,7 @@ summarizeArgumentEscapes eg a s =
 
 toSink :: SetExp -> Constructor
 toSink (ConstructedTerm e _ []) = e
+toSink e = error ("Foreign.Inference.Analysis.Escape.toSink: Unexpected non-constructed term: " ++ show e)
 
 entireArgumentEscapes :: EscapeGraph -> Argument -> EscapeSummary -> Maybe EscapeSummary
 entireArgumentEscapes (EscapeGraph _ eg) a s = do
@@ -280,7 +295,9 @@ buildValueFlowGraph :: IndirectCallSummary
                        -> [Instruction]
                        -> EscapeGraph
 buildValueFlowGraph ics ds summ is =
-  EscapeGraph fieldSrcs sys
+  EscapeGraph { escapeGraphFieldSourceMap = fieldSrcs
+              , escapeVFG = sys
+              }
   where
     (inclusionSystem, fieldSrcs) = foldr addInclusion ([], mempty) is
     Just sys = solveSystem (constraintSystem inclusionSystem)
@@ -289,6 +306,10 @@ buildValueFlowGraph ics ds summ is =
     setExpFor v =
       case valueContent' v of
         InstructionC i@GetElementPtrInst { } ->
+          case argumentBasedField i of
+            Nothing -> setVariable (Location v)
+            Just (a, aap) -> setVariable (FieldSource a aap)
+        InstructionC i@LoadInst { } ->
           case argumentBasedField i of
             Nothing -> setVariable (Location v)
             Just (a, aap) -> setVariable (FieldSource a aap)

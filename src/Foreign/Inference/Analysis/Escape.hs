@@ -313,7 +313,7 @@ buildValueFlowGraph ics ds summ is =
           case argumentBasedField i of
             Nothing -> setVariable (Location v)
             Just (a, aap) -> setVariable (FieldSource a aap)
-        _ -> setVariable (Location v)
+        _ -> setVariable (Location (stripBitcasts v))
 
     addInclusion :: Instruction
                     -> ([Inclusion Var Constructor], HashMap Argument [AbstractAccessPath])

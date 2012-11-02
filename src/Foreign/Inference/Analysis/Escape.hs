@@ -307,11 +307,11 @@ buildValueFlowGraph ics ds summ is =
       case valueContent' v of
         InstructionC i@GetElementPtrInst { } ->
           case argumentBasedField i of
-            Nothing -> setVariable (Location v)
+            Nothing -> setVariable (Location (stripBitcasts v))
             Just (a, aap) -> setVariable (FieldSource a aap)
         InstructionC i@LoadInst { } ->
           case argumentBasedField i of
-            Nothing -> setVariable (Location v)
+            Nothing -> setVariable (Location (stripBitcasts v))
             Just (a, aap) -> setVariable (FieldSource a aap)
         _ -> setVariable (Location (stripBitcasts v))
 

@@ -43,7 +43,7 @@ import qualified Data.IntMap as IM
 import Data.List ( elemIndex )
 import Data.List.NonEmpty ( NonEmpty(..) )
 import qualified Data.List.NonEmpty as NEL
-import Data.Maybe ( fromMaybe )
+import Data.Maybe ( fromMaybe, listToMaybe )
 import Data.Monoid
 import Data.SBV
 import Data.Set ( Set )
@@ -565,7 +565,9 @@ branchToErrorDescriptor :: Function -> BlockReturns -> BasicBlock
 branchToErrorDescriptor f brs bb
   | length rcs /= 1 = fail "More than one return value possible"
   | otherwise = do
-    constantRc <- liftMaybe $ retValToConstantInt (rcs !! 0)
+    -- Always a one element list here
+    singleRetVal <- liftMaybe $ listToMaybe rcs
+    constantRc <- liftMaybe $ retValToConstantInt singleRetVal
     let rcon = if functionReturnsPointer f
                then ReturnConstantPtr
                else ReturnConstantInt

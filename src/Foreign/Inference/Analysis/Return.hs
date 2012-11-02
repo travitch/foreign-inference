@@ -46,7 +46,7 @@ instance SummarizeModule ReturnSummary where
   summarizeFunction f (ReturnSummary summ) =
     case f `S.member` summ of
       False -> []
-      True -> [FANoRet]
+      True -> [(FANoRet, [])]
   summarizeArgument _ _ = []
 
 identifyReturns :: (FuncLike funcLike, HasCFG funcLike)

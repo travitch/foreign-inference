@@ -267,12 +267,14 @@ matchActionAndGeneralizeReturn funcLike s bb =
     FunctionCall ecall _ <- liftMaybe $ F.find (isErrorFuncCall fs) (errorActions edesc)
     case errorReturns edesc of
       ReturnConstantPtr _ -> fail "Ptr return"
-      ReturnConstantInt is -> do
-        let ti = basicBlockTerminatorInstruction bb
-            w = Witness ti ("Called " ++ ecall)
-            d = edesc { errorWitnesses = [w] }
-        lift $ analysisPut st { errorCodes = errorCodes st `S.union` is }
-        return $! HM.insertWith S.union f (S.singleton d) s
+      ReturnConstantInt is
+        | [0] == S.toList is -> return s
+        | otherwise -> do
+          let ti = basicBlockTerminatorInstruction bb
+              w = Witness ti ("Called " ++ ecall)
+              d = edesc { errorWitnesses = [w] }
+          lift $ analysisPut st { errorCodes = errorCodes st `S.union` is }
+          return $! HM.insertWith S.union f (S.singleton d) s
 
 -- | If the function handles an error from a callee that we already
 -- know about, this will tell us what this caller does in response.

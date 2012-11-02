@@ -18,12 +18,13 @@ import GHC.Generics ( Generic )
 
 import Control.DeepSeq
 import Control.DeepSeq.Generics ( genericRnf )
-import Control.Lens ( Simple, (^.), (%~), (.~), use, makeLenses )
+import Control.Lens ( Simple, (^.), (%~), (.~), makeLenses )
 import Control.Monad.Writer ( runWriter )
 import qualified Data.Foldable as F
 import Data.Hashable
 import Data.HashMap.Strict ( HashMap )
 import qualified Data.HashMap.Strict as HM
+import Data.List ( mapAccumR )
 import Data.Map ( Map )
 import qualified Data.Map as M
 import Data.Maybe ( fromMaybe, mapMaybe )
@@ -323,14 +324,17 @@ buildValueFlowGraph ics ds summ is =
         StoreInst { storeAddress = sa
                   , storeValue = sv
                   }
-          | mustEscapeLocation sa ->
-            let s = sinkExp DirectEscape i Nothing
+          | mustEsc ->
+            let sinkTag = maybe DirectEscape (ArgumentEscape . argumentIndex) mArg
+                s = sinkExp sinkTag i Nothing
                 c = s <=! setExpFor sv
             in (c : incs, fsrcs)
           | otherwise ->
               -- May escape later if the alloca escapes
               let c = setExpFor sa <=! setExpFor sv
               in (c : incs, fsrcs)
+          where
+            (mustEsc, mArg) = mustEscapeLocation sa
 
         CallInst { callFunction = callee, callArguments = (map (stripBitcasts . fst) -> args) } ->
           addCallConstraints i acc callee args
@@ -424,23 +428,40 @@ argumentBasedField li = do
     ArgumentC a -> return (a, abstractAccessPath accPath)
     _ -> Nothing
 
-mustEscapeLocation :: Value -> Bool
-mustEscapeLocation v =
-  case valueContent' v of
-    GlobalVariableC _ -> True
-    ExternalValueC _ -> True
-    ArgumentC _ -> True
-    InstructionC CallInst {} -> True
-    InstructionC InvokeInst {} -> True
-    InstructionC LoadInst { loadAddress = la } ->
-      mustEscapeLocation la
-    InstructionC GetElementPtrInst { getElementPtrValue = base } ->
-      mustEscapeLocation base
-    InstructionC SelectInst { } ->
-      any mustEscapeLocation (flattenValue v)
-    InstructionC PhiNode {} ->
-      any mustEscapeLocation (flattenValue v)
-    _ -> False
+mustEscapeLocation :: Value -> (Bool, Maybe Argument)
+mustEscapeLocation = snd . go mempty
+  where
+    go visited v
+      | S.member v visited = (visited, (False, Nothing))
+      | otherwise =
+        case valueContent' v of
+          GlobalVariableC _ -> (visited', (True, Nothing))
+          ExternalValueC _ -> (visited', (True, Nothing))
+          ArgumentC a -> (visited', (True, Just a))
+          InstructionC CallInst {} -> (visited', (True, Nothing))
+          InstructionC InvokeInst {} -> (visited', (True, Nothing))
+          InstructionC LoadInst { loadAddress = la } ->
+            go visited' la
+          InstructionC GetElementPtrInst { getElementPtrValue = base } ->
+            go visited' base
+          InstructionC SelectInst { } ->
+            let (visited'', pairs) = mapAccumR go visited' (flattenValue v)
+                argVal = mconcat $ map (First . snd) pairs
+            in (visited'', (any fst pairs, getFirst argVal))
+          InstructionC PhiNode {} ->
+            let (visited'', pairs) = mapAccumR go visited' (flattenValue v)
+                argVal = mconcat $ map (First . snd) pairs
+            in (visited'', (any fst pairs, getFirst argVal))
+          _ -> (visited', (False, Nothing))
+      where
+        visited' = S.insert v visited
+
+argumentIndex :: Argument -> Int
+argumentIndex a = ix
+  where
+    Just (ix, _) = F.find ((==a) . snd) ps
+    f = argumentFunction a
+    ps = zip [0..] (functionParameters f)
 
 {-
 

@@ -62,9 +62,9 @@ import Foreign.Inference.Internal.FlattenValue
 import Foreign.Inference.Analysis.IndirectCallResolver
 
 -- import Text.Printf
-import Debug.Trace
-debug :: a -> String -> a
-debug = flip trace
+-- import Debug.Trace
+-- debug :: a -> String -> a
+-- debug = flip trace
 
 -- | An ErrorDescriptor describes a site in the program handling an
 -- error (along with a witness).
@@ -295,6 +295,7 @@ handlesKnownError funcLike s bb =
       let f = getFunction funcLike
           inducedFacts = relevantInducedFacts funcLike ci v1 v2
           brets = getBlockReturns funcLike
+--      return () `debug` (show (functionName f) ++ " @ " ++ show ci)
       errDesc <- extractErrorHandlingCode f brets inducedFacts s p v1 v2 tt ft
       let acts = errorActions errDesc
       -- Only add a function to the errorFunctions set if the error

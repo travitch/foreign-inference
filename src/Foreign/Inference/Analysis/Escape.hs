@@ -300,7 +300,7 @@ buildValueFlowGraph ics ds summ is =
               }
   where
     (inclusionSystem, fieldSrcs) = foldr addInclusion ([], mempty) is
-    Just sys = solveSystem (constraintSystem inclusionSystem)
+    Just sys = solveSystem inclusionSystem
 
     sinkExp klass witness argDesc = atom (Sink klass witness argDesc)
     setExpFor v =

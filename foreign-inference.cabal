@@ -148,3 +148,12 @@ test-suite IndirectCallTests
   build-depends: llvm-analysis, llvm-data-interop, base, containers, HUnit,
                  foreign-inference, filepath
   ghc-options: -Wall
+
+test-suite ErrorHandlingTests
+  default-language: Haskell2010
+  type: exitcode-stdio-1.0
+  main-is: ErrorHandlingTests.hs
+  hs-source-dirs: tests
+  ghc-options: -Wall
+  build-depends: llvm-analysis, llvm-data-interop, base, containers, HUnit,
+                 foreign-inference, filepath

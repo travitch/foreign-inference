@@ -369,7 +369,7 @@ relevantInducedFacts :: (HasFunction funcLike, HasBlockReturns funcLike,
 relevantInducedFacts funcLike i v1 v2 =
   let identFormula = const true
       Just bb = instructionBasicBlock i
-  in case (valueContent' v1, valueContent' v2) of
+  in case (ignoreCasts v1, ignoreCasts v2) of
     (InstructionC CallInst {}, _) ->
       buildRelevantFacts v1 bb identFormula
     (_, InstructionC CallInst {}) ->
@@ -427,7 +427,7 @@ data CmpOperand = FuncallOperand Value -- the callee (external func or func)
 
 callFuncOrConst :: Value -> CmpOperand
 callFuncOrConst v =
-  case valueContent' v of
+  case ignoreCasts v of
     ConstantC ConstantInt { constantIntValue = iv } ->
       ConstIntOperand (fromIntegral iv)
     InstructionC CallInst { callFunction = callee } ->
@@ -641,3 +641,15 @@ isErrorFuncCall funcSet errAct =
 liftMaybe :: Maybe a -> MaybeT Analysis a
 liftMaybe Nothing = fail "liftMaybe"
 liftMaybe (Just a) = return a
+
+ignoreCasts :: Value -> Value
+ignoreCasts v =
+  case valueContent v of
+    InstructionC BitcastInst { castedValue = cv } -> ignoreCasts cv
+    InstructionC TruncInst { castedValue = cv } -> ignoreCasts cv
+    InstructionC ZExtInst { castedValue = cv } -> ignoreCasts cv
+    InstructionC SExtInst { castedValue = cv } -> ignoreCasts cv
+    InstructionC IntToPtrInst { castedValue = cv } -> ignoreCasts cv
+    GlobalAliasC GlobalAlias { globalAliasTarget = t } -> ignoreCasts t
+    ConstantC ConstantValue { constantInstruction = BitcastInst { castedValue = cv } } -> ignoreCasts cv
+    _ -> valueContent v

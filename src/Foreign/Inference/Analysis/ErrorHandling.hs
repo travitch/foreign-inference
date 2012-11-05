@@ -434,16 +434,6 @@ callFuncOrConst v =
       FuncallOperand callee
     _ -> Neither
 
--- | FIXME here we need to pass in all of the conditions that are active
--- for this block.  We can do this by looking at the control dependence
--- graph to see the list of conditions.  Then we have to decide if each one
--- is true or false at the current location.
---
--- Walk backwards in the CFG; each conditional branch that gets us to
--- where we came from gives us the truth assignment of that condition.
--- What should we do if there is more than one predecessor?  Not a
--- problem, just stop (we don't know a fact)
-
 extractErrorHandlingCode :: Function -> BlockReturns
                             -> (SInt32 -> SBool) -> SummaryType
                             -> CmpPredicate -> Value -> Value

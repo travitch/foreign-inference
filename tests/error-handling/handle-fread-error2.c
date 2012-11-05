@@ -13,6 +13,9 @@ int target(FILE *stream) {
     return -22;
   }
 
+  // We don't want this check to indicate an error.  It is checking
+  // EOF, which isn't an error condition.  Also it isn't even feasible
+  // because of the prior check.
   if(b == 0)
     return -10;
 

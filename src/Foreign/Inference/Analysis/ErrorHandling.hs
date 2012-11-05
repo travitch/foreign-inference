@@ -207,8 +207,28 @@ errorsForBlock funcLike s bb = do
       res <- act
       maybe (takeFirst def rest) return res
 
--- | If the function transitively returns errors, record them
--- in the error summary
+-- | If the function transitively returns errors, record them in the
+-- error summary.  Errors are only transitive if they are unhandled in
+-- this function.  For example, consider the following code:
+--
+-- > bs = read(..);
+-- > if(bs < 0) {
+-- >   setError(..);
+-- >   return -20;
+-- > }
+-- >
+-- > return bs;
+--
+-- Here, we do /not/ want to say that this function returns a
+-- transitive error, even though the result of @read@ is one of its
+-- return values.  The error code (bs == -1) is handled in the
+-- conditional, so only non-error values can be returned (except where
+-- the error was converted into an application-specific error code).
+--
+-- This decision is made with a call to the theorem prover, taking in
+-- to account all of the conditions that currently hold when the value
+-- must be returned.  See the 'relevantInducedFacts' function for
+-- details.
 returnsTransitiveError :: (HasFunction funcLike, HasBlockReturns funcLike,
                            HasCFG funcLike, HasCDG funcLike)
                           => funcLike
@@ -238,7 +258,7 @@ returnsTransitiveError funcLike summ bb = do
       FAReportsErrors errActs eret <- F.find isErrRetAnnot fsumm
       rvs <- intReturnsToList eret
       let formula = case null priors of
-            True -> const true -- `debug` ("No priors for callee " ++ show callee ++ " in " ++ show (basicBlockInstructions bb))
+            True -> const true
             False -> \(x :: SInt32) -> bOr (map (.==x) rvs) &&& bAll ($ x) priors
       case isSat formula of
         False -> Nothing

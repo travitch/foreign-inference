@@ -43,7 +43,7 @@ import qualified Data.IntMap as IM
 import Data.List ( elemIndex )
 import Data.List.NonEmpty ( NonEmpty(..) )
 import qualified Data.List.NonEmpty as NEL
-import Data.Maybe ( fromMaybe, listToMaybe )
+import Data.Maybe ( fromMaybe )
 import Data.Monoid
 import Data.SBV
 import Data.Set ( Set )
@@ -58,7 +58,6 @@ import LLVM.Analysis.CFG
 import Foreign.Inference.AnalysisMonad
 import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
-import Foreign.Inference.Internal.FlattenValue
 import Foreign.Inference.Analysis.IndirectCallResolver
 
 -- import Text.Printf
@@ -184,9 +183,8 @@ unifyReturnCodes = F.foldr1 unifyReturns . fmap errorReturns
 errorAnalysis :: (HasFunction funcLike, HasBlockReturns funcLike,
                   HasCFG funcLike, HasCDG funcLike)
                  => SummaryType -> funcLike -> Analysis SummaryType
-errorAnalysis summ funcLike = do
-  summ' <- returnsTransitiveError f summ
-  foldM (errorsForBlock funcLike) summ' (functionBody f)
+errorAnalysis summ funcLike =
+  foldM (errorsForBlock funcLike) summ (functionBody f)
   where
     f = getFunction funcLike
 
@@ -198,8 +196,9 @@ errorsForBlock :: (HasFunction funcLike, HasBlockReturns funcLike,
                   -> BasicBlock
                   -> Analysis SummaryType
 errorsForBlock funcLike s bb = do
-  takeFirst s [ handlesKnownError funcLike s bb
-              , matchActionAndGeneralizeReturn funcLike s bb
+  takeFirst s [ matchActionAndGeneralizeReturn funcLike s bb
+              , handlesKnownError funcLike s bb
+              , returnsTransitiveError funcLike s bb
               ]
   where
     takeFirst :: (Monad m) => a -> [m (Maybe a)] -> m a
@@ -210,39 +209,49 @@ errorsForBlock funcLike s bb = do
 
 -- | If the function transitively returns errors, record them
 -- in the error summary
-returnsTransitiveError :: Function -> SummaryType -> Analysis SummaryType
-returnsTransitiveError f summ = do
+returnsTransitiveError :: (HasFunction funcLike, HasBlockReturns funcLike,
+                           HasCFG funcLike, HasCDG funcLike)
+                          => funcLike
+                          -> SummaryType
+                          -> BasicBlock
+                          -> Analysis (Maybe SummaryType)
+returnsTransitiveError funcLike summ bb = do
+  let brs = getBlockReturns funcLike
   ds <- analysisEnvironment dependencySummary
   ics <- analysisEnvironment indirectCallSummary
-  return $ fromMaybe summ $ do
-    exitInst <- functionExitInstruction f
-    case exitInst of
-      RetInst { retInstValue = Just rv } ->
-        let rvs = flattenValue rv
-        in return $ foldr (checkTransitiveError ics ds) summ rvs
-      _ -> return summ
+  return $ do
+    rv <- blockReturn brs bb
+    case ignoreCasts rv of
+      InstructionC i@CallInst { callFunction = callee } ->
+        -- The last argument to relevantInducedFacts here is a dummy
+        -- that we don't care about; relevantInducedFacts just uses
+        -- the one argument that is a CallInst.
+        let exitInst = basicBlockTerminatorInstruction bb
+            priorFacts = relevantInducedFacts funcLike exitInst (toValue i) callee
+            callees = callTargets ics callee
+        in return $ foldr (recordTransitiveError ds i priorFacts) summ callees
+      _ -> Nothing
   where
-    checkTransitiveError :: IndirectCallSummary
-                            -> DependencySummary
-                            -> Value
-                            -> SummaryType
-                            -> SummaryType
-    checkTransitiveError ics ds rv s =
-      case valueContent' rv of
-        InstructionC i@CallInst { callFunction = callee } ->
-          let callees = callTargets ics callee
-          in foldr (recordTransitiveError ds i) s callees
-        _ -> s
-
-    recordTransitiveError :: DependencySummary -> Instruction
-                             -> Value -> SummaryType
-                             -> SummaryType
-    recordTransitiveError ds i callee s = fromMaybe s $ do
+    f = getFunction funcLike
+    recordTransitiveError ds i priors callee s = fromMaybe s $ do
       fsumm <- lookupFunctionSummary ds (ErrorSummary s mempty) callee
       FAReportsErrors errActs eret <- F.find isErrRetAnnot fsumm
-      let w = Witness i "transitive error"
-          d = ErrorDescriptor errActs eret [w]
-      return $ HM.insertWith S.union f (S.singleton d) s
+      rvs <- intReturnsToList eret
+      let formula = case null priors of
+            True -> const true -- `debug` ("No priors for callee " ++ show callee ++ " in " ++ show (basicBlockInstructions bb))
+            False -> \(x :: SInt32) -> bOr (map (.==x) rvs) &&& bAll ($ x) priors
+      case isSat formula of
+        False -> Nothing
+        True -> do
+          let w = Witness i "transitive error"
+              d = ErrorDescriptor errActs eret [w]
+          return $ HM.insertWith S.union f (S.singleton d) s
+
+intReturnsToList :: ErrorReturn -> Maybe [SInt32]
+intReturnsToList er =
+  case er of
+    ReturnConstantInt is -> return $ map fromIntegral $ S.toList is
+    _ -> Nothing
 
 -- | Try to generalize (learn new error codes) based on known error
 -- functions that are called in this block.  If the block calls a
@@ -365,16 +374,15 @@ relevantInducedFacts :: (HasFunction funcLike, HasBlockReturns funcLike,
                         -> Instruction
                         -> Value
                         -> Value
-                        -> (SInt32 -> SBool)
+                        -> [SInt32 -> SBool]
 relevantInducedFacts funcLike i v1 v2 =
-  let identFormula = const true
-      Just bb = instructionBasicBlock i
+  let Just bb = instructionBasicBlock i
   in case (ignoreCasts v1, ignoreCasts v2) of
     (InstructionC CallInst {}, _) ->
-      buildRelevantFacts v1 bb identFormula
+      buildRelevantFacts v1 bb []
     (_, InstructionC CallInst {}) ->
-      buildRelevantFacts v2 bb identFormula
-    _ -> identFormula
+      buildRelevantFacts v2 bb []
+    _ -> []
   where
     cfg = getCFG funcLike
     cdg = getCDG funcLike
@@ -403,23 +411,23 @@ relevantInducedFacts funcLike i v1 v2 =
                                   , cmpV2 = val2
                                   })}
             | not (S.member bi cdeps) -> Nothing
-            | val1 == target || val2 == target ->
+            | ignoreCasts val1 == target || ignoreCasts val2 == target ->
               let doNeg = if bb == tt then id else bnot
                   fact' = augmentFact acc val1 val2 p doNeg
               in return $ buildRelevantFacts target singlePred fact'
             | otherwise -> return $ buildRelevantFacts target singlePred acc
           _ -> Nothing
 
-augmentFact :: (SInt32 -> SBool) -> Value -> Value -> CmpPredicate
-               -> (SBool -> SBool) -> (SInt32 -> SBool)
-augmentFact fact val1 val2 p doNeg = fromMaybe fact $ do
+augmentFact :: [SInt32 -> SBool] -> Value -> Value -> CmpPredicate
+               -> (SBool -> SBool) -> [SInt32 -> SBool]
+augmentFact facts val1 val2 p doNeg = fromMaybe facts $ do
   (rel, _) <- cmpPredicateToRelation p
   case (valueContent' val1, valueContent' val2) of
     (ConstantC ConstantInt { constantIntValue = (fromIntegral -> iv) }, _) ->
-      return $ \(x :: SInt32) -> doNeg (iv `rel` x) &&& fact x
+      return $ (\(x :: SInt32) -> doNeg (iv `rel` x)) : facts
     (_, ConstantC ConstantInt { constantIntValue = (fromIntegral -> iv)}) ->
-      return $ \(x :: SInt32) -> doNeg (x `rel` iv) &&& fact x
-    _ -> return fact
+      return $ (\(x :: SInt32) -> doNeg (x `rel` iv)) : facts
+    _ -> return facts
 
 data CmpOperand = FuncallOperand Value -- the callee (external func or func)
                 | ConstIntOperand Int
@@ -435,7 +443,8 @@ callFuncOrConst v =
     _ -> Neither
 
 extractErrorHandlingCode :: Function -> BlockReturns
-                            -> (SInt32 -> SBool) -> SummaryType
+                            -> [SInt32 -> SBool]
+                            -> SummaryType
                             -> CmpPredicate -> Value -> Value
                             -> BasicBlock -> BasicBlock
                             -> MaybeT Analysis ErrorDescriptor
@@ -448,7 +457,7 @@ extractErrorHandlingCode f brets inducedFacts s p v1 v2 tt ft = do
       True -> branchToErrorDescriptor f brets ft -- `debug` "-->Taking second branch"
       False -> fail "Error not checked"
 
-cmpToFormula :: (SInt32 -> SBool)
+cmpToFormula :: [SInt32 -> SBool]
                 -> SummaryType
                 -> (SInt32 -> SInt32 -> SBool, Bool)
                 -> Value
@@ -469,8 +478,8 @@ cmpToFormula inducedFacts s (rel, isIneqCmp) v1 v2 = do
         rv <- errorReturnValue ds s callees
         let i' = fromIntegral i
             rv' = fromIntegral rv
-            trueFormula = \(x :: SInt32) -> (x .== rv') &&& (x `rel` i') &&& inducedFacts x
-            falseFormula = \(x :: SInt32) -> (x .== rv') &&& bnot (x `rel` i') &&& inducedFacts x
+            trueFormula = \(x :: SInt32) -> (x .== rv') &&& (x `rel` i') &&& bAll ($ x) inducedFacts
+            falseFormula = \(x :: SInt32) -> (x .== rv') &&& bnot (x `rel` i') &&& bAll ($ x) inducedFacts
         return (trueFormula, falseFormula)
     (ConstIntOperand i, FuncallOperand callee)
       | S.member i ecs && isIneqCmp -> fail "Ignore inequality against error codes"
@@ -479,8 +488,8 @@ cmpToFormula inducedFacts s (rel, isIneqCmp) v1 v2 = do
         rv <- errorReturnValue ds s callees
         let i' = fromIntegral i
             rv' = fromIntegral rv
-            trueFormula = \(x :: SInt32) -> (x .== rv') &&& (i' `rel` x) &&& inducedFacts x
-            falseFormula = \(x :: SInt32) -> (x .== rv') &&& bnot (i' `rel` x) &&& inducedFacts x
+            trueFormula = \(x :: SInt32) -> (x .== rv') &&& (i' `rel` x) &&& bAll ($ x) inducedFacts
+            falseFormula = \(x :: SInt32) -> (x .== rv') &&& bnot (i' `rel` x) &&& bAll ($ x) inducedFacts
         return (trueFormula, falseFormula)
     _ -> fail "cmpToFormula"
 
@@ -524,7 +533,6 @@ errorReturnValue ds s (callee:rest) = do
 errRetVal :: [FuncAnnotation] -> Maybe Int
 errRetVal [] = Nothing
 errRetVal (FAReportsErrors _ ract : _) = do
---  act <- F.find isIntRet es
   case ract of
     ReturnConstantInt is ->
       case F.toList is of
@@ -552,20 +560,16 @@ isErrRetAnnot _ = False
 -- (successors of bb and control dependent on the branch).
 branchToErrorDescriptor :: Function -> BlockReturns -> BasicBlock
                            -> MaybeT Analysis ErrorDescriptor
-branchToErrorDescriptor f brs bb
-  | length rcs /= 1 = fail "More than one return value possible"
-  | otherwise = do
-    -- Always a one element list here
-    singleRetVal <- liftMaybe $ listToMaybe rcs
-    constantRc <- liftMaybe $ retValToConstantInt singleRetVal
-    let rcon = if functionReturnsPointer f
-               then ReturnConstantPtr
-               else ReturnConstantInt
-        ract = rcon (S.singleton constantRc)
-        acts = foldr instToAction [] (basicBlockInstructions bb)
-    return $! ErrorDescriptor (S.fromList acts) ract [] -- `debug` show constantRcs
-  where
-    rcs = blockReturns brs bb
+branchToErrorDescriptor f brs bb = do
+  -- Always a one element list here
+  singleRetVal <- liftMaybe $ blockReturn brs bb
+  constantRc <- liftMaybe $ retValToConstantInt singleRetVal
+  let rcon = if functionReturnsPointer f
+             then ReturnConstantPtr
+             else ReturnConstantInt
+      ract = rcon (S.singleton constantRc)
+      acts = foldr instToAction [] (basicBlockInstructions bb)
+  return $! ErrorDescriptor (S.fromList acts) ract [] -- `debug` show constantRcs
 
 retValToConstantInt :: Value -> Maybe Int
 retValToConstantInt v =

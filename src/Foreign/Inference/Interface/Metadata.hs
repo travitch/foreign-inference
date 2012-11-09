@@ -22,8 +22,8 @@ import Debug.Trace.LocationTH
 import LLVM.Analysis
 
 import Data.Graph.Interface
-import Data.Graph.PatriciaTree
-import Data.Graph.Algorithms.Matching.DFS
+import Data.Graph.MutableDigraph
+import Data.Graph.Algorithms.DFS
 
 import Foreign.Inference.Interface.Types
 
@@ -269,7 +269,7 @@ functionReturnTypeMetadata f =
         _ -> Nothing
     _ -> Nothing
 
-type TypeGraph = Gr (Type, Metadata) ()
+type TypeGraph = SparseDigraph (Type, Metadata) ()
 
 -- | All of the components of a type that are stored by-value must be
 -- defined before that type can be defined.  This is a topological
@@ -281,7 +281,7 @@ typeSort ts = reverse $ topsort' g
     g = mkGraph ns es
 
     toNodeMap = M.fromList (zip (map fst ts) [0..])
-    ns = zipWith LNode [0..] ts
+    ns = zip [0..] ts
     es = concatMap toEdges ts
     toEdges (t@(TypeStruct _ members _), _) =
       case M.lookup t toNodeMap of
@@ -290,6 +290,6 @@ typeSort ts = reverse $ topsort' g
     toEdges _ = []
     toEdge srcid t = do
       dstid <- M.lookup t toNodeMap
-      return $! LEdge (Edge srcid dstid) ()
+      return $! Edge srcid dstid ()
 
 {-# ANN module "HLint: ignore Use if" #-}

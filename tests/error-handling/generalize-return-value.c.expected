@@ -1,0 +1,3 @@
+fromList [ ("learnFrom", (fromList [ "reportError" ], ReturnConstantInt (fromList [-22])))
+         , ("target", (fromList [ "reportError2" ], ReturnConstantInt (fromList [-22])))
+         ]

@@ -197,6 +197,7 @@ errorsForBlock :: (HasFunction funcLike, HasBlockReturns funcLike,
                   -> Analysis SummaryType
 errorsForBlock funcLike s bb = do
   takeFirst s [ matchActionAndGeneralizeReturn funcLike s bb
+              , matchReturnAndGeneralizeAction funcLike s bb
               , handlesKnownError funcLike s bb
               , returnsTransitiveError funcLike s bb
               ]
@@ -297,7 +298,8 @@ matchActionAndGeneralizeReturn funcLike s bb =
     case errorReturns edesc of
       ReturnConstantPtr _ -> fail "Ptr return"
       ReturnConstantInt is
-        | [0] == S.toList is -> return s
+        | [0] == S.toList is || [1] == S.toList is ->
+          fail "Don't generalize 0 or 1" -- return s
         | otherwise -> do
           let ti = basicBlockTerminatorInstruction bb
               w = Witness ti ("Called " ++ ecall)
@@ -305,8 +307,49 @@ matchActionAndGeneralizeReturn funcLike s bb =
           lift $ analysisPut st { errorCodes = errorCodes st `S.union` is }
           return $! HM.insertWith S.union f (S.singleton d) s
 
+matchReturnAndGeneralizeAction :: (HasFunction funcLike, HasBlockReturns funcLike,
+                                   HasCFG funcLike, HasCDG funcLike)
+                                  => funcLike
+                                  -> SummaryType
+                                  -> BasicBlock
+                                  -> Analysis (Maybe SummaryType)
+matchReturnAndGeneralizeAction funcLike s bb =
+  runMaybeT $ do
+    let f = getFunction funcLike
+        brets = getBlockReturns funcLike
+    edesc <- branchToErrorDescriptor f brets bb
+    st <- lift $ analysisGet
+    let ecodes = errorCodes st
+    case errorReturns edesc of
+      ReturnConstantPtr _ -> fail "Ptr return"
+      ReturnConstantInt is
+        | S.null (is `S.intersection` ecodes) ->
+          fail "No known error code"
+        | otherwise -> do
+          let ti = basicBlockTerminatorInstruction bb
+              w = Witness ti ("Returned " ++ show is)
+              d = edesc { errorWitnesses = [w] }
+          singleFunc <- liftMaybe $ singleFunctionErrorAction (errorActions edesc)
+          lift $ analysisPut st { errorFunctions = S.insert singleFunc (errorFunctions st) }
+          return $! HM.insertWith S.union f (S.singleton d) s
+
+singleFunctionErrorAction :: Set ErrorAction -> Maybe String
+singleFunctionErrorAction acts =
+  case filter isFuncallAct (S.toList acts) of
+    [FunctionCall fname _] -> return fname
+    _ -> fail "Not a singleton function call action"
+
 -- | If the function handles an error from a callee that we already
 -- know about, this will tell us what this caller does in response.
+--
+-- FIXME: This doesn't currently handle the case of fread/ferror.
+-- This is because the ferror call can come second and the code to
+-- choose whether or not to test for a known error sees that the
+-- return value for the fread is not one of the arguments being
+-- compared (only ferror is).
+--
+-- This could be fixed if we don't treat that condition specially and
+-- *always* use all conditions that are in scope.
 handlesKnownError :: (HasFunction funcLike, HasBlockReturns funcLike,
                       HasCFG funcLike, HasCDG funcLike)
                      => funcLike

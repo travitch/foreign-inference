@@ -297,15 +297,14 @@ matchActionAndGeneralizeReturn funcLike s bb =
     FunctionCall ecall _ <- liftMaybe $ F.find (isErrorFuncCall fs) (errorActions edesc)
     case errorReturns edesc of
       ReturnConstantPtr _ -> fail "Ptr return"
-      ReturnConstantInt is
-        | [0] == S.toList is || [1] == S.toList is ->
-          fail "Don't generalize 0 or 1" -- return s
-        | otherwise -> do
-          let ti = basicBlockTerminatorInstruction bb
-              w = Witness ti ("Called " ++ ecall)
-              d = edesc { errorWitnesses = [w] }
+      ReturnConstantInt is -> do
+        let ti = basicBlockTerminatorInstruction bb
+            w = Witness ti ("Called " ++ ecall)
+            d = edesc { errorWitnesses = [w] }
+        -- Only learn new error codes if they are not 1/0
+        when ([0] /= S.toList is && [1] /= S.toList is) $ do
           lift $ analysisPut st { errorCodes = errorCodes st `S.union` is }
-          return $! HM.insertWith S.union f (S.singleton d) s
+        return $! HM.insertWith S.union f (S.singleton d) s
 
 matchReturnAndGeneralizeAction :: (HasFunction funcLike, HasBlockReturns funcLike,
                                    HasCFG funcLike, HasCDG funcLike)

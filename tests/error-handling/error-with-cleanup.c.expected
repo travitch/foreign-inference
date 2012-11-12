@@ -1,0 +1,2 @@
+fromList [ ("target", (fromList [ "reportError" ], ReturnConstantInt (fromList [-30])))
+         ]

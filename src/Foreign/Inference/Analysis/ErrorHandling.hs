@@ -301,9 +301,9 @@ matchActionAndGeneralizeReturn funcLike s bb =
         let ti = basicBlockTerminatorInstruction bb
             w = Witness ti ("Called " ++ ecall)
             d = edesc { errorWitnesses = [w] }
-        -- Only learn new error codes if they are not 1/0
-        when ([0] /= S.toList is && [1] /= S.toList is) $ do
-          lift $ analysisPut st { errorCodes = errorCodes st `S.union` is }
+            -- Only learn new error codes if they are not 1/0
+            is' = S.filter (\c -> c > 1 || c < 0) is
+        lift $ analysisPut st { errorCodes = errorCodes st `S.union` is' }
         return $! HM.insertWith S.union f (S.singleton d) s
 
 matchReturnAndGeneralizeAction :: (HasFunction funcLike, HasBlockReturns funcLike,

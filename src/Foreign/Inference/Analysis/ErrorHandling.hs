@@ -61,9 +61,9 @@ import Foreign.Inference.Interface
 import Foreign.Inference.Analysis.IndirectCallResolver
 
 -- import Text.Printf
--- import Debug.Trace
--- debug :: a -> String -> a
--- debug = flip trace
+import Debug.Trace
+debug :: a -> String -> a
+debug = flip trace
 
 -- | An ErrorDescriptor describes a site in the program handling an
 -- error (along with a witness).
@@ -630,7 +630,7 @@ branchToErrorDescriptor f brs bb = do
              then ReturnConstantPtr
              else ReturnConstantInt
       ract = rcon (S.singleton constantRc)
-      (acts, _) = foldr instToAction ([], mempty) (reverse (basicBlockInstructions bb))
+      (acts, _) = foldr instToAction ([], mempty) (basicBlockInstructions bb)
   return $! ErrorDescriptor (S.fromList acts) ract [] -- `debug` show constantRcs
 
 retValToConstantInt :: Value -> Maybe Int
@@ -647,17 +647,18 @@ functionReturnsPointer f =
     _ -> False
 
 instToAction ::Instruction -> ([ErrorAction], Set Value) -> ([ErrorAction], Set Value)
-instToAction i a@(acc, ignore)
-  | toValue i `S.member` ignore = a
-  | otherwise =
-    case i of
-      CallInst { callFunction = (valueContent' -> FunctionC f)
-               , callArguments = (map fst -> args)
-               } ->
+instToAction i a@(acc, ignore) =
+  case i of
+    CallInst { callFunction = (valueContent' -> FunctionC f)
+             , callArguments = (map fst -> args)
+             }
+      | toValue i `S.member` ignore ->
+        (acc, foldr S.insert ignore args)
+      | otherwise ->
         let fname = identifierAsString (functionName f)
             argActs = foldr callArgActions mempty (zip [0..] args)
         in (FunctionCall fname argActs : acc, foldr S.insert ignore args)
-      _ -> a
+    _ -> a
 
 callArgActions :: (Int, Value)
                   -> IntMap ErrorActionArgument

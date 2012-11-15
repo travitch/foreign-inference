@@ -630,7 +630,7 @@ branchToErrorDescriptor f brs bb = do
              then ReturnConstantPtr
              else ReturnConstantInt
       ract = rcon (S.singleton constantRc)
-      acts = foldr instToAction [] (basicBlockInstructions bb)
+      (acts, _) = foldr instToAction ([], mempty) (reverse (basicBlockInstructions bb))
   return $! ErrorDescriptor (S.fromList acts) ract [] -- `debug` show constantRcs
 
 retValToConstantInt :: Value -> Maybe Int
@@ -646,16 +646,18 @@ functionReturnsPointer f =
     TypePointer _ _ -> True
     _ -> False
 
-instToAction ::Instruction -> [ErrorAction] -> [ErrorAction]
-instToAction i acc =
-  case i of
-    CallInst { callFunction = (valueContent' -> FunctionC f)
-             , callArguments = (map fst -> args)
-             } ->
-      let fname = identifierAsString (functionName f)
-          argActs = foldr callArgActions mempty (zip [0..] args)
-      in FunctionCall fname argActs : acc
-    _ -> acc
+instToAction ::Instruction -> ([ErrorAction], Set Value) -> ([ErrorAction], Set Value)
+instToAction i a@(acc, ignore)
+  | toValue i `S.member` ignore = a
+  | otherwise =
+    case i of
+      CallInst { callFunction = (valueContent' -> FunctionC f)
+               , callArguments = (map fst -> args)
+               } ->
+        let fname = identifierAsString (functionName f)
+            argActs = foldr callArgActions mempty (zip [0..] args)
+        in (FunctionCall fname argActs : acc, foldr S.insert ignore args)
+      _ -> a
 
 callArgActions :: (Int, Value)
                   -> IntMap ErrorActionArgument

@@ -12,17 +12,21 @@ module Foreign.Inference.Report.FunctionText (
 import Blaze.ByteString.Builder
 import Blaze.ByteString.Builder.Char.Utf8
 import Control.Applicative ( many )
-import Data.Ascii ( ascii )
 import Data.Attoparsec.ByteString.Lazy ( Parser )
 import qualified Data.Attoparsec.ByteString.Lazy as P
 import Data.ByteString.Lazy.Char8 ( ByteString )
 import qualified Data.ByteString.Char8 as BSC
+import Data.Char ( ord )
 import Data.Monoid
 import qualified Data.Text as T
+import Data.Word ( Word8 )
 import System.FilePath
 
 import Codec.Archive
 import LLVM.Analysis
+
+ascii :: Char -> Word8
+ascii = fromIntegral . ord
 
 isEndOfLine :: (Eq a, Num a) => a -> Bool
 isEndOfLine w = w == 13 || w == 10
@@ -35,6 +39,9 @@ ignoreLine = do
 
 -- | Extract the definition of the named function, which starts at
 -- approximately the given line.
+--
+-- Note, the use of ascii here is not really safe, but good enough for
+-- almost all purposes.
 isolator :: Int -- ^ Approximate starting line number
             -> Parser ByteString
 isolator line = do

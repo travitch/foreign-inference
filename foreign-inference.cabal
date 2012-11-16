@@ -61,7 +61,7 @@ library
                  hjsmin, graphviz, semigroups, file-embed >= 0.0.4.2,
                  sbv >= 2, ifscs,
                  -- For the reporting code
-                 archive-inspection, directory, attoparsec >= 0.10 && < 1.0, ascii,
+                 archive-inspection, directory, attoparsec >= 0.10 && < 1.0,
                  hamlet >= 1, blaze-builder, blaze-html, shakespeare-text, parallel-io
   ghc-options: -Wall -funbox-strict-fields
   ghc-prof-options: -auto-all

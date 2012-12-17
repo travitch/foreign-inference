@@ -43,6 +43,7 @@ library
                    Foreign.Inference.Analysis.Return,
                    Foreign.Inference.Analysis.ScalarEffects,
                    Foreign.Inference.Analysis.IndirectCallResolver,
+                   Foreign.Inference.Analysis.Transfer,
                    Foreign.Inference.Analysis.Util.CompositeSummary,
                    Foreign.Inference.AnalysisMonad,
                    Foreign.Inference.Preprocessing,

@@ -24,6 +24,7 @@ module Foreign.Inference.Analysis.Util.CompositeSummary (
   refCountSummary,
   scalarEffectSummary,
   errorHandlingSummary,
+  transferSummary,
   extractSummary
   ) where
 
@@ -51,6 +52,7 @@ import Foreign.Inference.Analysis.Output
 import Foreign.Inference.Analysis.RefCount
 import Foreign.Inference.Analysis.Return
 import Foreign.Inference.Analysis.ScalarEffects
+import Foreign.Inference.Analysis.Transfer
 import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
 
@@ -107,6 +109,7 @@ data AnalysisSummary =
                   , _refCountSummary :: !RefCountSummary
                   , _scalarEffectSummary :: !ScalarEffectSummary
                   , _errorHandlingSummary :: !ErrorSummary
+                  , _transferSummary :: !TransferSummary
                   }
   deriving (Eq, Generic)
 
@@ -126,6 +129,7 @@ instance Monoid AnalysisSummary where
                            , _refCountSummary = mempty
                            , _scalarEffectSummary = mempty
                            , _errorHandlingSummary = mempty
+                           , _transferSummary = mempty
                            }
   mappend a1 a2 =
     AnalysisSummary { _nullableSummary = _nullableSummary a1 `mappend` _nullableSummary a2
@@ -138,6 +142,7 @@ instance Monoid AnalysisSummary where
                     , _refCountSummary = _refCountSummary a1 `mappend` _refCountSummary a2
                     , _scalarEffectSummary = _scalarEffectSummary a1 `mappend` _scalarEffectSummary a2
                     , _errorHandlingSummary = _errorHandlingSummary a1 `mappend` _errorHandlingSummary a2
+                    , _transferSummary = _transferSummary a1 `mappend` _transferSummary a2
                     }
 
 -- | Apply a function that uniformly summarizes *all* of the
@@ -157,4 +162,5 @@ extractSummary summ f =
   , f (_refCountSummary summ)
   , f (_scalarEffectSummary summ)
   , f (_errorHandlingSummary summ)
+  , f (_transferSummary summ)
   ]

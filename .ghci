@@ -1,0 +1,25 @@
+:set +m
+:set -isrc
+:set -DRELOCATE
+:load Foreign.Inference.Interface
+
+import Control.Arrow
+import Data.Maybe ( mapMaybe )
+import Foreign.Inference.Interface
+
+
+let pgrep iface annot = mapMaybe paramWithAnnotation ps
+      where
+        flattenParams = uncurry zip . (repeat &&& foreignFunctionParameters)
+        ps = concatMap flattenParams (libraryFunctions iface)
+        paramWithAnnotation (f, p) =
+          case annot `elem` parameterAnnotations p of
+            False -> Nothing
+            True -> Just (foreignFunctionName f, parameterName p)
+
+-- let fgrep iface annot = mapMaybe funcWithAnnotation (libraryFunctions iface)
+--       where
+
+
+putStrLn "Available helpers:"
+:t pgrep

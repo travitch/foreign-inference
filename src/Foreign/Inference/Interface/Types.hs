@@ -46,6 +46,7 @@ data ParamAnnotation = PAArray !Int
                      | PAContractEscape
                      | PAFptrEscape
                      | PAWillEscape
+                     | PATransfer
                      | PAScalarEffectAddOne String [AccessType]
                      | PAScalarEffectSubOne String [AccessType]
                      deriving (Show, Read, Generic, Eq, Ord)

@@ -9,7 +9,7 @@ import GHC.Generics ( Generic )
 
 import Control.DeepSeq
 import Control.DeepSeq.Generics ( genericRnf )
-import Control.Lens ( (^.), Simple, makeLenses )
+import Control.Lens ( (%~), (.~), (^.), Simple, makeLenses )
 import Data.List ( find )
 import Data.Maybe ( fromMaybe, mapMaybe )
 import Data.Monoid
@@ -30,19 +30,21 @@ import Foreign.Inference.Analysis.IndirectCallResolver
 import Debug.Trace
 debug = flip trace
 
-data TransferSummary = TransferSummary { _transferDiagnostics :: Diagnostics
-                                       }
-                     deriving (Generic)
+data TransferSummary = TransferSummary {
+  _transferArguments :: Set Argument,
+  _transferDiagnostics :: Diagnostics
+  }
+  deriving (Generic)
 
 $(makeLenses ''TransferSummary)
 
 instance Eq TransferSummary where
-  (TransferSummary _) == (TransferSummary _) = True
+  (TransferSummary _ _) == (TransferSummary _ _) = True
 
 instance Monoid TransferSummary where
-  mempty = TransferSummary mempty
-  mappend (TransferSummary d1) (TransferSummary d2) =
-    TransferSummary (d1 `mappend` d2)
+  mempty = TransferSummary mempty mempty
+  mappend (TransferSummary t1 d1) (TransferSummary t2 d2) =
+    TransferSummary (t1 `mappend` t2) (d1 `mappend` d2)
 
 instance NFData TransferSummary where
   rnf = genericRnf
@@ -52,7 +54,10 @@ instance HasDiagnostics TransferSummary where
 
 instance SummarizeModule TransferSummary where
   summarizeFunction _ _ = []
-  summarizeArgument _ _ = []
+  summarizeArgument a (TransferSummary t _)
+    | S.member a t = [(PATransfer, [])]
+    | otherwise = []
+
 
 -- Algorithm:
 --
@@ -93,10 +98,36 @@ identifyTransfers :: (HasFunction funcLike)
                      -> Simple Lens compositeSummary TransferSummary
                      -> compositeSummary
 identifyTransfers funcLikes ds pta p1res flens tlens =
-  p1res `debug` show ownedFields
+  (tlens .~ transferedParams) p1res `debug` show ownedFields
   where
     finSumm = p1res ^. flens
+    trSumm = p1res ^. tlens
     ownedFields = foldr (identifyOwnedFields ds pta finSumm) mempty funcLikes
+    transferedParams = foldr (identifyTransferredArguments ds pta ownedFields) trSumm funcLikes
+
+identifyTransferredArguments :: (HasFunction funcLike)
+                                => DependencySummary
+                                -> IndirectCallSummary
+                                -> Set AbstractAccessPath
+                                -> funcLike
+                                -> TransferSummary
+                                -> TransferSummary
+identifyTransferredArguments ds pta ownedFields flike trSumm =
+  foldr checkTransfer trSumm (functionInstructions f)
+  where
+    f = getFunction flike
+    args = functionParameters f
+    checkTransfer i s@(TransferSummary t d) =
+      case i of
+        StoreInst { storeAddress = sa, storeValue = (valueContent' -> ArgumentC sv) }
+          | sv `elem` args -> fromMaybe s $ do
+            acp <- accessPath i
+            let absPath = abstractAccessPath acp
+            case S.member absPath ownedFields of
+              True -> return $! (transferArguments %~ S.insert sv) s
+              False -> return s
+          | otherwise -> s
+        _ -> s
 
 -- | Add any field passed to a known finalizer to the accumulated Set.
 --

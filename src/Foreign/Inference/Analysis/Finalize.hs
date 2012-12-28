@@ -91,7 +91,6 @@ summarizeFinalizerArgument a (FinalizerSummary m _) =
 
 data FinalizerData =
   FinalizerData { moduleSummary :: FinalizerSummary
-                , dependencySummary :: DependencySummary
                 , singleInitSummary :: IndirectCallSummary
                 }
 
@@ -103,8 +102,8 @@ identifyFinalizers :: (FuncLike funcLike, HasFunction funcLike, HasCFG funcLike)
 identifyFinalizers ds ics =
   composableAnalysisM runner finalizerAnalysis
   where
-    runner a = runAnalysis a constData ()
-    constData = FinalizerData mempty ds ics
+    runner a = runAnalysis a ds constData ()
+    constData = FinalizerData mempty ics
 
 -- | Find all functions of one parameter that finalize the given type.
 automaticFinalizersForType :: FinalizerSummary -> Type -> [Function]
@@ -218,12 +217,12 @@ callTransfer callInst v as info =
             False -> return info
     _ -> do
       modSumm <- analysisEnvironment moduleSummary
-      depSumm <- analysisEnvironment dependencySummary
-      foldM (checkArg depSumm modSumm) info indexedArgs
+      foldM (checkArg modSumm) info indexedArgs
   where
     indexedArgs = zip [0..] as
-    checkArg ds ms acc (ix, (valueContent' -> ArgumentC a)) =
-      case lookupArgumentSummary ds ms v ix of
+    checkArg ms acc (ix, (valueContent' -> ArgumentC a)) = do
+      mattrs <- lookupArgumentSummary ms v ix
+      case mattrs of
         Nothing -> do
           let errMsg = "No ExternalFunction summary for " ++ show (valueName v)
           emitWarning Nothing "FinalizerAnalysis" errMsg
@@ -232,7 +231,7 @@ callTransfer callInst v as info =
           case PAFinalize `elem` attrs of
             False -> return acc
             True -> return $! removeArgWithWitness a callInst "finalized" acc
-    checkArg _ _ acc _ = return acc
+    checkArg _ acc _ = return acc
 
 removeArgWithWitness :: Argument -> Instruction -> String -> FinalizerInfo -> FinalizerInfo
 removeArgWithWitness a i reason (FinalizerInfo s m) =

@@ -57,9 +57,9 @@ identifyReturns ds lns =
   composableAnalysisM runIdentity analysisWrapper lns
   where
     analysisWrapper f (ReturnSummary s) = do
-      res <- noReturnAnalysis extSumm f s
+      res <- noReturnAnalysis (const (return False)) f s -- extSumm f s
       return $! ReturnSummary res
-    extSumm ef =
-      case lookupFunctionSummary ds (undefined ::  ReturnSummary) ef of
-        Nothing -> return False
-        Just s -> return $ FANoRet `elem` s
+    -- extSumm ef =
+    --   case lookupFunctionSummary ds (undefined ::  ReturnSummary) ef of
+    --     Nothing -> return False
+    --     Just s -> return $ FANoRet `elem` s

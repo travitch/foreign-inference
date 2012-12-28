@@ -12,19 +12,27 @@ import Control.Lens
 import Control.Monad.RWS.Strict
 
 import Foreign.Inference.Diagnostics
+import Foreign.Inference.Interface
+
+data Env env = Env { envDependencies :: DependencySummary
+                   , envEnv :: env
+                   }
 
 newtype AnalysisMonad env st a =
-  AnalysisMonad { unAnalysis :: RWS env Diagnostics st a }
+  AnalysisMonad { unAnalysis :: RWS (Env env) Diagnostics st a }
   deriving (Monad,
             MonadState st,
-            MonadReader env,
+            MonadReader (Env env),
             MonadWriter Diagnostics)
 
-analysisEnvironment :: (MonadReader r m) => (r -> a) -> m a
-analysisEnvironment = asks
+instance HasDependencies (AnalysisMonad env st) where
+  getDependencySummary = asks envDependencies
 
-analysisLocal :: (MonadReader r m) => (r -> r) -> m a -> m a
-analysisLocal = local
+analysisEnvironment :: (env -> a) -> AnalysisMonad env st a
+analysisEnvironment r = asks envEnv >>= (return . r)
+
+analysisLocal :: (env -> env) -> AnalysisMonad env st a -> AnalysisMonad env st a
+analysisLocal r = local (\(Env d e) -> Env d (r e))
 
 analysisGet :: (MonadState s m) => m s
 analysisGet = get
@@ -41,7 +49,7 @@ addDiagnostics res newDiags =
 -- Add a context on a here that forces a to implement an "attach
 -- diags" function so we can stuff the diagnostics into the result and
 -- just return that single value.
-runAnalysis :: (HasDiagnostics a) => AnalysisMonad env state a -> env -> state -> a
-runAnalysis analysis env s = addDiagnostics res diags
+runAnalysis :: (HasDiagnostics a) => AnalysisMonad env state a -> DependencySummary -> env -> state -> a
+runAnalysis analysis ds env s = addDiagnostics res diags
   where
-    (res, diags) = evalRWS (unAnalysis analysis) env s
+    (res, diags) = evalRWS (unAnalysis analysis) (Env ds env) s

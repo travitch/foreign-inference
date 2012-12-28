@@ -32,7 +32,7 @@ import GHC.Generics
 
 import Control.DeepSeq
 import Control.DeepSeq.Generics ( genericRnf )
-import Control.Monad ( foldM, when )
+import Control.Monad ( foldM, mzero, when )
 import Control.Monad.Trans.Class
 import Control.Monad.Trans.Maybe
 import qualified Data.Foldable as F
@@ -101,8 +101,7 @@ instance HasDiagnostics ErrorSummary where
     fmap (\d' -> ErrorSummary s d') (f d)
 
 data ErrorData =
-  ErrorData { dependencySummary :: DependencySummary
-            , indirectCallSummary :: IndirectCallSummary
+  ErrorData { indirectCallSummary :: IndirectCallSummary
             }
 
 -- | This is the data we want to bootstrap through the two
@@ -127,9 +126,9 @@ identifyErrorHandling :: (HasFunction funcLike, HasBlockReturns funcLike,
                          -> IndirectCallSummary
                          -> ErrorSummary
 identifyErrorHandling funcLikes ds ics =
-  runAnalysis analysis roData mempty
+  runAnalysis analysis ds roData mempty
   where
-    roData = ErrorData ds ics
+    roData = ErrorData ics
     analysis = do
       res <- fixAnalysis mempty
       -- The diagnostics will be filled in automatically by runAnalysis
@@ -238,35 +237,50 @@ returnsTransitiveError :: (HasFunction funcLike, HasBlockReturns funcLike,
                           -> Analysis (Maybe SummaryType)
 returnsTransitiveError funcLike summ bb = do
   let brs = getBlockReturns funcLike
-  ds <- analysisEnvironment dependencySummary
   ics <- analysisEnvironment indirectCallSummary
-  return $ do
-    rv <- blockReturn brs bb
-    case ignoreCasts rv of
-      InstructionC i@CallInst { callFunction = callee } ->
-        -- The last argument to relevantInducedFacts here is a dummy
-        -- that we don't care about; relevantInducedFacts just uses
-        -- the one argument that is a CallInst.
-        let exitInst = basicBlockTerminatorInstruction bb
-            priorFacts = relevantInducedFacts funcLike exitInst (toValue i) callee
-            callees = callTargets ics callee
-        in return $ foldr (recordTransitiveError ds i priorFacts) summ callees
-      _ -> Nothing
+  case blockReturn brs bb of
+    Nothing -> return Nothing
+    Just rv ->
+      case ignoreCasts rv of
+        InstructionC i@CallInst { callFunction = callee } -> do
+          -- The last argument to relevantInducedFacts here is a dummy
+          -- that we don't care about; relevantInducedFacts just uses
+          -- the one argument that is a CallInst.
+          let exitInst = basicBlockTerminatorInstruction bb
+              priorFacts = relevantInducedFacts funcLike exitInst (toValue i) callee
+              callees = callTargets ics callee
+          summ' <- foldM (recordTransitiveError i priorFacts) summ callees
+          return $ Just summ'
+        _ -> return Nothing
+  -- return $ do
+  --   rv <- blockReturn brs bb
+  --   case ignoreCasts rv of
+  --     InstructionC i@CallInst { callFunction = callee } ->
+  --       -- The last argument to relevantInducedFacts here is a dummy
+  --       -- that we don't care about; relevantInducedFacts just uses
+  --       -- the one argument that is a CallInst.
+  --       let exitInst = basicBlockTerminatorInstruction bb
+  --           priorFacts = relevantInducedFacts funcLike exitInst (toValue i) callee
+  --           callees = callTargets ics callee
+  --       in return $ foldr (recordTransitiveError ds i priorFacts) summ callees
+  --     _ -> Nothing
   where
     f = getFunction funcLike
-    recordTransitiveError ds i priors callee s = fromMaybe s $ do
-      fsumm <- lookupFunctionSummary ds (ErrorSummary s mempty) callee
-      FAReportsErrors errActs eret <- F.find isErrRetAnnot fsumm
-      rvs <- intReturnsToList eret
-      let formula = case null priors of
-            True -> const true
-            False -> \(x :: SInt32) -> bOr (map (.==x) rvs) &&& bAll ($ x) priors
-      case isSat formula of
-        False -> Nothing
-        True -> do
-          let w = Witness i "transitive error"
-              d = ErrorDescriptor errActs eret [w]
-          return $ HM.insertWith S.union f (S.singleton d) s
+    recordTransitiveError i priors s callee = do
+      mfsumm <- lookupFunctionSummary (ErrorSummary s mempty) callee
+      return $ fromMaybe s $ do
+        fsumm <- mfsumm
+        FAReportsErrors errActs eret <- F.find isErrRetAnnot fsumm
+        rvs <- intReturnsToList eret
+        let formula = case null priors of
+              True -> const true
+              False -> \(x :: SInt32) -> bOr (map (.==x) rvs) &&& bAll ($ x) priors
+        case isSat formula of
+          False -> Nothing
+          True -> do
+            let w = Witness i "transitive error"
+                d = ErrorDescriptor errActs eret [w]
+            return $ HM.insertWith S.union f (S.singleton d) s
 
 intReturnsToList :: ErrorReturn -> Maybe [SInt32]
 intReturnsToList er =
@@ -527,7 +541,6 @@ cmpToFormula :: [SInt32 -> SBool]
                 -> MaybeT Analysis (SInt32 -> SBool, SInt32 -> SBool)
 cmpToFormula inducedFacts s (rel, isIneqCmp) v1 v2 = do
   ics <- lift $ analysisEnvironment indirectCallSummary
-  ds <- lift $ analysisEnvironment dependencySummary
   st <- lift analysisGet
   let v1' = callFuncOrConst v1
       v2' = callFuncOrConst v2
@@ -537,7 +550,7 @@ cmpToFormula inducedFacts s (rel, isIneqCmp) v1 v2 = do
       | S.member i ecs && isIneqCmp -> fail "Ignore inequality against error codes"
       | otherwise -> do
         let callees = callTargets ics callee
-        rv <- errorReturnValue ds s callees
+        rv <- errorReturnValue s callees
         let i' = fromIntegral i
             rv' = fromIntegral rv
             trueFormula = \(x :: SInt32) -> (x .== rv') &&& (x `rel` i') &&& bAll ($ x) inducedFacts
@@ -547,7 +560,7 @@ cmpToFormula inducedFacts s (rel, isIneqCmp) v1 v2 = do
       | S.member i ecs && isIneqCmp -> fail "Ignore inequality against error codes"
       | otherwise -> do
         let callees = callTargets ics callee
-        rv <- errorReturnValue ds s callees
+        rv <- errorReturnValue s callees
         let i' = fromIntegral i
             rv' = fromIntegral rv
             trueFormula = \(x :: SInt32) -> (x .== rv') &&& (i' `rel` x) &&& bAll ($ x) inducedFacts
@@ -573,19 +586,25 @@ cmpPredicateToRelation p =
 isSat :: (SInt32 -> SBool) -> Bool
 isSat = unsafePerformIO . isSatisfiable
 
-errorReturnValue :: DependencySummary -> SummaryType -> [Value] -> MaybeT Analysis Int
-errorReturnValue _ _ [] = fail "No call targets"
-errorReturnValue ds s [callee] = do
-  fsumm <- liftMaybe $ lookupFunctionSummary ds (ErrorSummary s mempty) callee
+errorReturnValue :: SummaryType -> [Value] -> MaybeT Analysis Int
+errorReturnValue _ [] = fail "No call targets"
+errorReturnValue s [callee] = do
+  mfsumm <- lift $ lookupFunctionSummary (ErrorSummary s mempty) callee
+--  fsumm <- liftMaybe $ lookupFunctionSummary ds (ErrorSummary s mempty) callee
+  fsumm <- liftMaybe mfsumm
   liftMaybe $ errRetVal fsumm
-errorReturnValue ds s (callee:rest) = do
-  fsumm <- liftMaybe $ lookupFunctionSummary ds (ErrorSummary s mempty) callee
+errorReturnValue s (callee:rest) = do
+  mfsumm <- lift $ lookupFunctionSummary (ErrorSummary s mempty) callee
+--  fsumm <- liftMaybe $ lookupFunctionSummary ds (ErrorSummary s mempty) callee
+  fsumm <- liftMaybe mfsumm
   rv <- liftMaybe $ errRetVal fsumm
   mapM_ (checkOtherErrorReturns rv) rest
   return rv
   where
     checkOtherErrorReturns rv c = do
-      fsumm <- liftMaybe $ lookupFunctionSummary ds (ErrorSummary s mempty) c
+      mfsumm <- lift $ lookupFunctionSummary (ErrorSummary s mempty) c
+      fsumm <- liftMaybe mfsumm
+--      fsumm <- liftMaybe $ lookupFunctionSummary ds (ErrorSummary s mempty) c
       rv' <- liftMaybe $ errRetVal fsumm
       when (rv' /= rv) $ emitWarning Nothing "ErrorAnalysis" ("Mismatched error return codes for indirect call " ++ show (valueName callee))
 
@@ -698,8 +717,7 @@ isErrorFuncCall funcSet errAct =
     _ -> False
 
 liftMaybe :: Maybe a -> MaybeT Analysis a
-liftMaybe Nothing = fail "liftMaybe"
-liftMaybe (Just a) = return a
+liftMaybe = maybe mzero return
 
 ignoreCasts :: Value -> Value
 ignoreCasts v =

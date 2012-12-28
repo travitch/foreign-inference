@@ -159,7 +159,6 @@ argumentFieldCount a =
     _ -> Nothing
 
 data OutData = OD { moduleSummary :: OutputSummary
-                  , dependencySummary :: DependencySummary
                   , allocatorSummary :: AllocatorSummary
                   , escapeSummary :: EscapeSummary
                   }
@@ -176,8 +175,8 @@ identifyOutput :: forall compositeSummary funcLike . (FuncLike funcLike, HasCFG 
 identifyOutput ds lns allocLens escapeLens =
   composableDependencyAnalysisM runner outAnalysis lns depLens
   where
-    runner a = runAnalysis a constData ()
-    constData = OD mempty ds undefined undefined
+    runner a = runAnalysis a ds constData ()
+    constData = OD mempty undefined undefined
     readerL = view allocLens &&& view escapeLens
     writerL csumm (a, e) = (set allocLens a . set escapeLens e) csumm
     depLens :: Simple Lens compositeSummary (AllocatorSummary, EscapeSummary)
@@ -258,9 +257,9 @@ outAnalysis (allocSumm, escSumm) funcLike s = do
 isAllocatedValue :: Instruction -> Value -> Instruction -> Analysis (Maybe String)
 isAllocatedValue storeInst calledFunc callInst = do
   asum <- analysisEnvironment allocatorSummary
-  ds <- analysisEnvironment dependencySummary
   esum <- analysisEnvironment escapeSummary
-  case lookupFunctionSummary ds asum calledFunc of
+  fsum <- lookupFunctionSummary asum calledFunc
+  case fsum of
     Nothing -> return Nothing
     Just annots ->
       case mapMaybe isAllocAnnot annots of
@@ -350,16 +349,16 @@ callTransfer :: OutInfo -> Instruction -> Value -> [Value] -> Analysis OutInfo
 callTransfer info i f args = do
   let indexedArgs = zip [0..] args
   modSumm <- analysisEnvironment moduleSummary
-  depSumm <- analysisEnvironment dependencySummary
   case (isMemcpy f, args) of
     (True, [dest, src, bytes, _, _]) ->
       memcpyTransfer info i dest src bytes
-    _ -> foldM (checkArg depSumm modSumm) info indexedArgs
+    _ -> foldM (checkArg modSumm) info indexedArgs
   where
-    checkArg ds ms acc (ix, arg) =
+    checkArg ms acc (ix, arg) =
       case valueContent' arg of
-        ArgumentC a ->
-          case lookupArgumentSummary ds ms f ix of
+        ArgumentC a -> do
+          asum <- lookupArgumentSummary ms f ix
+          case asum of
             Nothing -> do
               let errMsg = "No summary for " ++ show (valueName f)
               emitWarning Nothing "OutputAnalysis" errMsg

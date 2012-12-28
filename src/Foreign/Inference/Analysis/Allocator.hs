@@ -86,8 +86,7 @@ instance HasDiagnostics AllocatorSummary where
   diagnosticLens = allocatorDiagnostics
 
 data AllocatorData =
-  AllocatorData { dependencySummary :: DependencySummary
-                , indirectCallSummary :: IndirectCallSummary
+  AllocatorData { indirectCallSummary :: IndirectCallSummary
                 }
 
 type Analysis = AnalysisMonad AllocatorData ()
@@ -115,8 +114,8 @@ identifyAllocators :: forall compositeSummary funcLike . (FuncLike funcLike, Has
 identifyAllocators ds ics lns escLens finLens =
   composableDependencyAnalysisM runner allocatorAnalysis lns depLens
   where
-    runner a = runAnalysis a readOnlyData ()
-    readOnlyData = AllocatorData ds ics
+    runner a = runAnalysis a ds readOnlyData ()
+    readOnlyData = AllocatorData ics
     depLens :: Simple Lens compositeSummary (EscapeSummary, FinalizerSummary)
     depLens = lens (view escLens &&& view finLens) (\csum (e, f) -> (set escLens e . set finLens f) csum)
 
@@ -209,8 +208,8 @@ checkFunctionIsAllocator v summ is =
         [i] -> checkFunctionIsAllocator i summ is
         _ -> return []
     _ -> do
-      depSumm <- analysisEnvironment dependencySummary
-      case lookupFunctionSummary depSumm summ v of
+      s <- lookupFunctionSummary summ v
+      case s of
         Nothing -> return []
         Just annots ->
           case any isAllocatorAnnot annots of

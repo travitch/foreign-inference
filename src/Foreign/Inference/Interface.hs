@@ -18,6 +18,7 @@ module Foreign.Inference.Interface (
   -- * Classes
   SummarizeModule(..),
   ModuleSummary(..),
+  HasDependencies(..),
   -- * Types
   Witness(..),
   DependencySummary(libraryAnnotations),
@@ -480,50 +481,54 @@ userParameterAnnotations allAnnots f ix =
     fname = identifierContent $ functionName f
     fannots = Map.lookup fname allAnnots
 
+class (Monad m) => HasDependencies m where
+  getDependencySummary :: m DependencySummary
 
-lookupFunctionSummary :: (IsValue v, SummarizeModule s)
-                         => DependencySummary
-                         -> s
+lookupFunctionSummary :: (IsValue v, SummarizeModule s, HasDependencies m)
+                         => s
                          -> v
-                         -> Maybe [FuncAnnotation]
-lookupFunctionSummary ds ms val =
+                         -> m (Maybe [FuncAnnotation])
+lookupFunctionSummary ms val = do
+  ds <- getDependencySummary
   case valueContent' val of
     FunctionC f ->
       let fannots = userFunctionAnnotations (libraryAnnotations ds) f
-      in return $! fannots ++ map fst (summarizeFunction f ms)
+      in return $! Just $ fannots ++ map fst (summarizeFunction f ms)
     ExternalFunctionC ef -> do
       let fname = identifierContent $ externalFunctionName ef
           summ = depSummary ds
-      fsum <- M.lookup fname summ
-      return (foreignFunctionAnnotations fsum)
-    _ -> return []
+          annots = M.lookup fname summ
+      return $ maybe Nothing (Just . foreignFunctionAnnotations) annots
+    _ -> return Nothing
 
-lookupArgumentSummary :: (IsValue v, SummarizeModule s)
-                         => DependencySummary
-                         -> s
+lookupArgumentSummary :: (IsValue v, SummarizeModule s, HasDependencies m)
+                         => s
                          -> v
                          -> Int
-                         -> Maybe [ParamAnnotation]
-lookupArgumentSummary ds ms val ix =
+                         -> m (Maybe [ParamAnnotation])
+lookupArgumentSummary ms val ix = do
+  ds <- getDependencySummary
   case valueContent' val of
     FunctionC f ->
       case ix < length (functionParameters f) of
-        False -> Just []
+        False -> return (Just [])
         True ->
           let annots = summarizeArgument (functionParameters f !! ix) ms
               uannots = userParameterAnnotations (libraryAnnotations ds) f ix
-          in Just $! uannots ++ map fst annots
+          in return $! Just $ uannots ++ map fst annots
     ExternalFunctionC ef -> do
       let fname = identifierContent $ externalFunctionName ef
           summ = depSummary ds
-      fsum <- M.lookup fname summ
-      let ps = foreignFunctionParameters fsum
-      case ix < length ps of
+      case M.lookup fname summ of
+        Nothing -> return Nothing
+        Just fsum ->
+          let ps = foreignFunctionParameters fsum
         -- Either this was a vararg or the function was cast to a
         -- strange type (with extra parameters) before being called.
-        False -> Just []
-        True -> Just $ parameterAnnotations (ps !! ix)
-    _ -> Just []
+          in case ix < length ps of
+            False -> return (Just [])
+            True -> return $ Just $ parameterAnnotations (ps !! ix)
+    _ -> return Nothing
 
 
 -- Helpers

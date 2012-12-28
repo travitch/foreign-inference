@@ -18,8 +18,8 @@ import GHC.Generics ( Generic )
 
 import Control.DeepSeq
 import Control.DeepSeq.Generics ( genericRnf )
-import Control.Lens ( Simple, (^.), (%~), (.~), makeLenses )
-import Control.Monad.Writer ( runWriter )
+import Control.Lens ( Simple, (^.), (%~), makeLenses )
+import Control.Monad ( foldM )
 import qualified Data.Foldable as F
 import Data.Hashable
 import Data.HashMap.Strict ( HashMap )
@@ -27,7 +27,7 @@ import qualified Data.HashMap.Strict as HM
 import Data.List ( mapAccumR )
 import Data.Map ( Map )
 import qualified Data.Map as M
-import Data.Maybe ( fromMaybe, mapMaybe )
+import Data.Maybe ( fromMaybe, isNothing, mapMaybe )
 import Data.Set ( Set )
 import qualified Data.Set as S
 import Data.Monoid
@@ -39,9 +39,10 @@ import LLVM.Analysis.CallGraphSCCTraversal
 
 import Constraints.Set.Solver
 
-import Foreign.Inference.Diagnostics ( HasDiagnostics(..), Diagnostics )
+import Foreign.Inference.Diagnostics ( HasDiagnostics(..), Diagnostics, emitWarning )
 import Foreign.Inference.Interface
 import Foreign.Inference.Internal.FlattenValue
+import Foreign.Inference.AnalysisMonad
 import Foreign.Inference.Analysis.IndirectCallResolver
 
 -- import System.IO.Unsafe
@@ -136,6 +137,8 @@ instance SummarizeModule EscapeSummary where
   summarizeFunction _ _ = []
   summarizeArgument = summarizeEscapeArgument
 
+type Analysis = AnalysisMonad () ()
+
 -- | This is the underlying bottom-up analysis to identify which
 -- arguments escape.  It builds an EscapeGraph for the function
 -- (incorporating information from other functions that have already
@@ -149,15 +152,13 @@ identifyEscapes :: (FuncLike funcLike, HasFunction funcLike)
 identifyEscapes ds ics lns =
   composableAnalysisM runner escapeWrapper lns
   where
+    runner a = runAnalysis a ds () ()
     escapeWrapper funcLike s = do
       let f = getFunction funcLike
-          g = buildValueFlowGraph ics ds s (functionInstructions f)
-          s' = foldr (summarizeArgumentEscapes g) s (functionParameters f)
+      g <- buildValueFlowGraph ics s (functionInstructions f)
+      let s' = foldr (summarizeArgumentEscapes g) s (functionParameters f)
       return $ (escapeGraph %~ HM.insert f g) s'
 
-    runner a =
-      let (e, diags) = runWriter a
-      in (escapeDiagnostics .~ diags) e
 {-
     extSumm ef ix =
       -- FIXME: Switch the builder to be a StateT so we can let this
@@ -207,26 +208,6 @@ instructionEscapeCore ignorePred i (EscapeSummary egs _ _ _ _) = do
   case sinks' of
     [] -> Nothing
     s:_ -> return (sinkWitness s)
-
-{-
-entireArgumentEscapes :: EscapeGraph -> Argument -> EscapeSummary -> Maybe EscapeSummary
-entireArgumentEscapes (EscapeGraph _ eg) a s = do
-  ts@(_:_) <- leastSolution eg (Location (toValue a))
-  let sink:_ = map toSink ts
-  return $ (escapeArguments %~ HM.insert a (sinkClass sink, sinkWitness sink)) s
--}
-
-  -- do
-  -- ln <- HM.lookup (toValue i) m
-  -- let reached = reachableSinks eg (unlabelNode ln) g ignorePred
-  -- case filter (not . allocaSink) reached of
-  --   [] -> Nothing
-  --   (Sink _ w _) : _ -> return w
-  --   _ -> error "Non-sink in reachableSinks result 1"
-  -- where
-  --   Just f = instructionFunction i
-  --   errMsg = error ("Missing summary for function " ++ show (functionName f))
-  --   eg@(EscapeGraph m _ g) = HM.lookupDefault errMsg f egs
 
 summarizeEscapeArgument :: Argument -> EscapeSummary -> [(ParamAnnotation, [Witness])]
 summarizeEscapeArgument a er =
@@ -279,29 +260,23 @@ argumentFieldsEscape (EscapeGraph fields eg) a s = do
           entry = S.singleton (sinkClass sink, fldPath, sinkWitness sink)
       return $ (escapeFields %~ HM.insertWith S.union a entry) acc
 
--- | A helper to abstract the pointer type tests.  If the value @v@ is
--- not a pointer, return @defVal@.  Otherwise, return @isPtrVal@.
--- This helps remove a level of nested (and repetitive) pattern
--- matching.
-ifPointer :: IsValue v => v -> a -> a -> a
-ifPointer v defVal isPtrVal =
+notPointer :: IsValue v => v -> Bool
+notPointer v =
   case valueType v of
-    TypePointer _ _ -> isPtrVal
-    _ -> defVal
+    TypePointer _ _ -> False
+    _ -> True
 
 buildValueFlowGraph :: IndirectCallSummary
-                       -> DependencySummary
                        -> EscapeSummary
                        -> [Instruction]
-                       -> EscapeGraph
-buildValueFlowGraph ics ds summ is =
-  EscapeGraph { escapeGraphFieldSourceMap = fieldSrcs
-              , escapeVFG = sys
-              }
+                       -> Analysis EscapeGraph
+buildValueFlowGraph ics summ is = do
+  (inclusionSystem, fieldSrcs) <- foldM addInclusion ([], mempty) is
+  let Just sys = solveSystem inclusionSystem
+  return $ EscapeGraph { escapeGraphFieldSourceMap = fieldSrcs
+                       , escapeVFG = sys
+                       }
   where
-    (inclusionSystem, fieldSrcs) = foldr addInclusion ([], mempty) is
-    Just sys = solveSystem inclusionSystem
-
     sinkExp klass witness argDesc = atom (Sink klass witness argDesc)
     setExpFor v =
       case valueContent' v of
@@ -315,15 +290,15 @@ buildValueFlowGraph ics ds summ is =
             Just (a, aap) -> setVariable (FieldSource a aap)
         _ -> setVariable (Location (stripBitcasts v))
 
-    addInclusion :: Instruction
-                    -> ([Inclusion Var Constructor], HashMap Argument [AbstractAccessPath])
-                    -> ([Inclusion Var Constructor], HashMap Argument [AbstractAccessPath])
-    addInclusion i acc@(incs, fsrcs) =
+    addInclusion :: ([Inclusion Var Constructor], HashMap Argument [AbstractAccessPath])
+                    -> Instruction
+                    -> Analysis ([Inclusion Var Constructor], HashMap Argument [AbstractAccessPath])
+    addInclusion acc@(incs, fsrcs) i =
       case i of
         RetInst { retInstValue = Just (valueContent' -> rv) } ->
           let s = sinkExp DirectEscape i Nothing
               c = s <=! setExpFor rv
-          in (c : incs, fsrcs)
+          in return (c : incs, fsrcs)
         -- If this is a load of an argument field, we need to make it
         -- into a FieldSource and see what happens to it later.
         -- Record the argument/access path in a map somewhere for
@@ -333,15 +308,13 @@ buildValueFlowGraph ics ds summ is =
             Just (a, aap) ->
               let c = setExpFor (toValue i) <=! setVariable (FieldSource a aap)
                   srcs' = HM.insertWith (++) a [aap] fsrcs
-              in (c : incs, srcs')
-            Nothing -> acc
-        LoadInst { loadAddress = la } ->
-          ifPointer i acc $
-            case argumentBasedField i of
-              Just _ ->
-                let c = setExpFor (toValue i) <=! setExpFor la
-                in (c : incs, fsrcs)
-              _ -> acc
+              in return (c : incs, srcs')
+            Nothing -> return acc
+        LoadInst { loadAddress = la }
+          | notPointer i || isNothing (argumentBasedField i) -> return acc
+          | otherwise ->
+            let c = setExpFor (toValue i) <=! setExpFor la
+            in return (c : incs, fsrcs)
         StoreInst { storeAddress = sa
                   , storeValue = sv
                   }
@@ -349,11 +322,11 @@ buildValueFlowGraph ics ds summ is =
             let sinkTag = maybe DirectEscape (ArgumentEscape . argumentIndex) mArg
                 s = sinkExp sinkTag i Nothing
                 c = s <=! setExpFor sv
-            in (c : incs, fsrcs)
+            in return (c : incs, fsrcs)
           | otherwise ->
               -- May escape later if the alloca escapes
               let c = setExpFor sa <=! setExpFor sv
-              in (c : incs, fsrcs)
+              in return (c : incs, fsrcs)
           where
             (mustEsc, mArg) = mustEscapeLocation sa
 
@@ -366,44 +339,61 @@ buildValueFlowGraph ics ds summ is =
                    } ->
           let c1 = setExpFor (toValue i) <=! setExpFor tv
               c2 = setExpFor (toValue i) <=! setExpFor fv
-          in (c1 : c2 : incs, fsrcs)
+          in return (c1 : c2 : incs, fsrcs)
         PhiNode { phiIncomingValues = (map (stripBitcasts . fst) -> ivs) } ->
           let toIncl v = setExpFor (toValue i) <=! setExpFor v
               cs = map toIncl ivs
-          in (cs ++ incs, fsrcs)
-        _ -> acc
+          in return (cs ++ incs, fsrcs)
+        _ -> return acc
 
+    addCallConstraints :: Instruction
+                          -> ([Inclusion Var Constructor], HashMap Argument [AbstractAccessPath])
+                          -> Value
+                          -> [Value]
+                          -> Analysis ([Inclusion Var Constructor], HashMap Argument [AbstractAccessPath])
     addCallConstraints callInst (incs, fsrcs) callee args =
       case valueContent' callee of
-        FunctionC f ->
+        FunctionC f -> do
           let indexedArgs = zip [0..] args
-          in (foldr (addActualConstraint callInst f) incs indexedArgs, fsrcs)
-        ExternalFunctionC ef ->
+          incs' <- foldM (addActualConstraint callInst f) incs indexedArgs
+          return (incs', fsrcs)
+        ExternalFunctionC ef -> do
           let indexedArgs = zip [0..] args
-          in (foldr (addActualConstraint callInst ef) incs indexedArgs, fsrcs)
+          incs' <- foldM (addActualConstraint callInst ef) incs indexedArgs
+          return (incs', fsrcs)
         _ ->
           case indirectCallInitializers ics callee of
             -- No targets known; all pointer arguments indirectly escape
-            [] -> (foldr (addIndirectEscape callInst) incs args, fsrcs)
+            [] -> do
+              incs' <- foldM (addIndirectEscape callInst) incs args
+              return (incs', fsrcs)
             -- We have at least one target; take it as a representative
-            (repr:_) ->
+            (repr:_) -> do
               let indexedArgs = zip [0..] args
-              in (foldr (addContractEscapes callInst repr) incs indexedArgs, fsrcs)
+              incs' <- foldM (addContractEscapes callInst repr) incs indexedArgs
+              return (incs', fsrcs)
 
     argEscapeConstraint callInst etype actual incs =
       -- FIXME; figure out how to use the index in a field escape here
       let s = sinkExp etype callInst Nothing
           c = s <=! setExpFor actual
-      in c : incs
+      in return $ c : incs
 
-    addContractEscapes callInst repr (ix, actual) incs =
-      ifPointer actual incs $
-        case lookupArgumentSummary ds summ repr ix of
+    addContractEscapes :: Instruction
+                          -> Value
+                          -> [Inclusion Var Constructor]
+                          -> (Int, Value)
+                          -> Analysis [Inclusion Var Constructor]
+    addContractEscapes callInst repr incs (ix, actual)
+      | notPointer actual = return incs
+      | otherwise = do
+        s <- lookupArgumentSummary summ repr ix
+        case s of
           -- If we don't have a summary for oure representative, treat
           -- it as an indirect call with no known target (we could do
           -- better by looking at the next possible representative, if
           -- any).
-          Nothing -> addIndirectEscape callInst actual incs
+          Nothing -> addIndirectEscape callInst incs actual
           Just pannots ->
             case F.find isEscapeAnnot pannots of
               -- If we don't find an escape annotation, we generate a
@@ -413,21 +403,25 @@ buildValueFlowGraph ics ds summ is =
               Just PAEscape -> argEscapeConstraint callInst DirectEscape actual incs
               Just PAContractEscape -> argEscapeConstraint callInst BrokenContractEscape actual incs
               Just PAFptrEscape -> argEscapeConstraint callInst IndirectEscape actual incs
-              _ -> incs
+              _ -> return incs
 
-    addActualConstraint callInst callee (ix, actual) incs =
-      fromMaybe incs $ do
-        pannots <- lookupArgumentSummary ds summ callee ix
-        escAnnot <- F.find isEscapeAnnot pannots
-        case escAnnot of
-          PAEscape -> return $ argEscapeConstraint callInst DirectEscape actual incs
-          PAContractEscape -> return $ argEscapeConstraint callInst BrokenContractEscape actual incs
-          PAFptrEscape -> return $ argEscapeConstraint callInst IndirectEscape actual incs
-          _ -> Nothing
+    addActualConstraint callInst callee incs (ix, actual) = do
+      pannots <- lookupArgumentSummary summ callee ix
+      case pannots of
+        Nothing -> do
+          emitWarning Nothing "Escape" ("No summary for " ++ show callee)
+          return incs
+        Just pannots' ->
+          case F.find isEscapeAnnot pannots' of
+            Nothing -> return incs
+            Just PAEscape ->  argEscapeConstraint callInst DirectEscape actual incs
+            Just PAContractEscape -> argEscapeConstraint callInst BrokenContractEscape actual incs
+            Just PAFptrEscape -> argEscapeConstraint callInst IndirectEscape actual incs
+            _ -> error "Foreign.Inference.Analysis.Escape.addActualConstraint: find failed"
 
-    addIndirectEscape callInst actual incs =
-      ifPointer actual incs $
-        argEscapeConstraint callInst IndirectEscape actual incs
+    addIndirectEscape callInst incs actual
+      | notPointer actual = return incs
+      | otherwise = argEscapeConstraint callInst IndirectEscape actual incs
 
 isEscapeAnnot :: ParamAnnotation -> Bool
 isEscapeAnnot a =

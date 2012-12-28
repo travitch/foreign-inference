@@ -20,6 +20,7 @@ import Control.Arrow
 import Control.DeepSeq
 import Control.DeepSeq.Generics ( genericRnf )
 import Control.Lens ( Simple, (.~), makeLenses )
+import Control.Monad ( foldM )
 import Data.List ( foldl' )
 import Data.HashMap.Strict ( HashMap )
 import qualified Data.HashMap.Strict as M
@@ -77,10 +78,7 @@ summarizeArrayArgument a (ArraySummary summ _) =
     Nothing -> []
     Just depth -> [(PAArray depth, [])]
 
-data ArrayData = AD { dependencySummary :: DependencySummary
-                    }
-
-type Analysis = AnalysisMonad ArrayData ()
+type Analysis = AnalysisMonad () ()
 
 -- | A data type to capture uses of pointers in array contexts.  These
 -- are accumulated in one pass over the function and then used to
@@ -96,8 +94,7 @@ identifyArrays :: (FuncLike funcLike, HasFunction funcLike)
 identifyArrays ds =
   composableAnalysisM runner arrayAnalysis
   where
-    runner a = runAnalysis a readOnlyData ()
-    readOnlyData = AD ds
+    runner a = runAnalysis a ds () ()
 
 -- | The summarization function - add a summary for the current
 -- Function to the current summary.  This function collects all of the
@@ -106,10 +103,9 @@ identifyArrays ds =
 arrayAnalysis :: (FuncLike funcLike, HasFunction funcLike)
                  => funcLike -> ArraySummary -> Analysis ArraySummary
 arrayAnalysis funcLike a@(ArraySummary summary _) = do
-  ds <- analysisEnvironment dependencySummary
-
-  let basesAndOffsets = map (isArrayDeref ds a) insts
-      baseResultMap = foldr (\itm acc -> foldr addDeref acc itm) M.empty basesAndOffsets
+  basesAndOffsets <- mapM (isArrayDeref a) insts
+--  let basesAndOffsets = map (isArrayDeref ds a) insts
+  let baseResultMap = foldr (\itm acc -> foldr addDeref acc itm) M.empty basesAndOffsets
       summary' = M.foldlWithKey' (traceFromBases baseResultMap) summary baseResultMap
   return $! (arraySummary .~ summary') a
   where
@@ -165,38 +161,38 @@ traceBackwards baseResultMap result depth =
         IndexOperation result' _ -> traceBackwards baseResultMap result' (depth + 1)
         CallArgument d -> depth + d
 
-isArrayDeref :: DependencySummary
-                -> ArraySummary
+isArrayDeref :: ArraySummary
                 -> Instruction
-                -> [(Value, PointerUse)]
-isArrayDeref ds summ inst = case valueContent' inst of
-  InstructionC LoadInst { loadAddress = (valueContent ->
-     InstructionC GetElementPtrInst { getElementPtrValue = base
-                                    , getElementPtrIndices = idxs
-                                    })} ->
-    handleGEP idxs base
-  InstructionC StoreInst { storeAddress = (valueContent ->
-     InstructionC GetElementPtrInst { getElementPtrValue = base
-                                    , getElementPtrIndices = idxs
-                                    })} ->
-    handleGEP idxs base
-  InstructionC AtomicCmpXchgInst { atomicCmpXchgPointer = (valueContent ->
-    InstructionC GetElementPtrInst { getElementPtrValue = base
-                                    , getElementPtrIndices = idxs
-                                    })} ->
-    handleGEP idxs base
-  InstructionC AtomicRMWInst { atomicRMWPointer = (valueContent ->
-    InstructionC GetElementPtrInst { getElementPtrValue = base
-                                    , getElementPtrIndices = idxs
-                                    })} ->
-    handleGEP idxs base
-  InstructionC CallInst { callFunction = f, callArguments = args } ->
-    let indexedArgs = zip [0..] (map fst args)
-    in foldl' (collectArrayArgs ds summ f) [] (concatMap expand indexedArgs)
-  InstructionC InvokeInst { invokeFunction = f, invokeArguments = args } ->
-    let indexedArgs = zip [0..] (map fst args)
-    in foldl' (collectArrayArgs ds summ f) [] (concatMap expand indexedArgs)
-  _ -> []
+                -> Analysis [(Value, PointerUse)]
+isArrayDeref summ inst =
+  case valueContent' inst of
+    InstructionC LoadInst { loadAddress = (valueContent ->
+       InstructionC GetElementPtrInst { getElementPtrValue = base
+                                     , getElementPtrIndices = idxs
+                                     })} ->
+      return $ handleGEP idxs base
+    InstructionC StoreInst { storeAddress = (valueContent ->
+       InstructionC GetElementPtrInst { getElementPtrValue = base
+                                      , getElementPtrIndices = idxs
+                                      })} ->
+      return $ handleGEP idxs base
+    InstructionC AtomicCmpXchgInst { atomicCmpXchgPointer = (valueContent ->
+      InstructionC GetElementPtrInst { getElementPtrValue = base
+                                      , getElementPtrIndices = idxs
+                                      })} ->
+      return $ handleGEP idxs base
+    InstructionC AtomicRMWInst { atomicRMWPointer = (valueContent ->
+      InstructionC GetElementPtrInst { getElementPtrValue = base
+                                      , getElementPtrIndices = idxs
+                                      })} ->
+      return $ handleGEP idxs base
+    InstructionC CallInst { callFunction = f, callArguments = args } ->
+      let indexedArgs = zip [0..] (map fst args)
+      in foldM (collectArrayArgs summ f) [] (concatMap expand indexedArgs)
+    InstructionC InvokeInst { invokeFunction = f, invokeArguments = args } ->
+      let indexedArgs = zip [0..] (map fst args)
+      in foldM (collectArrayArgs summ f) [] (concatMap expand indexedArgs)
+    _ -> return []
   where
     expand (ix, a) = zip (repeat ix) (flattenValue a)
     handleGEP idxs base =
@@ -216,16 +212,19 @@ buildArrayDeref inst idxs base acc =
 -- Only bother inspecting direct calls.  Information gained from
 -- indirect calls is unreliable since we don't have all possible
 -- callees, even with a very powerful points-to analysis.
-collectArrayArgs :: DependencySummary -> ArraySummary
-                    -> Value -> [(Value, PointerUse)] -> (Int, Value)
+collectArrayArgs :: ArraySummary
+                    -> Value
                     -> [(Value, PointerUse)]
-collectArrayArgs ds summ callee lst (ix, arg) =
-  case lookupArgumentSummary ds summ callee ix of
-    Nothing -> lst
+                    -> (Int, Value)
+                    -> Analysis [(Value, PointerUse)]
+collectArrayArgs summ callee lst (ix, arg) = do
+  s <- lookupArgumentSummary summ callee ix
+  case s of
+    Nothing -> return lst
     Just annots ->
       case filter isArrayAnnot annots of
-        [] -> lst
-        [PAArray depth] -> (arg, CallArgument depth) : lst
+        [] -> return lst
+        [PAArray depth] -> return $ (arg, CallArgument depth) : lst
         _ -> error "Foreign.Inference.Analysis.Array: This summary should only produce singleton or empty lists"
 
 isArrayAnnot :: ParamAnnotation -> Bool

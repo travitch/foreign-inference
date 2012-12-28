@@ -41,7 +41,7 @@ import Data.HashMap.Strict ( HashMap )
 import qualified Data.HashMap.Strict as HM
 import Data.Map ( Map )
 import qualified Data.Map as M
-import Data.Maybe ( mapMaybe )
+import Data.Maybe ( catMaybes, mapMaybe )
 import Data.Monoid
 
 import LLVM.Analysis
@@ -187,12 +187,7 @@ matchingTypeAndPath t accPath toPath m =
     pairs = HM.toList m
     matchingPair (arg, d) = argumentType arg == t && (toPath d) == accPath
 
-
-data RefCountData =
-  RefCountData { dependencySummary :: DependencySummary
-               }
-
-type Analysis = AnalysisMonad RefCountData ()
+type Analysis = AnalysisMonad () ()
 
 -- | The main analysis to identify both incref and decref functions.
 identifyRefCounting :: forall compositeSummary funcLike . (FuncLike funcLike, HasFunction funcLike, HasCFG funcLike)
@@ -204,8 +199,7 @@ identifyRefCounting :: forall compositeSummary funcLike . (FuncLike funcLike, Ha
 identifyRefCounting ds lns depLens1 depLens2 =
   composableDependencyAnalysisM runner refCountAnalysis lns depLens
   where
-    runner a = runAnalysis a constData ()
-    constData = RefCountData ds
+    runner a = runAnalysis a ds () ()
     readL = view depLens1 &&& view depLens2
     writeL csum (f, s) = (set depLens1 f . set depLens2 s) csum
     depLens :: Simple Lens compositeSummary (FinalizerSummary, ScalarEffectSummary)
@@ -222,13 +216,15 @@ isConditionalFinalizer :: FinalizerSummary
                           -> Function
                           -> Analysis (Maybe (Instruction, Argument))
 isConditionalFinalizer summ f = do
-  ds <- analysisEnvironment dependencySummary
-  case functionIsFinalizer ds summ f of
+  fin <- functionIsFinalizer summ f
+  case fin of
     True -> return Nothing
-    False ->
+    False -> do
       -- Find the list of all arguments that are finalized in the
       -- function.
-      case mapMaybe (isFinalizerCall ds summ) (functionInstructions f) of
+      finArgs <- mapM (isFinalizerCall summ) (functionInstructions f)
+      case catMaybes finArgs of
+--      case mapMaybe (isFinalizerCall summ) (functionInstructions f) of
         [] -> return Nothing
         -- If there is more than one match, ensure that they all
         -- finalize the same argument.  If that is not the case,
@@ -238,47 +234,49 @@ isConditionalFinalizer summ f = do
             False -> return Nothing
             True -> return (Just x)
 
-isFinalizerCall :: DependencySummary
-                   -> FinalizerSummary
+isFinalizerCall :: FinalizerSummary
                    -> Instruction
-                   -> Maybe (Instruction, Argument)
-isFinalizerCall ds summ i =
+                   -> Analysis (Maybe (Instruction, Argument))
+isFinalizerCall summ i =
   case i of
     CallInst { callFunction = callee, callArguments = args } ->
-      callFinalizes ds summ i callee (map fst args)
+      callFinalizes summ i callee (map fst args)
     InvokeInst { invokeFunction = callee, invokeArguments = args } ->
-      callFinalizes ds summ i callee (map fst args)
-    _ -> Nothing
+      callFinalizes summ i callee (map fst args)
+    _ -> return Nothing
 
 -- | If the given call (value + args) is a finalizer, return the
 -- Argument it is finalizing.  If it is a finalizer but does not
 -- finalize an argument, returns Nothing.
-callFinalizes :: DependencySummary
-                       -> FinalizerSummary
-                       -> Instruction
-                       -> Value -- ^ The called value
-                       -> [Value] -- ^ Actual arguments
-                       -> Maybe (Instruction, Argument)
-callFinalizes ds fs i callee args =
-  case mapMaybe isFinalizedArgument (zip [0..] args) of
-    [finArg] -> return (i, finArg)
-    _ -> Nothing
+callFinalizes :: FinalizerSummary
+                 -> Instruction
+                 -> Value -- ^ The called value
+                 -> [Value] -- ^ Actual arguments
+                 -> Analysis (Maybe (Instruction, Argument))
+callFinalizes fs i callee args = do
+  finArgs <- mapM isFinalizedArgument (zip [0..] args)
+  case catMaybes finArgs of
+    [finArg] -> return $ Just (i, finArg)
+    _ -> return Nothing
   where
     isFinalizedArgument (ix, arg) = do
-      annots <- lookupArgumentSummary ds fs callee ix
-      case (PAFinalize `elem` annots, valueContent' arg) of
-        (False, _) -> Nothing
-        -- We only return a hit if this is an Argument to the *caller*
-        -- that is being finalized
-        (True, ArgumentC a) -> return a
-        (True, _) -> Nothing
+      annots <- lookupArgumentSummary fs callee ix
+      case annots of
+        Nothing -> return Nothing
+        Just annots' ->
+          case (PAFinalize `elem` annots', valueContent' arg) of
+            (False, _) -> return Nothing
+            -- We only return a hit if this is an Argument to the *caller*
+            -- that is being finalized
+            (True, ArgumentC a) -> return (Just a)
+            (True, _) -> return Nothing
 
-functionIsFinalizer :: DependencySummary -> FinalizerSummary -> Function -> Bool
-functionIsFinalizer ds fs f =
-  any argFinalizes allArgAnnots
+functionIsFinalizer :: FinalizerSummary -> Function -> Analysis Bool
+functionIsFinalizer fs f = do
+  allArgAnnots <- mapM (lookupArgumentSummary fs f) [0..maxArg]
+  return $ any argFinalizes allArgAnnots
   where
     maxArg = length (functionParameters f) - 1
-    allArgAnnots = map (lookupArgumentSummary ds fs f) [0..maxArg]
     argFinalizes Nothing = False
     argFinalizes (Just annots) = PAFinalize `elem` annots
 
@@ -314,7 +312,7 @@ refCountAnalysis (finSumm, seSumm) funcLike summ = do
 
 refCountTypes :: Function -> Analysis (HashMap (String, String) (HashSet Type))
 refCountTypes f = do
-  ds <- analysisEnvironment dependencySummary
+  ds <- getDependencySummary
   let fptrFuncs = mapMaybe (identifyIndicatorFields ds) (functionInstructions f)
       rcTypesByField = map (id *** unaryFuncToCastedArgTypes) fptrFuncs
       structuralRefTypes = mapMaybe (subtypeRefCountTypes ds) interfaceTypes

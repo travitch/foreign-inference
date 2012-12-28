@@ -79,6 +79,7 @@ import Control.Lens ( Simple, makeLenses, (.~) )
 import Control.Monad ( foldM )
 import Data.Map ( Map )
 import qualified Data.Map as M
+import Data.Maybe ( fromMaybe )
 import Data.Set ( Set )
 import qualified Data.Set as S
 import Data.HashMap.Strict ( HashMap )
@@ -146,12 +147,11 @@ identifyNullable :: (FuncLike funcLike, HasFunction funcLike, HasCFG funcLike,
 identifyNullable ds lns depLens =
   composableDependencyAnalysisM runner nullableAnalysis lns depLens
   where
-    runner a = runAnalysis a constData cache
-    constData = ND mempty ds undefined undefined undefined
+    runner a = runAnalysis a ds constData cache
+    constData = ND mempty undefined undefined undefined
     cache = NState HM.empty
 
 data NullData = ND { moduleSummary :: NullableSummary
-                   , dependencySummary :: DependencySummary
                    , returnSummary :: ReturnSummary
                    , controlDepGraph :: CDG
                    , domTree :: DominatorTree
@@ -329,15 +329,17 @@ callTransfer i calledFunc args ni = do
   let indexedArgs = zip [0..] args
   modSumm <- analysisEnvironment moduleSummary
   retSumm <- analysisEnvironment returnSummary
-  depSumm <- analysisEnvironment dependencySummary
-  let retAttrs = maybe [] id $ lookupFunctionSummary depSumm retSumm calledFunc
+
+  mattrs <- lookupFunctionSummary retSumm calledFunc
+--  let retAttrs = maybe [] id $ lookupFunctionSummary depSumm retSumm calledFunc
+  let retAttrs = fromMaybe [] mattrs
 
   ni' <- case FANoRet `elem` retAttrs of
     True -> return ni { nullArguments = S.empty
                       , nullWitnesses =
                         S.foldl' (addWitness i) (nullWitnesses ni) (nullArguments ni)
                       }
-    False -> foldM (checkArg depSumm modSumm) ni indexedArgs
+    False -> foldM (checkArg modSumm) ni indexedArgs
   -- We also learn information about pointers that are not null if
   -- this is a call through a function pointer (calling a NULL
   -- function pointer is illegal)
@@ -345,8 +347,9 @@ callTransfer i calledFunc args ni = do
     False -> return ni'
     True -> valueDereferenced i calledFunc ni'
   where
-    checkArg ds ms acc (ix, arg) =
-      case lookupArgumentSummary ds ms calledFunc ix of
+    checkArg ms acc (ix, arg) = do
+      margs <- lookupArgumentSummary ms calledFunc ix
+      case margs of
         Nothing -> do
           let errMsg = "No summary for " ++ show (valueName calledFunc)
           emitWarning Nothing "NullAnalysis" errMsg

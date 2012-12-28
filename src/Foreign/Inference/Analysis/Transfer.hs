@@ -127,6 +127,8 @@ identifyTransferredArguments ds pta ownedFields flike trSumm =
               True -> return $! (transferArguments %~ S.insert sv) s
               False -> return s
           | otherwise -> s
+        CallInst { } -> undefined
+        InvokeInst {} -> undefined
         _ -> s
 
 -- | Add any field passed to a known finalizer to the accumulated Set.

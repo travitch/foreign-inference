@@ -60,6 +60,14 @@ data IndirectCallSummary =
 indirectCallInitializers :: IndirectCallSummary -> Value -> [Value]
 indirectCallInitializers ics v =
   case valueContent' v of
+    InstructionC CallInst { callFunction = (valueContent' -> FunctionC f) } ->
+      [toValue f]
+    InstructionC CallInst { callFunction = (valueContent' -> ExternalFunctionC f) } ->
+      [toValue f]
+    InstructionC InvokeInst { invokeFunction = (valueContent' -> FunctionC f) } ->
+      [toValue f]
+    InstructionC InvokeInst { invokeFunction = (valueContent' -> ExternalFunctionC f) } ->
+      [toValue f]
     -- Here, walk the initializer if it isn't a simple integer
     -- constant We discard the first index because while the global
     -- variable is a pointer type, the initializer is not (because all

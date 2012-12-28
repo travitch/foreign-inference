@@ -10,7 +10,7 @@ import GHC.Generics ( Generic )
 import Control.DeepSeq
 import Control.DeepSeq.Generics ( genericRnf )
 import Control.Lens ( (%~), (.~), (^.), Simple, makeLenses )
-import Data.List ( find )
+import Control.Monad ( foldM )
 import Data.Maybe ( fromMaybe, mapMaybe )
 import Data.Monoid
 import Data.Set ( Set )
@@ -98,38 +98,44 @@ identifyTransfers :: (HasFunction funcLike)
                      -> Simple Lens compositeSummary TransferSummary
                      -> compositeSummary
 identifyTransfers funcLikes ds pta p1res flens tlens =
-  (tlens .~ transferedParams) p1res `debug` show ownedFields
+--  runAnalysis a ds () ()
+  (tlens .~ res) p1res
   where
+    res = runAnalysis a ds () ()
     finSumm = p1res ^. flens
     trSumm = p1res ^. tlens
-    ownedFields = foldr (identifyOwnedFields ds pta finSumm) mempty funcLikes
-    transferedParams = foldr (identifyTransferredArguments ds pta ownedFields) trSumm funcLikes
+    a = do
+      ownedFields <- foldM (identifyOwnedFields pta finSumm) mempty funcLikes
+      transferedParams <- foldM (identifyTransferredArguments pta ownedFields) trSumm funcLikes
+      return () `debug` show ownedFields
+      return transferedParams -- $ (tlens .~ transferedParams) p1res
+
+type Analysis = AnalysisMonad () ()
 
 identifyTransferredArguments :: (HasFunction funcLike)
-                                => DependencySummary
-                                -> IndirectCallSummary
+                                => IndirectCallSummary
                                 -> Set AbstractAccessPath
+                                -> TransferSummary
                                 -> funcLike
-                                -> TransferSummary
-                                -> TransferSummary
-identifyTransferredArguments ds pta ownedFields flike trSumm =
-  foldr checkTransfer trSumm (functionInstructions f)
+                                -> Analysis TransferSummary
+identifyTransferredArguments pta ownedFields trSumm flike =
+  foldM checkTransfer trSumm (functionInstructions f)
   where
     f = getFunction flike
     args = functionParameters f
-    checkTransfer i s@(TransferSummary t d) =
+    checkTransfer s@(TransferSummary t d) i =
       case i of
         StoreInst { storeAddress = sa, storeValue = (valueContent' -> ArgumentC sv) }
-          | sv `elem` args -> fromMaybe s $ do
+          | sv `elem` args -> return $ fromMaybe s $ do
             acp <- accessPath i
             let absPath = abstractAccessPath acp
             case S.member absPath ownedFields of
               True -> return $! (transferArguments %~ S.insert sv) s
               False -> return s
-          | otherwise -> s
+          | otherwise -> return s
         CallInst { } -> undefined
         InvokeInst {} -> undefined
-        _ -> s
+        _ -> return s
 
 -- | Add any field passed to a known finalizer to the accumulated Set.
 --
@@ -137,49 +143,57 @@ identifyTransferredArguments ds pta ownedFields flike trSumm =
 -- It will also need to distinguish somehow between fields that are
 -- finalized and elements of container fields that are finalized.
 identifyOwnedFields :: (HasFunction funcLike)
-                       => DependencySummary
-                       -> IndirectCallSummary
+                       => IndirectCallSummary
                        -> FinalizerSummary
+                       -> Set AbstractAccessPath
                        -> funcLike
-                       -> Set AbstractAccessPath
-                       -> Set AbstractAccessPath
-identifyOwnedFields ds pta finSumm funcLike ownedFields =
-  foldr checkFinalize ownedFields insts
+                       -> Analysis (Set AbstractAccessPath)
+identifyOwnedFields pta finSumm ownedFields funcLike =
+  foldM checkFinalize ownedFields insts
   where
     insts = functionInstructions (getFunction funcLike)
-    checkFinalize i acc =
+    checkFinalize acc i =
       case i of
         CallInst { callFunction = cf, callArguments = (map fst -> args) } ->
           checkCall cf args acc
         InvokeInst { invokeFunction = cf, invokeArguments = (map fst -> args) } ->
           checkCall cf args acc
-        _ -> acc
-    checkCall cf args acc =
+        _ -> return acc
+    checkCall cf args acc = do
       let nargs = length args
-      in case mapFirst (isFinalizer nargs) (pointsToWrapper pta cf) of
-        Nothing -> acc
+      mfinIx <- foldM (isFinalizer nargs) Nothing (pointsTo pta cf)
+      case mfinIx of
+        Nothing -> return acc
         Just finIx ->
+    -- checkCall cf args acc = do
+    --   let nargs = length args
+    --   in case mapFirst (isFinalizer nargs) (pointsTo pta cf) of
+    --     Nothing -> return acc
+    --     Just finIx ->
           let actual = args !! finIx
           in case valueContent' actual of
-            InstructionC i -> fromMaybe acc $ do
+            InstructionC i -> return $ fromMaybe acc $ do
               accPath <- accessPath i
               let absPath = abstractAccessPath accPath
               return $ S.insert absPath acc
-            _ -> acc
-    isFinalizer nargs callee =
-      find (formalHasFinalizeAnnot callee) [0..(nargs-1)]
-    formalHasFinalizeAnnot callee argIx = fromMaybe False $ do
-      annots <- lookupArgumentSummary ds finSumm callee argIx
-      return $ PAFinalize `elem` annots
-
--- | A wrapper around the points-to analysis that just returns the
--- input callee for direct calls.
-pointsToWrapper :: (PointsToAnalysis a) => a -> Value -> [Value]
-pointsToWrapper pta cf =
-  case valueContent' cf of
-    FunctionC f -> [toValue f]
-    ExternalFunctionC ef -> [toValue ef]
-    _ -> pointsTo pta cf
+            _ -> return acc
+    isFinalizer _ a@(Just _) _ = return a
+    isFinalizer nargs Nothing callee =
+      foldM (formalHasFinalizeAnnot callee) Nothing [0..(nargs-1)]
+--      find (formalHasFinalizeAnnot callee) [0..(nargs-1)]
+    formalHasFinalizeAnnot _ a@(Just _) _ = return a
+    formalHasFinalizeAnnot callee Nothing argIx = do
+      mannots <- lookupArgumentSummary finSumm callee argIx
+      case mannots of
+        Nothing -> return Nothing
+        Just annots ->
+          if PAFinalize `elem` annots
+          then return (Just argIx)
+          else return Nothing
+      -- return $ from
+      -- fromMaybe False $ do
+      -- annots <- lookupArgumentSummary ds finSumm callee argIx
+      -- return $ PAFinalize `elem` annots
 
 mapFirst :: (a -> Maybe b) -> [a] -> Maybe b
 mapFirst f xs =

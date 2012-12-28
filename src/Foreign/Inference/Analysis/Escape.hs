@@ -417,7 +417,8 @@ buildValueFlowGraph ics summ is = do
             Just PAEscape ->  argEscapeConstraint callInst DirectEscape actual incs
             Just PAContractEscape -> argEscapeConstraint callInst BrokenContractEscape actual incs
             Just PAFptrEscape -> argEscapeConstraint callInst IndirectEscape actual incs
-            _ -> error "Foreign.Inference.Analysis.Escape.addActualConstraint: find failed"
+            _ -> return incs
+-- Note, it isn't quite obvious what to do with PAArgEscape here.
 
     addIndirectEscape callInst incs actual
       | notPointer actual = return incs

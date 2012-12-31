@@ -208,13 +208,10 @@ checkFunctionIsAllocator v summ is =
         [i] -> checkFunctionIsAllocator i summ is
         _ -> return []
     _ -> do
-      s <- lookupFunctionSummary summ v
-      case s of
-        Nothing -> return []
-        Just annots ->
-          case any isAllocatorAnnot annots of
-            False -> return []
-            True -> return is
+      annots <- lookupFunctionSummaryList summ v
+      case any isAllocatorAnnot annots of
+        False -> return []
+        True -> return is
 
 noneEscape :: EscapeSummary -> [Instruction] -> Bool
 noneEscape escSumm is = not (any (isJust . flip escapeTest escSumm) is)

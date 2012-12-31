@@ -258,16 +258,13 @@ isAllocatedValue :: Instruction -> Value -> Instruction -> Analysis (Maybe Strin
 isAllocatedValue storeInst calledFunc callInst = do
   asum <- analysisEnvironment allocatorSummary
   esum <- analysisEnvironment escapeSummary
-  fsum <- lookupFunctionSummary asum calledFunc
-  case fsum of
-    Nothing -> return Nothing
-    Just annots ->
-      case mapMaybe isAllocAnnot annots of
-        [fin] ->
-          case instructionEscapesWith ignoreStore callInst esum of
-            Nothing -> return $! Just fin
-            Just _ -> return Nothing
-        _ -> return Nothing
+  annots <- lookupFunctionSummaryList asum calledFunc
+  case mapMaybe isAllocAnnot annots of
+    [fin] ->
+      case instructionEscapesWith ignoreStore callInst esum of
+        Nothing -> return $! Just fin
+        Just _ -> return Nothing
+    _ -> return Nothing
   where
     ignoreStore = (== storeInst)
     isAllocAnnot (FAAllocator fin) = Just fin
@@ -357,23 +354,17 @@ callTransfer info i f args = do
     checkArg ms acc (ix, arg) =
       case valueContent' arg of
         ArgumentC a -> do
-          asum <- lookupArgumentSummary ms f ix
-          case asum of
-            Nothing -> do
-              let errMsg = "No summary for " ++ show (valueName f)
-              emitWarning Nothing "OutputAnalysis" errMsg
-              return acc
-            Just attrs ->
-              case PAOut `elem` attrs of
-                True -> return $! merge outputInfo i a ArgOut acc
-                False ->
-                  case find isOutAllocAnnot attrs of
-                    Just (PAOutAlloc "") ->
-                      return $! merge outputInfo i a (ArgOutAlloc (mempty, OutFinalizerConflict)) acc
-                    Just (PAOutAlloc fin) ->
-                      return $! merge outputInfo i a (ArgOutAlloc (mempty, OutFinalizer fin)) acc
-                    Just _ -> return $! merge outputInfo i a ArgIn acc
-                    Nothing -> return $! merge outputInfo i a ArgIn acc
+          attrs <- lookupArgumentSummaryList ms f ix
+          case PAOut `elem` attrs of
+            True -> return $! merge outputInfo i a ArgOut acc
+            False ->
+              case find isOutAllocAnnot attrs of
+                Just (PAOutAlloc "") ->
+                  return $! merge outputInfo i a (ArgOutAlloc (mempty, OutFinalizerConflict)) acc
+                Just (PAOutAlloc fin) ->
+                  return $! merge outputInfo i a (ArgOutAlloc (mempty, OutFinalizer fin)) acc
+                Just _ -> return $! merge outputInfo i a ArgIn acc
+                Nothing -> return $! merge outputInfo i a ArgIn acc
         _ -> return acc
 
 isOutAllocAnnot :: ParamAnnotation -> Bool

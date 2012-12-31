@@ -218,14 +218,14 @@ collectArrayArgs :: ArraySummary
                     -> (Int, Value)
                     -> Analysis [(Value, PointerUse)]
 collectArrayArgs summ callee lst (ix, arg) = do
-  s <- lookupArgumentSummary summ callee ix
-  case s of
-    Nothing -> return lst
-    Just annots ->
-      case filter isArrayAnnot annots of
-        [] -> return lst
-        [PAArray depth] -> return $ (arg, CallArgument depth) : lst
-        _ -> error "Foreign.Inference.Analysis.Array: This summary should only produce singleton or empty lists"
+  annots <- lookupArgumentSummaryList summ callee ix
+  case filter isArrayAnnot annots of
+    [] -> return lst
+    [PAArray depth] -> return $ (arg, CallArgument depth) : lst
+    _ -> do
+      emitError Nothing "Array.collectArrayArgs" "Summary should only produce singleton or empty lists"
+      return lst
+
 
 isArrayAnnot :: ParamAnnotation -> Bool
 isArrayAnnot (PAArray _) = True

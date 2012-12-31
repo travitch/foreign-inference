@@ -39,7 +39,7 @@ import LLVM.Analysis.CallGraphSCCTraversal
 
 import Constraints.Set.Solver
 
-import Foreign.Inference.Diagnostics ( HasDiagnostics(..), Diagnostics, emitWarning )
+import Foreign.Inference.Diagnostics ( HasDiagnostics(..), Diagnostics )
 import Foreign.Inference.Interface
 import Foreign.Inference.Internal.FlattenValue
 import Foreign.Inference.AnalysisMonad
@@ -388,8 +388,9 @@ buildValueFlowGraph ics summ is = do
       | notPointer actual = return incs
       | otherwise = do
         s <- lookupArgumentSummary summ repr ix
+
         case s of
-          -- If we don't have a summary for oure representative, treat
+          -- If we don't have a summary for our representative, treat
           -- it as an indirect call with no known target (we could do
           -- better by looking at the next possible representative, if
           -- any).
@@ -406,18 +407,14 @@ buildValueFlowGraph ics summ is = do
               _ -> return incs
 
     addActualConstraint callInst callee incs (ix, actual) = do
-      pannots <- lookupArgumentSummary summ callee ix
-      case pannots of
-        Nothing -> do
-          emitWarning Nothing "Escape" ("No summary for " ++ show callee)
-          return incs
-        Just pannots' ->
-          case F.find isEscapeAnnot pannots' of
-            Nothing -> return incs
-            Just PAEscape ->  argEscapeConstraint callInst DirectEscape actual incs
-            Just PAContractEscape -> argEscapeConstraint callInst BrokenContractEscape actual incs
-            Just PAFptrEscape -> argEscapeConstraint callInst IndirectEscape actual incs
-            _ -> return incs
+      pannots <- lookupArgumentSummaryList summ callee ix
+      case F.find isEscapeAnnot pannots of
+        Nothing -> return incs
+        Just PAEscape ->  argEscapeConstraint callInst DirectEscape actual incs
+        Just PAContractEscape -> argEscapeConstraint callInst BrokenContractEscape actual incs
+        Just PAFptrEscape -> argEscapeConstraint callInst IndirectEscape actual incs
+        _ -> return incs
+
 -- Note, it isn't quite obvious what to do with PAArgEscape here.
 
     addIndirectEscape callInst incs actual

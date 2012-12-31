@@ -98,7 +98,6 @@ identifyTransfers :: (HasFunction funcLike)
                      -> Simple Lens compositeSummary TransferSummary
                      -> compositeSummary
 identifyTransfers funcLikes ds pta p1res flens tlens =
---  runAnalysis a ds () ()
   (tlens .~ res) p1res
   where
     res = runAnalysis a ds () ()
@@ -108,7 +107,7 @@ identifyTransfers funcLikes ds pta p1res flens tlens =
       ownedFields <- foldM (identifyOwnedFields pta finSumm) mempty funcLikes
       transferedParams <- foldM (identifyTransferredArguments pta ownedFields) trSumm funcLikes
       return () `debug` show ownedFields
-      return transferedParams -- $ (tlens .~ transferedParams) p1res
+      return transferedParams
 
 type Analysis = AnalysisMonad () ()
 
@@ -133,9 +132,13 @@ identifyTransferredArguments pta ownedFields trSumm flike =
               True -> return $! (transferArguments %~ S.insert sv) s
               False -> return s
           | otherwise -> return s
-        CallInst { } -> undefined
-        InvokeInst {} -> undefined
+        CallInst { callFunction = callee, callArguments = (map fst -> args) } ->
+          transitiveTransfers callee args
+        InvokeInst { invokeFunction = callee, invokeArguments = (map fst -> args) } ->
+          transitiveTransfers callee args
         _ -> return s
+    transitiveTransfers callee args = do
+      return undefined
 
 -- | Add any field passed to a known finalizer to the accumulated Set.
 --
@@ -165,11 +168,6 @@ identifyOwnedFields pta finSumm ownedFields funcLike =
       case mfinIx of
         Nothing -> return acc
         Just finIx ->
-    -- checkCall cf args acc = do
-    --   let nargs = length args
-    --   in case mapFirst (isFinalizer nargs) (pointsTo pta cf) of
-    --     Nothing -> return acc
-    --     Just finIx ->
           let actual = args !! finIx
           in case valueContent' actual of
             InstructionC i -> return $ fromMaybe acc $ do
@@ -180,23 +178,9 @@ identifyOwnedFields pta finSumm ownedFields funcLike =
     isFinalizer _ a@(Just _) _ = return a
     isFinalizer nargs Nothing callee =
       foldM (formalHasFinalizeAnnot callee) Nothing [0..(nargs-1)]
---      find (formalHasFinalizeAnnot callee) [0..(nargs-1)]
     formalHasFinalizeAnnot _ a@(Just _) _ = return a
     formalHasFinalizeAnnot callee Nothing argIx = do
-      mannots <- lookupArgumentSummary finSumm callee argIx
-      case mannots of
-        Nothing -> return Nothing
-        Just annots ->
-          if PAFinalize `elem` annots
-          then return (Just argIx)
-          else return Nothing
-      -- return $ from
-      -- fromMaybe False $ do
-      -- annots <- lookupArgumentSummary ds finSumm callee argIx
-      -- return $ PAFinalize `elem` annots
-
-mapFirst :: (a -> Maybe b) -> [a] -> Maybe b
-mapFirst f xs =
-  case mapMaybe f xs of
-    [] -> Nothing
-    e : _ -> Just e
+      annots <- lookupArgumentSummaryList finSumm callee argIx
+      if PAFinalize `elem` annots
+        then return (Just argIx)
+        else return Nothing

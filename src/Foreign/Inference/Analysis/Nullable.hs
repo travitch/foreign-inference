@@ -79,7 +79,6 @@ import Control.Lens ( Simple, makeLenses, (.~) )
 import Control.Monad ( foldM )
 import Data.Map ( Map )
 import qualified Data.Map as M
-import Data.Maybe ( fromMaybe )
 import Data.Set ( Set )
 import qualified Data.Set as S
 import Data.HashMap.Strict ( HashMap )
@@ -329,10 +328,7 @@ callTransfer i calledFunc args ni = do
   let indexedArgs = zip [0..] args
   modSumm <- analysisEnvironment moduleSummary
   retSumm <- analysisEnvironment returnSummary
-
-  mattrs <- lookupFunctionSummary retSumm calledFunc
---  let retAttrs = maybe [] id $ lookupFunctionSummary depSumm retSumm calledFunc
-  let retAttrs = fromMaybe [] mattrs
+  retAttrs <- lookupFunctionSummaryList retSumm calledFunc
 
   ni' <- case FANoRet `elem` retAttrs of
     True -> return ni { nullArguments = S.empty
@@ -348,15 +344,10 @@ callTransfer i calledFunc args ni = do
     True -> valueDereferenced i calledFunc ni'
   where
     checkArg ms acc (ix, arg) = do
-      margs <- lookupArgumentSummary ms calledFunc ix
-      case margs of
-        Nothing -> do
-          let errMsg = "No summary for " ++ show (valueName calledFunc)
-          emitWarning Nothing "NullAnalysis" errMsg
-          return acc
-        Just attrs -> case PANotNull `elem` attrs of
-          False -> return acc
-          True -> valueDereferenced i arg acc
+      attrs <- lookupArgumentSummaryList ms calledFunc ix
+      case PANotNull `elem` attrs of
+        False -> return acc
+        True -> valueDereferenced i arg acc
 
 addWitness :: Instruction
               -> Map Argument (Set Witness)

@@ -221,16 +221,10 @@ callTransfer callInst v as info =
   where
     indexedArgs = zip [0..] as
     checkArg ms acc (ix, (valueContent' -> ArgumentC a)) = do
-      mattrs <- lookupArgumentSummary ms v ix
-      case mattrs of
-        Nothing -> do
-          let errMsg = "No ExternalFunction summary for " ++ show (valueName v)
-          emitWarning Nothing "FinalizerAnalysis" errMsg
-          return acc
-        Just attrs ->
-          case PAFinalize `elem` attrs of
-            False -> return acc
-            True -> return $! removeArgWithWitness a callInst "finalized" acc
+      attrs <- lookupArgumentSummaryList ms v ix
+      case PAFinalize `elem` attrs of
+        False -> return acc
+        True -> return $! removeArgWithWitness a callInst "finalized" acc
     checkArg _ acc _ = return acc
 
 removeArgWithWitness :: Argument -> Instruction -> String -> FinalizerInfo -> FinalizerInfo

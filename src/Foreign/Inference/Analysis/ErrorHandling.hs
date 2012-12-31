@@ -252,24 +252,11 @@ returnsTransitiveError funcLike summ bb = do
           summ' <- foldM (recordTransitiveError i priorFacts) summ callees
           return $ Just summ'
         _ -> return Nothing
-  -- return $ do
-  --   rv <- blockReturn brs bb
-  --   case ignoreCasts rv of
-  --     InstructionC i@CallInst { callFunction = callee } ->
-  --       -- The last argument to relevantInducedFacts here is a dummy
-  --       -- that we don't care about; relevantInducedFacts just uses
-  --       -- the one argument that is a CallInst.
-  --       let exitInst = basicBlockTerminatorInstruction bb
-  --           priorFacts = relevantInducedFacts funcLike exitInst (toValue i) callee
-  --           callees = callTargets ics callee
-  --       in return $ foldr (recordTransitiveError ds i priorFacts) summ callees
-  --     _ -> Nothing
   where
     f = getFunction funcLike
     recordTransitiveError i priors s callee = do
-      mfsumm <- lookupFunctionSummary (ErrorSummary s mempty) callee
+      fsumm <- lookupFunctionSummaryList (ErrorSummary s mempty) callee
       return $ fromMaybe s $ do
-        fsumm <- mfsumm
         FAReportsErrors errActs eret <- F.find isErrRetAnnot fsumm
         rvs <- intReturnsToList eret
         let formula = case null priors of
@@ -589,22 +576,18 @@ isSat = unsafePerformIO . isSatisfiable
 errorReturnValue :: SummaryType -> [Value] -> MaybeT Analysis Int
 errorReturnValue _ [] = fail "No call targets"
 errorReturnValue s [callee] = do
-  mfsumm <- lift $ lookupFunctionSummary (ErrorSummary s mempty) callee
---  fsumm <- liftMaybe $ lookupFunctionSummary ds (ErrorSummary s mempty) callee
-  fsumm <- liftMaybe mfsumm
+  fsumm <- lift $ lookupFunctionSummaryList (ErrorSummary s mempty) callee
   liftMaybe $ errRetVal fsumm
 errorReturnValue s (callee:rest) = do
-  mfsumm <- lift $ lookupFunctionSummary (ErrorSummary s mempty) callee
---  fsumm <- liftMaybe $ lookupFunctionSummary ds (ErrorSummary s mempty) callee
-  fsumm <- liftMaybe mfsumm
+  fsumm <- lift $ lookupFunctionSummaryList (ErrorSummary s mempty) callee
   rv <- liftMaybe $ errRetVal fsumm
+  -- This lets us emit a warning if some callees return errors while
+  -- others do not
   mapM_ (checkOtherErrorReturns rv) rest
   return rv
   where
     checkOtherErrorReturns rv c = do
-      mfsumm <- lift $ lookupFunctionSummary (ErrorSummary s mempty) c
-      fsumm <- liftMaybe mfsumm
---      fsumm <- liftMaybe $ lookupFunctionSummary ds (ErrorSummary s mempty) c
+      fsumm <- lift $ lookupFunctionSummaryList (ErrorSummary s mempty) c
       rv' <- liftMaybe $ errRetVal fsumm
       when (rv' /= rv) $ emitWarning Nothing "ErrorAnalysis" ("Mismatched error return codes for indirect call " ++ show (valueName callee))
 

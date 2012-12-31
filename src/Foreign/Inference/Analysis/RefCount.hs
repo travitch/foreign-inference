@@ -260,25 +260,21 @@ callFinalizes fs i callee args = do
     _ -> return Nothing
   where
     isFinalizedArgument (ix, arg) = do
-      annots <- lookupArgumentSummary fs callee ix
-      case annots of
-        Nothing -> return Nothing
-        Just annots' ->
-          case (PAFinalize `elem` annots', valueContent' arg) of
-            (False, _) -> return Nothing
-            -- We only return a hit if this is an Argument to the *caller*
-            -- that is being finalized
-            (True, ArgumentC a) -> return (Just a)
-            (True, _) -> return Nothing
+      annots <- lookupArgumentSummaryList fs callee ix
+      case (PAFinalize `elem` annots, valueContent' arg) of
+        (False, _) -> return Nothing
+        -- We only return a hit if this is an Argument to the *caller*
+        -- that is being finalized
+        (True, ArgumentC a) -> return (Just a)
+        (True, _) -> return Nothing
 
 functionIsFinalizer :: FinalizerSummary -> Function -> Analysis Bool
 functionIsFinalizer fs f = do
-  allArgAnnots <- mapM (lookupArgumentSummary fs f) [0..maxArg]
+  allArgAnnots <- mapM (lookupArgumentSummaryList fs f) [0..maxArg]
   return $ any argFinalizes allArgAnnots
   where
     maxArg = length (functionParameters f) - 1
-    argFinalizes Nothing = False
-    argFinalizes (Just annots) = PAFinalize `elem` annots
+    argFinalizes annots = PAFinalize `elem` annots
 
 refCountAnalysis :: (FuncLike funcLike, HasCFG funcLike, HasFunction funcLike)
                     => (FinalizerSummary, ScalarEffectSummary)

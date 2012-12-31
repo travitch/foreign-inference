@@ -1,5 +1,6 @@
 {-# LANGUAGE ExistentialQuantification, DeriveDataTypeable #-}
 {-# LANGUAGE TemplateHaskell, StandaloneDeriving, ViewPatterns, CPP #-}
+{-# LANGUAGE FlexibleContexts #-}
 -- | This module defines an external representation of library
 -- interfaces.  Individual libraries are represented by the
 -- 'LibraryInterface'.  The analysis reads these in and writes these
@@ -38,7 +39,9 @@ module Foreign.Inference.Interface (
   StdLib(..),
   -- * Functions
   lookupArgumentSummary,
+  lookupArgumentSummaryList,
   lookupFunctionSummary,
+  lookupFunctionSummaryList,
   loadDependencies,
   loadDependencies',
   moduleToLibraryInterface,
@@ -59,6 +62,7 @@ import Prelude hiding ( catch )
 import Control.Arrow
 import Control.DeepSeq
 import Control.Exception
+import Control.Monad.Writer.Class ( MonadWriter )
 import Data.Aeson
 import qualified Data.ByteString.Char8 as SBS
 import qualified Data.ByteString.Lazy as LBS
@@ -85,6 +89,7 @@ import Text.Jasmine
 import LLVM.Analysis
 import LLVM.Analysis.AccessPath
 
+import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface.Metadata
 import Foreign.Inference.Interface.Types
 
@@ -484,7 +489,9 @@ userParameterAnnotations allAnnots f ix =
 class (Monad m) => HasDependencies m where
   getDependencySummary :: m DependencySummary
 
-lookupFunctionSummary :: (IsValue v, SummarizeModule s, HasDependencies m)
+lookupFunctionSummary :: (Show v, IsValue v,
+                          SummarizeModule s, HasDependencies m,
+                          MonadWriter Diagnostics m)
                          => s
                          -> v
                          -> m (Maybe [FuncAnnotation])
@@ -497,11 +504,26 @@ lookupFunctionSummary ms val = do
     ExternalFunctionC ef -> do
       let fname = identifierContent $ externalFunctionName ef
           summ = depSummary ds
-          annots = M.lookup fname summ
-      return $ maybe Nothing (Just . foreignFunctionAnnotations) annots
-    _ -> return Nothing
+          extract = return . Just . foreignFunctionAnnotations
+      maybe (missingDependency ef) extract (M.lookup fname summ)
+    _ -> notAFunction val
 
-lookupArgumentSummary :: (IsValue v, SummarizeModule s, HasDependencies m)
+-- | A variant of 'lookupFunctionSummary' where missing summaries can
+-- be treated as simply returning no annotations.  Many analyses can
+-- do this now that the missing summary warning is sunk down to this
+-- level.
+lookupFunctionSummaryList :: (Show v, IsValue v,
+                              SummarizeModule s, HasDependencies m,
+                              MonadWriter Diagnostics m)
+                             => s
+                             -> v
+                             -> m [FuncAnnotation]
+lookupFunctionSummaryList ms val =
+  lookupFunctionSummary ms val >>= return . fromMaybe []
+
+lookupArgumentSummary :: (Show v, IsValue v,
+                          SummarizeModule s, HasDependencies m,
+                          MonadWriter Diagnostics m)
                          => s
                          -> v
                          -> Int
@@ -519,16 +541,41 @@ lookupArgumentSummary ms val ix = do
     ExternalFunctionC ef -> do
       let fname = identifierContent $ externalFunctionName ef
           summ = depSummary ds
-      case M.lookup fname summ of
-        Nothing -> return Nothing
-        Just fsum ->
-          let ps = foreignFunctionParameters fsum
-        -- Either this was a vararg or the function was cast to a
-        -- strange type (with extra parameters) before being called.
-          in case ix < length ps of
-            False -> return (Just [])
-            True -> return $ Just $ parameterAnnotations (ps !! ix)
-    _ -> return Nothing
+          -- Either this was a vararg or the function was cast to a
+          -- strange type (with extra parameters) before being called.
+          extract fsum =
+            let ps = foreignFunctionParameters fsum
+            in case ix < length ps of
+              False -> return (Just [])
+              True -> return $ Just $ parameterAnnotations (ps !! ix)
+      maybe (missingDependency ef) extract (M.lookup fname summ)
+    _ -> notAFunction val
+
+-- | A variant of 'lookupArgumentSummary' where missing summaries can
+-- be treated as simply returning no annotations.  Many analyses can
+-- do this now that the missing summary warning is sunk down to this
+-- level.
+lookupArgumentSummaryList :: (Show v, IsValue v,
+                              SummarizeModule s, HasDependencies m,
+                              MonadWriter Diagnostics m)
+                             => s
+                             -> v
+                             -> Int
+                             -> m [ParamAnnotation]
+lookupArgumentSummaryList ms val ix =
+  lookupArgumentSummary ms val ix >>= return . fromMaybe []
+
+notAFunction :: (Show v, MonadWriter Diagnostics m) => v -> m (Maybe a)
+notAFunction val = do
+  let msg = "Not a function " ++ show val
+  emitWarning Nothing "DependencyLookup" msg
+  return Nothing
+
+missingDependency :: (Show v, MonadWriter Diagnostics m) => v -> m (Maybe a)
+missingDependency callee = do
+  let msg = "Missing dependency summary for " ++ show callee
+  emitWarning Nothing "DependencyLookup" msg
+  return Nothing
 
 
 -- Helpers

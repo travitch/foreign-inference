@@ -57,11 +57,9 @@ module Foreign.Inference.Interface (
   userParameterAnnotations
   ) where
 
-import Prelude hiding ( catch )
-
 import Control.Arrow
 import Control.DeepSeq
-import Control.Exception
+import Control.Exception as E
 import Control.Monad.Writer.Class ( MonadWriter )
 import Data.Aeson
 import qualified Data.ByteString.Char8 as SBS
@@ -83,7 +81,7 @@ import qualified Data.Text as T
 import Data.Foldable ( foldl' )
 import Debug.Trace.LocationTH
 import System.FilePath
-import System.IO.Error hiding ( catch )
+import System.IO.Error
 import Text.Jasmine
 
 import LLVM.Analysis
@@ -99,6 +97,9 @@ getStaticFiles = return $ M.fromList $(embedDir "stdlibs")
 #else
 import Data.List ( stripPrefix )
 import Paths_foreign_inference
+
+import Debug.Trace
+debug = flip trace
 
 getStaticFiles :: IO (HashMap FilePath SBS.ByteString)
 getStaticFiles = do
@@ -287,11 +288,13 @@ loadDependencies' includeStd summaryDirs deps = do
   return $! DependencySummary m mempty rcIx rcObjs
   where
     errMsg n = error ("Foreign.Inference.Interface.loadDependencies': could not find interface " ++ n)
+    lookupJson lib sfiles =
+      fromMaybe (errMsg ("lib" ++ lib)) $ M.lookup (lib <.> "json") sfiles
     addStdlibDeps sfiles m CStdLib =
-      let libc = M.lookupDefault (errMsg "libc") "c.json" sfiles
-          libm = M.lookupDefault (errMsg "libm") "m.json" sfiles
-          libdl = M.lookupDefault (errMsg "libdl") "dl.json" sfiles
-          libpthread = M.lookupDefault (errMsg "libpthread") "pthread.json" sfiles
+      let libc = lookupJson "c" sfiles
+          libm = lookupJson "m" sfiles
+          libdl = lookupJson "dl" sfiles
+          libpthread = lookupJson "pthread" sfiles
           lc = decodeInterface libc
           lm = decodeInterface libm
           ldl = decodeInterface libdl
@@ -303,7 +306,7 @@ loadDependencies' includeStd summaryDirs deps = do
                       ]
       in foldl' mergeFunction m fs
     addStdlibDeps sfiles m LLVMLib =
-      let llvmIntrinsics = M.lookupDefault (errMsg "llvmIntrinsics") "llvm.json" sfiles
+      let llvmIntrinsics = lookupJson "llvm" sfiles
           ll = decodeInterface llvmIntrinsics
       in foldl' mergeFunction m (libraryFunctions ll)
 
@@ -379,7 +382,7 @@ decodeInterface bs =
   in fromMaybe err $ decode' (minify (LBS.fromChunks [bs]))
 
 loadFromSources :: [FilePath] -> FilePath -> IO LBS.ByteString
-loadFromSources (src:rest) p = catch (LBS.readFile fname) handleMissingSrc
+loadFromSources (src:rest) p = E.catch (LBS.readFile fname) handleMissingSrc
   where
     fname = src </> p
     handleMissingSrc :: IOException -> IO LBS.ByteString

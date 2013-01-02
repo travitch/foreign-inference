@@ -571,7 +571,9 @@ cmpPredicateToRelation p =
     _ -> fail "cmpPredicateToRelation is a floating point comparison"
 
 isSat :: (SInt32 -> SBool) -> Bool
-isSat = unsafePerformIO . isSatisfiable
+isSat f = unsafePerformIO $ do
+  Just sr <- isSatisfiable Nothing f
+  return sr
 
 errorReturnValue :: SummaryType -> [Value] -> MaybeT Analysis Int
 errorReturnValue _ [] = fail "No call targets"

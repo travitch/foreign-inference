@@ -58,10 +58,11 @@ data EscapeClass = DirectEscape
                  deriving (Eq, Ord, Read, Show)
 
 instance Hashable EscapeClass where
-  hash DirectEscape = 76
-  hash BrokenContractEscape = 699
-  hash IndirectEscape = 5
-  hash (ArgumentEscape i) = 77997 `combine` hash i
+  hashWithSalt s DirectEscape = s `hashWithSalt` (76 :: Int)
+  hashWithSalt s BrokenContractEscape = s `hashWithSalt` (699 :: Int)
+  hashWithSalt s IndirectEscape = s `hashWithSalt` (5 :: Int)
+  hashWithSalt s (ArgumentEscape i) =
+    s `hashWithSalt` (77997 :: Int) `hashWithSalt` i
 
 instance NFData EscapeClass
 

@@ -11,7 +11,7 @@ import Control.DeepSeq
 import Control.DeepSeq.Generics ( genericRnf )
 import Control.Lens ( (%~), (.~), (^.), Simple, makeLenses )
 import Control.Monad ( foldM )
-import Data.Maybe ( fromMaybe, mapMaybe )
+import Data.Maybe ( fromMaybe )
 import Data.Monoid
 import Data.Set ( Set )
 import qualified Data.Set as S
@@ -121,11 +121,13 @@ identifyTransferredArguments pta ownedFields trSumm flike =
   foldM checkTransfer trSumm (functionInstructions f)
   where
     f = getFunction flike
-    args = functionParameters f
-    checkTransfer s@(TransferSummary t d) i =
+    formals = functionParameters f
+    checkTransfer s i =
       case i of
-        StoreInst { storeAddress = sa, storeValue = (valueContent' -> ArgumentC sv) }
-          | sv `elem` args -> return $ fromMaybe s $ do
+        StoreInst { storeValue = (valueContent' -> ArgumentC sv) }
+          | sv `elem` formals -> return $ fromMaybe s $ do
+            -- We don't extract the storeAddress above because the
+            -- access path construction handles that
             acp <- accessPath i
             let absPath = abstractAccessPath acp
             case S.member absPath ownedFields of
@@ -133,12 +135,22 @@ identifyTransferredArguments pta ownedFields trSumm flike =
               False -> return s
           | otherwise -> return s
         CallInst { callFunction = callee, callArguments = (map fst -> args) } ->
-          transitiveTransfers callee args
+          transitiveTransfers s callee args
         InvokeInst { invokeFunction = callee, invokeArguments = (map fst -> args) } ->
-          transitiveTransfers callee args
+          transitiveTransfers s callee args
         _ -> return s
-    transitiveTransfers callee args = do
-      return undefined
+    transitiveTransfers s callee args = do
+      let targets = pointsTo pta callee
+          indexedArgs = zip [0..] args
+      foldM (callTransfer indexedArgs) s targets
+    callTransfer indexedArgs s callee =
+      foldM (argumentTransfer callee) s indexedArgs
+    argumentTransfer callee s (ix, (valueContent' -> ArgumentC arg)) = do
+      annots <- lookupArgumentSummaryList s callee ix
+      case PATransfer `elem` annots of
+        False -> return s
+        True -> return $ (transferArguments %~ S.insert arg) s
+    argumentTransfer _ s _ = return s
 
 -- | Add any field passed to a known finalizer to the accumulated Set.
 --

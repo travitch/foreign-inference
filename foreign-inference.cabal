@@ -158,3 +158,12 @@ test-suite ErrorHandlingTests
   ghc-options: -Wall
   build-depends: llvm-analysis, llvm-data-interop, base, containers, HUnit,
                  foreign-inference, filepath
+
+test-suite TransferTests
+  default-language: Haskell2010
+  type: exitcode-stdio-1.0
+  main-is: TransferTests.hs
+  hs-source-dirs: tests
+  ghc-options: -Wall
+  build-depends: llvm-analysis, llvm-data-interop, base, containers,
+                 HUnit, foreign-inference, filepath

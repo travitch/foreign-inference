@@ -2,7 +2,9 @@
 {-# LANGUAGE RankNTypes #-}
 module Foreign.Inference.Analysis.Transfer (
   TransferSummary,
-  identifyTransfers
+  identifyTransfers,
+  -- * Testing
+  transferSummaryToTestFormat
   ) where
 
 import GHC.Generics ( Generic )
@@ -11,6 +13,9 @@ import Control.DeepSeq
 import Control.DeepSeq.Generics ( genericRnf )
 import Control.Lens ( (%~), (.~), (^.), Simple, makeLenses )
 import Control.Monad ( foldM )
+import qualified Data.Foldable as F
+import Data.Map ( Map )
+import qualified Data.Map as M
 import Data.Maybe ( fromMaybe )
 import Data.Monoid
 import Data.Set ( Set )
@@ -47,7 +52,7 @@ instance Monoid TransferSummary where
     TransferSummary (t1 `mappend` t2) (d1 `mappend` d2)
 
 instance NFData TransferSummary where
-  rnf = genericRnf
+   rnf = genericRnf
 
 instance HasDiagnostics TransferSummary where
   diagnosticLens = transferDiagnostics
@@ -196,3 +201,16 @@ identifyOwnedFields pta finSumm ownedFields funcLike =
       if PAFinalize `elem` annots
         then return (Just argIx)
         else return Nothing
+
+-- Testing
+
+
+transferSummaryToTestFormat :: TransferSummary -> Map String (Set String)
+transferSummaryToTestFormat (TransferSummary s _) =
+  F.foldr convert mempty s
+  where
+    convert a m =
+      let f = argumentFunction a
+          k = show (functionName f)
+          v = show (argumentName a)
+      in M.insertWith S.union k (S.singleton v) m

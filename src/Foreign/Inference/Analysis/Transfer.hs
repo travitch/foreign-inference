@@ -31,6 +31,7 @@ import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
 import Foreign.Inference.Analysis.Finalize
 import Foreign.Inference.Analysis.IndirectCallResolver
+import Foreign.Inference.Analysis.Util.CalleeFold
 
 import Debug.Trace
 debug = flip trace
@@ -175,17 +176,10 @@ identifyOwnedFields pta finSumm ownedFields funcLike =
     checkFinalize acc i =
       case i of
         CallInst { callFunction = cf, callArguments = (map fst -> args) } ->
-          checkCall cf args acc
+          calleeArgumentFold addFieldIfFinalized acc pta cf args
         InvokeInst { invokeFunction = cf, invokeArguments = (map fst -> args) } ->
-          checkCall cf args acc
+          calleeArgumentFold addFieldIfFinalized acc pta cf args
         _ -> return acc
-
-    checkCall cf args acc = do
-      let indexedArgs = zip [0..] args
-      foldM (addFieldIfFinalizedByTarget indexedArgs) acc (pointsTo pta cf)
-
-    addFieldIfFinalizedByTarget indexedArgs acc target =
-      foldM (addFieldIfFinalized target) acc indexedArgs
 
     addFieldIfFinalized target acc (ix, arg) = do
       annots <- lookupArgumentSummaryList finSumm target ix
@@ -198,6 +192,7 @@ identifyOwnedFields pta finSumm ownedFields funcLike =
               let absPath = abstractAccessPath accPath
               return $ S.insert absPath acc
             _ -> return acc
+
 
 -- Testing
 

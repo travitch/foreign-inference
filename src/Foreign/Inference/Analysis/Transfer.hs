@@ -179,28 +179,25 @@ identifyOwnedFields pta finSumm ownedFields funcLike =
         InvokeInst { invokeFunction = cf, invokeArguments = (map fst -> args) } ->
           checkCall cf args acc
         _ -> return acc
+
     checkCall cf args acc = do
-      let nargs = length args
-      mfinIx <- foldM (isFinalizer nargs) Nothing (pointsTo pta cf)
-      case mfinIx of
-        Nothing -> return acc
-        Just finIx ->
-          let actual = args !! finIx
-          in case valueContent' actual of
+      let indexedArgs = zip [0..] args
+      foldM (addFieldIfFinalizedByTarget indexedArgs) acc (pointsTo pta cf)
+
+    addFieldIfFinalizedByTarget indexedArgs acc target =
+      foldM (addFieldIfFinalized target) acc indexedArgs
+
+    addFieldIfFinalized target acc (ix, arg) = do
+      annots <- lookupArgumentSummaryList finSumm target ix
+      case PAFinalize `elem` annots of
+        False -> return acc
+        True ->
+          case valueContent' arg of
             InstructionC i -> return $ fromMaybe acc $ do
               accPath <- accessPath i
               let absPath = abstractAccessPath accPath
               return $ S.insert absPath acc
             _ -> return acc
-    isFinalizer _ a@(Just _) _ = return a
-    isFinalizer nargs Nothing callee =
-      foldM (formalHasFinalizeAnnot callee) Nothing [0..(nargs-1)]
-    formalHasFinalizeAnnot _ a@(Just _) _ = return a
-    formalHasFinalizeAnnot callee Nothing argIx = do
-      annots <- lookupArgumentSummaryList finSumm callee argIx
-      if PAFinalize `elem` annots
-        then return (Just argIx)
-        else return Nothing
 
 -- Testing
 

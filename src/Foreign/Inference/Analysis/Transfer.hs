@@ -24,7 +24,6 @@ import qualified Data.Set as S
 import LLVM.Analysis
 import LLVM.Analysis.AccessPath
 import LLVM.Analysis.CallGraphSCCTraversal
-import LLVM.Analysis.PointsTo
 
 import Foreign.Inference.AnalysisMonad
 import Foreign.Inference.Diagnostics
@@ -141,16 +140,11 @@ identifyTransferredArguments pta ownedFields trSumm flike =
               False -> return s
           | otherwise -> return s
         CallInst { callFunction = callee, callArguments = (map fst -> args) } ->
-          transitiveTransfers s callee args
+          calleeArgumentFold argumentTransfer s pta callee args
         InvokeInst { invokeFunction = callee, invokeArguments = (map fst -> args) } ->
-          transitiveTransfers s callee args
+          calleeArgumentFold argumentTransfer s pta callee args
         _ -> return s
-    transitiveTransfers s callee args = do
-      let targets = pointsTo pta callee
-          indexedArgs = zip [0..] args
-      foldM (callTransfer indexedArgs) s targets
-    callTransfer indexedArgs s callee =
-      foldM (argumentTransfer callee) s indexedArgs
+
     argumentTransfer callee s (ix, (valueContent' -> ArgumentC arg)) = do
       annots <- lookupArgumentSummaryList s callee ix
       case PATransfer `elem` annots of

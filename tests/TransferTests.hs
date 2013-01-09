@@ -50,4 +50,4 @@ analyzeTransfer ds m =
     analyses = [ identifyFinalizers ds pta finalizerSummary ]
     pfunc = callGraphComposeAnalysis analyses
     res0 = parallelCallGraphSCCTraversal cg pfunc mempty
-    res = identifyTransfers funcLikes ds pta res0 finalizerSummary transferSummary
+    res = identifyTransfers funcLikes cg ds pta res0 finalizerSummary transferSummary

@@ -106,8 +106,6 @@ identifyTransfers :: (HasFunction funcLike, Eq compositeSummary)
                      -> compositeSummary
 identifyTransfers funcLikes cg ds pta p1res flens tlens =
   (tlens .~ res) p1res
-  -- | p1res == p1res' = p1res
-  -- | otherwise = identifyTransfers funcLikes cg ds pta p1res' flens tlens
   where
     res = runAnalysis a ds () ()
     finSumm = p1res ^. flens
@@ -182,9 +180,12 @@ isFinalizerContext cg finSumm flike =
           let ixs = [0..length (externalFunctionParameterTypes ef)]
           liftM or $ mapM (isFinalizerArg callee) ixs
         _ -> return False
-    isFinalizerArg callee ix = do
-      annots <- lookupArgumentSummaryList finSumm callee ix
-      return $ PAFinalize `elem` annots
+    isFinalizerArg callee ix =
+      liftM (elem PAFinalize) $ lookupArgumentSummaryList finSumm callee ix
+
+      -- do
+      -- annots <- lookupArgumentSummaryList finSumm callee ix
+      -- return $ PAFinalize `elem` annots
 
 -- | Add any field passed to a known finalizer to the accumulated Set.
 --

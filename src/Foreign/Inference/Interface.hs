@@ -60,6 +60,7 @@ module Foreign.Inference.Interface (
 import Control.Arrow
 import Control.DeepSeq
 import Control.Exception as E
+import Control.Monad ( liftM )
 import Control.Monad.Writer.Class ( MonadWriter )
 import Data.Aeson
 import qualified Data.ByteString.Char8 as SBS
@@ -522,7 +523,7 @@ lookupFunctionSummaryList :: (Show v, IsValue v,
                              -> v
                              -> m [FuncAnnotation]
 lookupFunctionSummaryList ms val =
-  lookupFunctionSummary ms val >>= return . fromMaybe []
+  liftM (fromMaybe []) $ lookupFunctionSummary ms val
 
 lookupArgumentSummary :: (Show v, IsValue v,
                           SummarizeModule s, HasDependencies m,
@@ -566,12 +567,12 @@ lookupArgumentSummaryList :: (Show v, IsValue v,
                              -> Int
                              -> m [ParamAnnotation]
 lookupArgumentSummaryList ms val ix =
-  lookupArgumentSummary ms val ix >>= return . fromMaybe []
+  liftM (fromMaybe []) $ lookupArgumentSummary ms val ix
 
 notAFunction :: (Show v, MonadWriter Diagnostics m) => v -> m (Maybe a)
-notAFunction val = do
-  let msg = "Not a function " ++ show val
-  emitWarning Nothing "DependencyLookup" msg
+notAFunction _ = -- do
+  -- let msg = "Not a function " ++ show val
+  -- emitWarning Nothing "DependencyLookup" msg
   return Nothing
 
 missingDependency :: (Show v, MonadWriter Diagnostics m) => v -> m (Maybe a)

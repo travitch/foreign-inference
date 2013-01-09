@@ -12,7 +12,7 @@ import GHC.Generics ( Generic )
 import Control.DeepSeq
 import Control.DeepSeq.Generics ( genericRnf )
 import Control.Lens ( (%~), (.~), (^.), Simple, makeLenses )
-import Control.Monad ( foldM )
+import Control.Monad ( foldM, liftM )
 import qualified Data.Foldable as F
 import Data.Map ( Map )
 import qualified Data.Map as M
@@ -169,7 +169,7 @@ isFinalizerContext :: (HasFunction funcLike)
                       -> funcLike
                       -> Analysis Bool
 isFinalizerContext cg finSumm flike =
-  mapM isFinalizer callers >>= return . or
+  liftM or $ mapM isFinalizer callers
   where
     f = getFunction flike
     callers = allFunctionCallers cg f
@@ -177,10 +177,10 @@ isFinalizerContext cg finSumm flike =
       case valueContent' callee of
         FunctionC fn -> do
           let ixs = [0..length (functionParameters fn)]
-          mapM (isFinalizerArg callee) ixs >>= return . or
+          liftM or $ mapM (isFinalizerArg callee) ixs
         ExternalFunctionC ef -> do
           let ixs = [0..length (externalFunctionParameterTypes ef)]
-          mapM (isFinalizerArg callee) ixs >>= return . or
+          liftM or $ mapM (isFinalizerArg callee) ixs
         _ -> return False
     isFinalizerArg callee ix = do
       annots <- lookupArgumentSummaryList finSumm callee ix

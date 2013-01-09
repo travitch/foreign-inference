@@ -9,6 +9,7 @@ module Foreign.Inference.AnalysisMonad (
   ) where
 
 import Control.Lens
+import Control.Monad ( liftM )
 import Control.Monad.RWS.Strict
 
 import Foreign.Inference.Diagnostics
@@ -29,7 +30,7 @@ instance HasDependencies (AnalysisMonad env st) where
   getDependencySummary = asks envDependencies
 
 analysisEnvironment :: (env -> a) -> AnalysisMonad env st a
-analysisEnvironment r = asks envEnv >>= (return . r)
+analysisEnvironment r = liftM r (asks envEnv)
 
 analysisLocal :: (env -> env) -> AnalysisMonad env st a -> AnalysisMonad env st a
 analysisLocal r = local (\(Env d e) -> Env d (r e))

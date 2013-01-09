@@ -32,7 +32,7 @@ import GHC.Generics
 
 import Control.DeepSeq
 import Control.DeepSeq.Generics ( genericRnf )
-import Control.Monad ( foldM, mzero, when )
+import Control.Monad ( foldM, liftM, mzero, when )
 import Control.Monad.Trans.Class
 import Control.Monad.Trans.Maybe
 import qualified Data.Foldable as F
@@ -249,8 +249,7 @@ returnsTransitiveError funcLike summ bb = do
           let exitInst = basicBlockTerminatorInstruction bb
               priorFacts = relevantInducedFacts funcLike exitInst (toValue i) callee
               callees = callTargets ics callee
-          summ' <- foldM (recordTransitiveError i priorFacts) summ callees
-          return $ Just summ'
+          liftM Just $ foldM (recordTransitiveError i priorFacts) summ callees
         _ -> return Nothing
   where
     f = getFunction funcLike

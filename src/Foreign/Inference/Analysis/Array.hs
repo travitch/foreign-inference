@@ -197,10 +197,10 @@ isArrayDeref summ inst =
     expand (ix, a) = zip (repeat ix) (flattenValue a)
     handleGEP idxs base =
       let flatVals = flattenValue base
-      in foldl' (flip (buildArrayDeref inst idxs)) [] flatVals
+      in foldl' (buildArrayDeref inst idxs) [] flatVals
 
-buildArrayDeref :: Instruction -> [Value] -> Value -> [(Value, PointerUse)] -> [(Value, PointerUse)]
-buildArrayDeref inst idxs base acc =
+buildArrayDeref :: Instruction -> [Value] -> [(Value, PointerUse)] -> Value -> [(Value, PointerUse)]
+buildArrayDeref inst idxs acc base =
   case idxs of
     [] -> error ("Foreign.Inference.Analysis.buildArrayDeref: GEP with no indices: " ++ show inst)
     [_] -> (base, IndexOperation (toValue inst) idxs) : acc

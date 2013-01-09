@@ -45,7 +45,7 @@ data TransferSummary = TransferSummary {
 $(makeLenses ''TransferSummary)
 
 instance Eq TransferSummary where
-  (TransferSummary _ _) == (TransferSummary _ _) = True
+  (TransferSummary as1 _) == (TransferSummary as2 _) = as1 == as2
 
 instance Monoid TransferSummary where
   mempty = TransferSummary mempty mempty
@@ -95,9 +95,7 @@ instance SummarizeModule TransferSummary where
 -- This could additionally depend on the ref count analysis and just
 -- strip off transfer tags from ref counted types.
 
--- FIXME this really needs a fixedpoint!
-
-identifyTransfers :: (HasFunction funcLike)
+identifyTransfers :: (HasFunction funcLike, Eq compositeSummary)
                      => [funcLike]
                      -> CallGraph
                      -> DependencySummary
@@ -108,15 +106,24 @@ identifyTransfers :: (HasFunction funcLike)
                      -> compositeSummary
 identifyTransfers funcLikes cg ds pta p1res flens tlens =
   (tlens .~ res) p1res
+  -- | p1res == p1res' = p1res
+  -- | otherwise = identifyTransfers funcLikes cg ds pta p1res' flens tlens
   where
     res = runAnalysis a ds () ()
     finSumm = p1res ^. flens
     trSumm = p1res ^. tlens
-    a = do
-      ownedFields <- foldM (identifyOwnedFields cg pta finSumm) mempty funcLikes
-      transferedParams <- foldM (identifyTransferredArguments pta ownedFields) trSumm funcLikes
---      return () `debug` show ownedFields
-      return transferedParams
+    -- The field ownership analysis doesn't need a fixed-point
+    -- computation because it only depends on the finalizer analysis.
+    --
+    -- The parameter part does, though, because there is a transitive
+    -- component of the analysis.
+    ofields s = foldM (identifyOwnedFields cg pta finSumm) s funcLikes
+    tparms s ownedFields = do
+      s' <- foldM (identifyTransferredArguments pta ownedFields) s funcLikes
+      case s' == s of
+        True -> return s
+        False -> tparms s' ownedFields
+    a = ofields mempty >>= tparms trSumm
 
 type Analysis = AnalysisMonad () ()
 
@@ -184,9 +191,6 @@ isFinalizerContext cg finSumm flike =
 -- This will eventually need to incorporate shape analysis results.
 -- It will also need to distinguish somehow between fields that are
 -- finalized and elements of container fields that are finalized.
---
--- FIXME: Only check finalizers in functions that are finalizers (or
--- are called *by* finalizers).
 identifyOwnedFields :: (HasFunction funcLike)
                        => CallGraph
                        -> IndirectCallSummary

@@ -1,5 +1,35 @@
 {-# LANGUAGE DeriveGeneric, TemplateHaskell, ViewPatterns #-}
 {-# LANGUAGE RankNTypes #-}
+-- | An analysis to identify interfaces that transfer ownership of objects.
+--
+-- The motivation for this analysis is that escape analysis is a poor
+-- approximation of transfers.  Transfers are relatively rare:
+--
+-- @inproceedings{DBLP:conf/oopsla/MaF07,
+--   author    = {Kin-Keung Ma and
+--                Jeffrey S. Foster},
+--   title     = {Inferring aliasing and encapsulation properties for java},
+--   booktitle = {OOPSLA},
+--   year      = {2007},
+--   pages     = {423-440},
+--   ee        = {http://doi.acm.org/10.1145/1297027.1297059},
+--   crossref  = {DBLP:conf/oopsla/2007},
+--   bibsource = {DBLP, http://dblp.uni-trier.de}
+-- }
+-- @proceedings{DBLP:conf/oopsla/2007,
+--   editor    = {Richard P. Gabriel and
+--                David F. Bacon and
+--                Cristina Videira Lopes and
+--                Guy L. Steele Jr.},
+--   title     = {Proceedings of the 22nd Annual ACM SIGPLAN Conference on
+--                Object-Oriented Programming, Systems, Languages, and Applications,
+--                OOPSLA 2007, October 21-25, 2007, Montreal, Quebec, Canada},
+--   booktitle = {OOPSLA},
+--   publisher = {ACM},
+--   year      = {2007},
+--   isbn      = {978-1-59593-786-5},
+--   bibsource = {DBLP, http://dblp.uni-trier.de}
+-- }
 module Foreign.Inference.Analysis.Transfer (
   TransferSummary,
   identifyTransfers,
@@ -183,10 +213,6 @@ isFinalizerContext cg finSumm flike =
     isFinalizerArg callee ix =
       liftM (elem PAFinalize) $ lookupArgumentSummaryList finSumm callee ix
 
-      -- do
-      -- annots <- lookupArgumentSummaryList finSumm callee ix
-      -- return $ PAFinalize `elem` annots
-
 -- | Add any field passed to a known finalizer to the accumulated Set.
 --
 -- This will eventually need to incorporate shape analysis results.
@@ -220,12 +246,30 @@ identifyOwnedFields cg pta finSumm ownedFields funcLike = do
         False -> return acc
         True ->
           case valueContent' arg of
+            InstructionC CallInst { callFunction = cf } -> undefined
             InstructionC i -> return $ fromMaybe acc $ do
               accPath <- accessPath i
               let absPath = abstractAccessPath accPath
               return $ S.insert absPath acc
             _ -> return acc
 
+-- Starting from the arguments passed to finalizers, trace backwards
+-- to construct an access path.  This is a top-down construction, but
+-- should be reasonably efficient because we don't need to start at
+-- very many places.
+--
+-- Maybe just use a recursive-descent kind of thing where actuals are
+-- substituted for parameters...
+--
+-- Maybe modify the Finalizer analysis to note when the finalizer
+-- *also* finalizes some owned fields.  This would let us build
+-- finalized access paths bottom-up.  This would let us easily handle
+-- a case like:
+--
+-- > freeChildren(a);
+--
+-- we could see that a->children->e is finalized, which would let us
+-- know that anything stored to a->children->e is a transfer...
 
 -- Testing
 

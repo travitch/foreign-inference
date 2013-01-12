@@ -122,7 +122,10 @@ transitiveReturnTransfer :: Function
                             -> Function
                             -> [Value]
                             -> Analysis SAPSummary
-transitiveReturnTransfer f aids s callee args = undefined
+transitiveReturnTransfer f aids s@(SAPSummary rs _ _) callee args =
+  case M.lookup callee rs of
+    Nothing -> return s
+    Just rpaths -> undefined
 
 -- FIXME: This could actually probably work on external functions,
 -- too, if we are careful in representing access paths

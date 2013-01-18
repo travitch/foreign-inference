@@ -11,7 +11,7 @@ import GHC.Generics ( Generic )
 
 import Control.DeepSeq
 import Control.DeepSeq.Generics ( genericRnf )
-import Control.Lens ( Simple, makeLenses, (%~) )
+import Control.Lens ( Simple, makeLenses, (%~), (.~) )
 import Control.Monad ( foldM )
 import Data.Map ( Map )
 import qualified Data.Map as M
@@ -92,63 +92,80 @@ sapAnalysis :: (FuncLike funcLike, HasFunction funcLike)
                -> SAPSummary
                -> Analysis SAPSummary
 sapAnalysis flike s =
-  foldM (sapTransfer f paramIds) s (functionInstructions f)
+  foldM (sapTransfer f) s (functionInstructions f)
   where
     f = getFunction flike
-    params = functionParameters f
-    paramIds = M.fromList $ zip params [0..]
-
-
 
 sapTransfer :: Function
-               -> Map Argument Int
                -> SAPSummary
                -> Instruction
                -> Analysis SAPSummary
-sapTransfer f aids s i =
+sapTransfer f s i =
   case i of
     RetInst { retInstValue = Just (valueContent' ->
       InstructionC PhiNode { phiIncomingValues = (map fst -> ivs) })} ->
-      foldM (returnValueTransfer f aids) s (valuesAsInsts ivs)
+      foldM (returnValueTransfer f) s (valuesAsInsts ivs)
     RetInst { retInstValue = Just (valueContent' ->
       InstructionC SelectInst { selectTrueValue = tv, selectFalseValue = fv })} ->
-      foldM (returnValueTransfer f aids) s (valuesAsInsts [tv, fv])
+      foldM (returnValueTransfer f) s (valuesAsInsts [tv, fv])
     RetInst { retInstValue = Just (valueContent' -> InstructionC ri) } ->
-      returnValueTransfer f aids s ri
+      returnValueTransfer f s ri
 
+-- | When the result of a call is returned, that call is known to
+-- return an access path *into* one of its arguments.  What we need to
+-- do here is figure out which of the callee's arguments the access
+-- path uses (the Int the AAP is tagged with).
+--
+-- We then take the actual argument at that index and look up its
+-- access path.  If that concrete access path is rooted at an
+-- argument, we get the index of that argument and then append the
+-- access paths.
 transitiveReturnTransfer :: Function
-                            -> Map Argument Int
                             -> SAPSummary
                             -> Function
                             -> [Value]
                             -> Analysis SAPSummary
-transitiveReturnTransfer f aids s@(SAPSummary rs _ _) callee args =
+transitiveReturnTransfer f s@(SAPSummary rs _ _) callee args =
   case M.lookup callee rs of
     Nothing -> return s
-    Just rpaths -> undefined
+    Just rpaths -> do
+      let trpaths = mapMaybe extendRPath $ S.toList rpaths
+          rs' = foldr (M.insertWith S.union f) rs trpaths
+      return $ (sapReturns .~ rs') s
+  where
+    extendRPath (ix, p) = do
+      actual <- safeIndex ix args
+      i <- toInstruction actual
+      cap <- accessPath i
+      formal <- accessPathBaseArgument cap
+      let absPath = abstractAccessPath cap
+          tix = argumentIndex formal
+      tp <- absPath `appendAccessPath` p
+      return $ S.singleton (tix, tp)
+
+-- type ReturnPath = (Int, AbstractAccessPath)
 
 -- FIXME: This could actually probably work on external functions,
 -- too, if we are careful in representing access paths
 returnValueTransfer :: Function
-                       -> Map Argument Int
                        -> SAPSummary
                        -> Instruction
                        -> Analysis SAPSummary
-returnValueTransfer f aids s CallInst { callArguments = (map fst -> args)
+returnValueTransfer f s CallInst { callArguments = (map fst -> args)
                                       , callFunction = (valueContent' -> FunctionC callee) } =
-  transitiveReturnTransfer f aids s callee args
-returnValueTransfer f aids s InvokeInst { invokeArguments = (map fst -> args)
+  transitiveReturnTransfer f s callee args
+returnValueTransfer f s InvokeInst { invokeArguments = (map fst -> args)
                                         , invokeFunction = (valueContent' -> FunctionC callee) } =
-  transitiveReturnTransfer f aids s callee args
-returnValueTransfer f aids s i = return $ fromMaybe s $ do
+  transitiveReturnTransfer f s callee args
+returnValueTransfer f s i = return $ fromMaybe s $ do
   p <- accessPath i
   let absPath = abstractAccessPath p
       addArg aid =
         let v = S.singleton (aid, absPath)
         in (sapReturns %~ M.insertWith S.union f v) s
   case valueContent' (accessPathBaseValue p) of
-    ArgumentC a ->
-      return $ maybe s addArg (M.lookup a aids)
+    ArgumentC a -> return $ addArg (argumentIndex a)
+--      return $ maybe s addArg (M.lookup a aids)
     _ -> return s
 
 
@@ -159,3 +176,19 @@ valuesAsInsts = mapMaybe toInst
       case valueContent' v of
         InstructionC i -> Just i
         _ -> Nothing
+
+accessPathBaseArgument :: AccessPath -> Maybe Argument
+accessPathBaseArgument p =
+  case valueContent' (accessPathBaseValue p) of
+    ArgumentC a -> return a
+    _ -> Nothing
+
+toInstruction :: Value -> Maybe Instruction
+toInstruction v =
+  case valueContent' v of
+    InstructionC i -> return i
+    _ -> Nothing
+
+safeIndex :: Int -> [a] -> Maybe a
+safeIndex ix lst | ix >= length lst = Nothing
+                 | otherwise = return $ lst !! ix

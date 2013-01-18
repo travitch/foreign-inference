@@ -470,13 +470,6 @@ mustEscapeLocation = snd . go mempty
       where
         visited' = S.insert v visited
 
-argumentIndex :: Argument -> Int
-argumentIndex a = ix
-  where
-    Just (ix, _) = F.find ((==a) . snd) ps
-    f = argumentFunction a
-    ps = zip [0..] (functionParameters f)
-
 -- Testing
 
 -- | Extract the arguments for each function that escape.  The keys of

@@ -40,7 +40,6 @@ import Data.HashMap.Strict ( HashMap )
 import qualified Data.HashMap.Strict as HM
 import Data.IntMap ( IntMap )
 import qualified Data.IntMap as IM
-import Data.List ( elemIndex )
 import Data.List.NonEmpty ( NonEmpty(..) )
 import qualified Data.List.NonEmpty as NEL
 import Data.Maybe ( fromMaybe )
@@ -675,12 +674,6 @@ callArgActions (ix, v) acc =
     ConstantC ConstantInt { constantIntValue = (fromIntegral -> iv) } ->
       IM.insert ix (ErrorInt iv) acc
     _ -> acc
-
-argumentIndex :: Argument -> Int
-argumentIndex a = aix
-  where
-    f = argumentFunction a
-    Just aix = elemIndex a (functionParameters f)
 
 singlePredecessor :: CFG -> BasicBlock -> Maybe BasicBlock
 singlePredecessor cfg bb =

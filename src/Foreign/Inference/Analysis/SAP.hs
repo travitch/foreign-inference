@@ -11,8 +11,9 @@ import GHC.Generics ( Generic )
 
 import Control.DeepSeq
 import Control.DeepSeq.Generics ( genericRnf )
-import Control.Lens ( Simple, makeLenses, (%~), (.~) )
+import Control.Lens ( Simple, makeLenses, (%~), (.~), (^.) )
 import Control.Monad ( foldM )
+import qualified Data.Foldable as F
 import Data.Map ( Map )
 import qualified Data.Map as M
 import Data.Maybe ( fromMaybe, mapMaybe )
@@ -28,7 +29,12 @@ import Foreign.Inference.AnalysisMonad
 import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
 
+-- FIXME: This could be extended with a FinalizesPath constructor
+-- to record transitive field finalizers
 data AugmentedAccessPath = WritePath !Int AbstractAccessPath !Int
+                           -- ^ Argument being stored into, Access
+                           -- path into that argument, and the
+                           -- argument being stored.
                          deriving (Eq, Ord, Show, Generic)
 
 instance NFData AugmentedAccessPath where
@@ -38,7 +44,7 @@ type ReturnPath = (Int, AbstractAccessPath)
 
 data SAPSummary =
   SAPSummary { _sapReturns :: Map Function (Set ReturnPath)
-             , _sapArguments :: Map Function (Set AugmentedAccessPath)
+             , _sapArguments :: Map Argument (Set AugmentedAccessPath)
              , _sapDiagnostics :: Diagnostics
              }
   deriving (Generic)
@@ -75,12 +81,6 @@ identifySAPs ds lns =
   where
     runner a = runAnalysis a ds () ()
 
-{-
-data AugmentedAccessPath = ReturnPath !Int AbstractAccessPath
-                         | WritePath !Int AbstractAccessPath !Int
-                         deriving (Eq, Ord, Show, Generic)
--}
-
 -- | For non-void functions, first check the return instruction and
 -- see if it is returning some access path.  Next, just iterate over
 -- all stores.
@@ -111,6 +111,74 @@ sapTransfer f s i =
     RetInst { retInstValue = Just (valueContent' -> InstructionC ri) } ->
       returnValueTransfer f s ri
 
+    -- We need to make an entry in sapArguments if we store an argument
+    -- into some access path based on another argument
+    StoreInst { storeValue = (valueContent' -> ArgumentC sv) } ->
+      storeTransfer s i sv
+
+    CallInst { callFunction = (valueContent' -> FunctionC callee)
+             , callArguments = (map fst -> actuals) } ->
+      foldM (callTransfer callee actuals) s (zip [0..] actuals)
+    InvokeInst { invokeFunction = (valueContent' -> FunctionC callee)
+               , invokeArguments = (map fst -> actuals) } ->
+      foldM (callTransfer callee actuals) s (zip [0..] actuals)
+
+    _ -> return s
+
+-- | If we are calling a function that, as a side-effect, stores one
+-- of its arguments into a field of another, we need to stitch
+-- together the access paths (as in the transitive return call case).
+callTransfer :: Function
+                -> [Value]
+                -> SAPSummary
+                -> (Int, Value)
+                -> Analysis SAPSummary
+callTransfer callee actuals s (argIx, actual) =
+  return $ fromMaybe s $ do
+    formal <- fromValue actual
+    calleeFormal <- safeIndex argIx (functionParameters callee)
+    calleeFormalSumm <- M.lookup calleeFormal (s ^. sapArguments)
+    let args' = F.foldr (augmentTransfer formal) (s ^. sapArguments) calleeFormalSumm
+    return $ (sapArguments .~ args') s
+  where
+    augmentTransfer formal (WritePath dstArg p _) argSumm =
+      fromMaybe argSumm $ do
+        baseActual <- safeIndex dstArg actuals
+        actualInst <- fromValue baseActual
+        cap' <- accessPath actualInst
+        baseArg <- accessPathBaseArgument cap'
+        let absPath = abstractAccessPath cap'
+        p' <- absPath `appendAccessPath` p
+        let formalIx = argumentIndex formal
+            dstArg' = argumentIndex baseArg
+            wp = WritePath dstArg' p' formalIx
+        return $ M.insertWith S.union formal (S.singleton wp) argSumm
+
+-- | If this StoreInst represents the store of an Argument into a
+-- field of another argument, record that in the sapArguments summary.
+--
+-- > void f(struct S *s, struct Foo *foo) {
+-- >   s->bar = foo;
+-- > }
+--
+-- > WritePath 0 S.<0> 1
+--
+-- Argument 1 is stored into field zero of argument 0.
+storeTransfer :: SAPSummary
+                 -> Instruction -- ^ Store instruction
+                 -> Argument -- ^ The argument being stored
+                 -> Analysis SAPSummary
+storeTransfer s storeInst storedArg =
+  return $ maybe s addStore res
+  where
+    addStore res' =
+      (sapArguments %~ M.insertWith S.union storedArg (S.singleton res')) s
+    res = do
+      cap <- accessPath storeInst
+      base <- accessPathBaseArgument cap
+      let absPath = abstractAccessPath cap
+      return $! WritePath (argumentIndex base) absPath (argumentIndex storedArg)
+
 -- | When the result of a call is returned, that call is known to
 -- return an access path *into* one of its arguments.  What we need to
 -- do here is figure out which of the callee's arguments the access
@@ -126,24 +194,21 @@ transitiveReturnTransfer :: Function
                             -> [Value]
                             -> Analysis SAPSummary
 transitiveReturnTransfer f s@(SAPSummary rs _ _) callee args =
-  case M.lookup callee rs of
-    Nothing -> return s
-    Just rpaths -> do
-      let trpaths = mapMaybe extendRPath $ S.toList rpaths
-          rs' = foldr (M.insertWith S.union f) rs trpaths
-      return $ (sapReturns .~ rs') s
+  return $ fromMaybe s $ do
+    rpaths <- M.lookup callee rs
+    let trpaths = mapMaybe extendRPath $ S.toList rpaths
+        rs' = foldr (M.insertWith S.union f) rs trpaths
+    return $ (sapReturns .~ rs') s
   where
     extendRPath (ix, p) = do
       actual <- safeIndex ix args
-      i <- toInstruction actual
+      i <- fromValue actual
       cap <- accessPath i
       formal <- accessPathBaseArgument cap
       let absPath = abstractAccessPath cap
           tix = argumentIndex formal
       tp <- absPath `appendAccessPath` p
       return $ S.singleton (tix, tp)
-
--- type ReturnPath = (Int, AbstractAccessPath)
 
 -- FIXME: This could actually probably work on external functions,
 -- too, if we are careful in representing access paths
@@ -165,7 +230,6 @@ returnValueTransfer f s i = return $ fromMaybe s $ do
         in (sapReturns %~ M.insertWith S.union f v) s
   case valueContent' (accessPathBaseValue p) of
     ArgumentC a -> return $ addArg (argumentIndex a)
---      return $ maybe s addArg (M.lookup a aids)
     _ -> return s
 
 
@@ -181,12 +245,6 @@ accessPathBaseArgument :: AccessPath -> Maybe Argument
 accessPathBaseArgument p =
   case valueContent' (accessPathBaseValue p) of
     ArgumentC a -> return a
-    _ -> Nothing
-
-toInstruction :: Value -> Maybe Instruction
-toInstruction v =
-  case valueContent' v of
-    InstructionC i -> return i
     _ -> Nothing
 
 safeIndex :: Int -> [a] -> Maybe a

@@ -169,3 +169,21 @@ test-suite TransferTests
   ghc-options: -Wall
   build-depends: llvm-analysis, llvm-data-interop, base, containers,
                  HUnit, foreign-inference, filepath
+
+test-suite SAPTests
+  default-language: Haskell2010
+  type: exitcode-stdio-1.0
+  main-is: SAPTests.hs
+  hs-source-dirs: tests
+  ghc-options: -Wall
+  build-depends: llvm-analysis, llvm-data-interop, base, containers,
+                 HUnit, foreign-inference, filepath
+
+test-suite SAPArgumentTests
+  default-language: Haskell2010
+  type: exitcode-stdio-1.0
+  main-is: SAPArgumentTests.hs
+  hs-source-dirs: tests
+  ghc-options: -Wall
+  build-depends: llvm-analysis, llvm-data-interop, base, containers,
+                 HUnit, foreign-inference, filepath

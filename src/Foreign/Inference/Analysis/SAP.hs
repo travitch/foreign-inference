@@ -4,7 +4,10 @@
 -- in a Module.
 module Foreign.Inference.Analysis.SAP (
   SAPSummary,
-  identifySAPs
+  identifySAPs,
+  -- * Testing
+  sapReturnResultToTestFormat,
+  sapArgumentResultToTestFormat
   ) where
 
 import GHC.Generics ( Generic )
@@ -28,6 +31,9 @@ import LLVM.Analysis.CallGraphSCCTraversal
 import Foreign.Inference.AnalysisMonad
 import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
+
+import Debug.Trace
+debug = flip trace
 
 -- FIXME: This could be extended with a FinalizesPath constructor
 -- to record transitive field finalizers
@@ -113,6 +119,9 @@ sapTransfer f s i =
 
     -- We need to make an entry in sapArguments if we store an argument
     -- into some access path based on another argument
+    --
+    -- FIXME: If we are storing into the result of a callinst, check
+    -- to see if that call has a summary that could be extended.
     StoreInst { storeValue = (valueContent' -> ArgumentC sv) } ->
       storeTransfer s i sv
 
@@ -217,10 +226,10 @@ returnValueTransfer :: Function
                        -> Instruction
                        -> Analysis SAPSummary
 returnValueTransfer f s CallInst { callArguments = (map fst -> args)
-                                      , callFunction = (valueContent' -> FunctionC callee) } =
+                                 , callFunction = (valueContent' -> FunctionC callee) } =
   transitiveReturnTransfer f s callee args
 returnValueTransfer f s InvokeInst { invokeArguments = (map fst -> args)
-                                        , invokeFunction = (valueContent' -> FunctionC callee) } =
+                                   , invokeFunction = (valueContent' -> FunctionC callee) } =
   transitiveReturnTransfer f s callee args
 returnValueTransfer f s i = return $ fromMaybe s $ do
   p <- accessPath i
@@ -250,3 +259,29 @@ accessPathBaseArgument p =
 safeIndex :: Int -> [a] -> Maybe a
 safeIndex ix lst | ix >= length lst = Nothing
                  | otherwise = return $ lst !! ix
+
+-- Testing
+
+sapReturnResultToTestFormat :: SAPSummary -> Map String (Set (Int, String, [AccessType]))
+sapReturnResultToTestFormat =
+  M.fromList . map toTestFormat . M.toList . (^. sapReturns)
+  where
+    toTestFormat (f, s) =
+      (identifierAsString (functionName f),
+       S.map fromRetPath s)
+    fromRetPath (ix, p) =
+      (ix, show (abstractAccessPathBaseType p),
+       abstractAccessPathComponents p)
+
+sapArgumentResultToTestFormat :: SAPSummary -> Map (String, String) (Set (Int, String, [AccessType]))
+sapArgumentResultToTestFormat =
+  M.fromList . map toTestFormat . M.toList . (^. sapArguments)
+  where
+    toTestFormat (a, s) =
+      let f = argumentFunction a
+          p1 = (identifierAsString (functionName f),
+                identifierAsString (argumentName a))
+      in (p1, S.map fromPath s)
+    fromPath (WritePath ix p _) =
+      (ix, show (abstractAccessPathBaseType p),
+       abstractAccessPathComponents p)

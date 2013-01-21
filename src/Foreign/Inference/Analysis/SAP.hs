@@ -32,9 +32,6 @@ import Foreign.Inference.AnalysisMonad
 import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
 
-import Debug.Trace
-debug = flip trace
-
 -- FIXME: This could be extended with a FinalizesPath constructor
 -- to record transitive field finalizers
 data AugmentedAccessPath = WritePath !Int AbstractAccessPath !Int
@@ -50,7 +47,10 @@ type ReturnPath = (Int, AbstractAccessPath)
 
 data SAPSummary =
   SAPSummary { _sapReturns :: Map Function (Set ReturnPath)
+               -- ^ The return paths for each function
              , _sapArguments :: Map Argument (Set AugmentedAccessPath)
+               -- ^ Maps each Argument to the access paths it is
+               -- stored into.
              , _sapDiagnostics :: Diagnostics
              }
   deriving (Generic)
@@ -137,6 +137,20 @@ sapTransfer f s i =
 -- | If we are calling a function that, as a side-effect, stores one
 -- of its arguments into a field of another, we need to stitch
 -- together the access paths (as in the transitive return call case).
+-- This propagates information about the _store_ case to callers.
+--
+-- > void g(struct S *s, int *x) {
+-- >   s->f1 = x;
+-- > }
+-- >
+-- > void f(struct T *t, int *x) {
+-- >   g(t->s, x);
+-- > }
+--
+-- The summary for @g@ is produced by the _store_ case.  This function
+-- produces the summary for @f@ based on the call to @g@.  This
+-- function is called once for each actual argument to the call of @g@
+-- by the top-level transfer function.
 callTransfer :: Function
                 -> [Value]
                 -> SAPSummary
@@ -144,24 +158,49 @@ callTransfer :: Function
                 -> Analysis SAPSummary
 callTransfer callee actuals s (argIx, actual) =
   return $ fromMaybe s $ do
+    -- This formal is @x@ in @f@; it is a *formal* argument passed to
+    -- @g@ as an *actual* parameter.
     formal <- fromValue actual
     calleeFormal <- safeIndex argIx (functionParameters callee)
     calleeFormalSumm <- M.lookup calleeFormal (s ^. sapArguments)
+    -- We now have to extend each of the summaries for this argument.
+    -- Each summary tells us which other actual this formal is stored
+    -- into.
     let args' = F.foldr (augmentTransfer formal) (s ^. sapArguments) calleeFormalSumm
     return $ (sapArguments .~ args') s
   where
+    -- Called once per summary for this argument.
     augmentTransfer formal (WritePath dstArg p _) argSumm =
       fromMaybe argSumm $ do
         baseActual <- safeIndex dstArg actuals
-        actualInst <- fromValue baseActual
-        cap' <- accessPath actualInst
-        baseArg <- accessPathBaseArgument cap'
-        let absPath = abstractAccessPath cap'
-        p' <- absPath `appendAccessPath` p
-        let formalIx = argumentIndex formal
-            dstArg' = argumentIndex baseArg
-            wp = WritePath dstArg' p' formalIx
-        return $ M.insertWith S.union formal (S.singleton wp) argSumm
+        case valueContent' baseActual of
+          ArgumentC argActual -> do
+            -- In this case, the actual argument is just an argument
+            -- (could be considered a degenerate access path).  This
+            -- is the case where an argument is passed-through to
+            -- a function.
+            --
+            -- In the example, this would be the first argument to @g@
+            -- if it was just an argument passed down to @g@ instead
+            -- of a field access.
+            let dstArg' = argumentIndex argActual
+                wp = WritePath dstArg' p (argumentIndex formal)
+            return $ M.insertWith S.union formal (S.singleton wp) argSumm
+          _ -> do
+            -- In this case, the actual argument is some field or
+            -- array access.  That is @t->s@
+            actualInst <- fromValue baseActual
+            cap' <- accessPath actualInst
+            -- @t@ in the example
+            baseArg <- accessPathBaseArgument cap'
+            let absPath = abstractAccessPath cap'
+            -- Extend the summary from @g@ with the @t->s@ we just
+            -- observed.
+            p' <- absPath `appendAccessPath` p
+            let formalIx = argumentIndex formal
+                dstArg' = argumentIndex baseArg
+                wp = WritePath dstArg' p' formalIx
+            return $ M.insertWith S.union formal (S.singleton wp) argSumm
 
 -- | If this StoreInst represents the store of an Argument into a
 -- field of another argument, record that in the sapArguments summary.
@@ -183,7 +222,9 @@ storeTransfer s storeInst storedArg =
     addStore res' =
       (sapArguments %~ M.insertWith S.union storedArg (S.singleton res')) s
     res = do
+      -- This is @s->bar@
       cap <- accessPath storeInst
+      -- And this is @s@
       base <- accessPathBaseArgument cap
       let absPath = abstractAccessPath cap
       return $! WritePath (argumentIndex base) absPath (argumentIndex storedArg)

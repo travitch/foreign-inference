@@ -60,7 +60,8 @@ library
                  unordered-containers >= 0.2.1.0, hashable, mtl > 2 && < 3,
                  aeson >= 0.4.0.0, loch-th >= 0.2, temporary, process,
                  llvm-analysis, deepseq, deepseq-generics, lens >= 1,
-                 failure >= 0.2, regex-tdfa, transformers >= 0.2 && < 0.4, hbgl,
+                 failure >= 0.2, safe-failure,
+                 regex-tdfa, transformers >= 0.2 && < 0.4, hbgl,
                  hjsmin, graphviz, semigroups, file-embed >= 0.0.4.2,
                  sbv >= 2.9, ifscs,
                  -- For the reporting code

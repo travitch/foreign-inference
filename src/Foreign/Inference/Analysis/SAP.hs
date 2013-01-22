@@ -23,6 +23,7 @@ import Data.Maybe ( fromMaybe, mapMaybe )
 import Data.Monoid
 import Data.Set ( Set )
 import qualified Data.Set as S
+import Safe.Failure ( at )
 
 import LLVM.Analysis
 import LLVM.Analysis.AccessPath
@@ -161,7 +162,7 @@ callTransfer callee actuals s (argIx, actual) =
     -- This formal is @x@ in @f@; it is a *formal* argument passed to
     -- @g@ as an *actual* parameter.
     formal <- fromValue actual
-    calleeFormal <- safeIndex argIx (functionParameters callee)
+    calleeFormal <- functionParameters callee `at` argIx
     calleeFormalSumm <- M.lookup calleeFormal (s ^. sapArguments)
     -- We now have to extend each of the summaries for this argument.
     -- Each summary tells us which other actual this formal is stored
@@ -172,7 +173,7 @@ callTransfer callee actuals s (argIx, actual) =
     -- Called once per summary for this argument.
     augmentTransfer formal (WritePath dstArg p _) argSumm =
       fromMaybe argSumm $ do
-        baseActual <- safeIndex dstArg actuals
+        baseActual <- actuals `at` dstArg
         case valueContent' baseActual of
           ArgumentC argActual -> do
             -- In this case, the actual argument is just an argument
@@ -251,7 +252,7 @@ transitiveReturnTransfer f s@(SAPSummary rs _ _) callee args =
     return $ (sapReturns .~ rs') s
   where
     extendRPath (ix, p) = do
-      actual <- safeIndex ix args
+      actual <- args `at` ix
       i <- fromValue actual
       cap <- accessPath i
       formal <- accessPathBaseArgument cap
@@ -296,10 +297,6 @@ accessPathBaseArgument p =
   case valueContent' (accessPathBaseValue p) of
     ArgumentC a -> return a
     _ -> Nothing
-
-safeIndex :: Int -> [a] -> Maybe a
-safeIndex ix lst | ix >= length lst = Nothing
-                 | otherwise = return $ lst !! ix
 
 -- Testing
 

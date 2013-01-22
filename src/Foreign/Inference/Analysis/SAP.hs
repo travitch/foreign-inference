@@ -356,24 +356,15 @@ returnValueTransfer f s i = return $ fromMaybe s $ do
       addArg aid =
         let v = S.singleton (aid, absPath)
         in (sapReturns %~ M.insertWith S.union f v) s
-  case valueContent' (accessPathBaseValue p) of
-    ArgumentC a -> return $ addArg (argumentIndex a)
-    _ -> return s
-
+  a <- accessPathBaseArgument p
+  return $ addArg (argumentIndex a)
 
 valuesAsInsts :: [Value] -> [Instruction]
-valuesAsInsts = mapMaybe toInst
-  where
-    toInst v =
-      case valueContent' v of
-        InstructionC i -> Just i
-        _ -> Nothing
+valuesAsInsts = mapMaybe fromValue
 
 accessPathBaseArgument :: AccessPath -> Maybe Argument
 accessPathBaseArgument p =
-  case valueContent' (accessPathBaseValue p) of
-    ArgumentC a -> return a
-    _ -> Nothing
+  fromValue $ valueContent' (accessPathBaseValue p)
 
 -- Testing
 

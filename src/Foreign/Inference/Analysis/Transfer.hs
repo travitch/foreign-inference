@@ -42,7 +42,9 @@ import GHC.Generics ( Generic )
 import Control.DeepSeq
 import Control.DeepSeq.Generics ( genericRnf )
 import Control.Lens ( (%~), (.~), (^.), Simple, makeLenses )
-import Control.Monad ( foldM, liftM )
+import Control.Monad ( foldM, liftM, liftM2 )
+import Control.Monad.Trans
+import Control.Monad.Trans.Maybe
 import qualified Data.Foldable as F
 import Data.Map ( Map )
 import qualified Data.Map as M
@@ -61,6 +63,7 @@ import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
 import Foreign.Inference.Analysis.Finalize
 import Foreign.Inference.Analysis.IndirectCallResolver
+import Foreign.Inference.Analysis.SAP
 import Foreign.Inference.Analysis.Util.CalleeFold
 
 import Debug.Trace
@@ -132,20 +135,22 @@ identifyTransfers :: (HasFunction funcLike, Eq compositeSummary)
                      -> IndirectCallSummary
                      -> compositeSummary
                      -> Simple Lens compositeSummary FinalizerSummary
+                     -> Simple Lens compositeSummary SAPSummary
                      -> Simple Lens compositeSummary TransferSummary
                      -> compositeSummary
-identifyTransfers funcLikes cg ds pta p1res flens tlens =
+identifyTransfers funcLikes cg ds pta p1res flens slens tlens =
   (tlens .~ res) p1res
   where
     res = runAnalysis a ds () ()
     finSumm = p1res ^. flens
     trSumm = p1res ^. tlens
+    sapSumm = p1res ^. slens
     -- The field ownership analysis doesn't need a fixed-point
     -- computation because it only depends on the finalizer analysis.
     --
     -- The parameter part does, though, because there is a transitive
     -- component of the analysis.
-    ofields s = foldM (identifyOwnedFields cg pta finSumm) s funcLikes
+    ofields s = foldM (identifyOwnedFields cg pta finSumm sapSumm) s funcLikes
     tparms s ownedFields = do
       s' <- foldM (identifyTransferredArguments pta ownedFields) s funcLikes
       case s' == s of
@@ -191,6 +196,12 @@ identifyTransferredArguments pta ownedFields trSumm flike =
         True -> return $ (transferArguments %~ S.insert arg) s
     argumentTransfer _ s _ = return s
 
+-- | Determine whether or not the given function is a finalizer.  We
+-- need this because we only want to infer ownership from finalizer
+-- calls *within another finalizer*.
+--
+-- This lets us ignore almost all "local" deletes where some
+-- locally-allocated value is stored in a struct and then finalized.
 isFinalizerContext :: (HasFunction funcLike)
                       => CallGraph
                       -> FinalizerSummary
@@ -202,16 +213,19 @@ isFinalizerContext cg finSumm flike =
     f = getFunction flike
     callers = allFunctionCallers cg f
     isFinalizer callee =
-      case valueContent' callee of
-        FunctionC fn -> do
-          let ixs = [0..length (functionParameters fn)]
-          liftM or $ mapM (isFinalizerArg callee) ixs
-        ExternalFunctionC ef -> do
-          let ixs = [0..length (externalFunctionParameterTypes ef)]
-          liftM or $ mapM (isFinalizerArg callee) ixs
-        _ -> return False
+      liftM2 fromMaybe (return False) $ runMaybeT (checkFinCtx callee)
+    checkFinCtx callee = do
+      nargs <- formalArgumentCount callee
+      liftM or $ mapM (isFinalizerArg callee) [0..nargs]
     isFinalizerArg callee ix =
-      liftM (elem PAFinalize) $ lookupArgumentSummaryList finSumm callee ix
+      liftM (elem PAFinalize) $ lift $ lookupArgumentSummaryList finSumm callee ix
+
+formalArgumentCount :: Value -> MaybeT Analysis Int
+formalArgumentCount v =
+  case valueContent' v of
+    FunctionC fn -> return $ length $ functionParameters fn
+    ExternalFunctionC ef -> return $ length $ externalFunctionParameterTypes ef
+    _ -> fail "Not a function"
 
 -- | Add any field passed to a known finalizer to the accumulated Set.
 --
@@ -222,10 +236,11 @@ identifyOwnedFields :: (HasFunction funcLike)
                        => CallGraph
                        -> IndirectCallSummary
                        -> FinalizerSummary
+                       -> SAPSummary
                        -> Set AbstractAccessPath
                        -> funcLike
                        -> Analysis (Set AbstractAccessPath)
-identifyOwnedFields cg pta finSumm ownedFields funcLike = do
+identifyOwnedFields cg pta finSumm sapSumm ownedFields funcLike = do
   isFin <- isFinalizerContext cg finSumm funcLike
   case isFin of
     True -> foldM checkFinalize ownedFields insts
@@ -242,8 +257,36 @@ identifyOwnedFields cg pta finSumm ownedFields funcLike = do
 
     addFieldIfFinalized target acc (ix, arg) = do
       annots <- lookupArgumentSummaryList finSumm target ix
+      -- FIXME: Check here for finalized fields; if we see a PAFinalizeField,
+      -- augment the access path of arg
       case PAFinalize `elem` annots of
-        False -> return acc
+        -- In this case we aren't seeing a known finalizer call;
+        -- instead, check to see if the call is known to finalize some
+        -- field of one of its arguments.
+        False -> return $ fromMaybe acc $ do
+          ffs <- finalizedFields annots
+          case valueContent' arg of
+            ArgumentC formal -> do
+              -- All of the paths described by ffs are owned fields, so
+              -- union them with acc
+              --
+              -- FIXME: The problem here is that reconstructing an
+              -- AbstractAccessPath from @ffs@ is really difficult. It
+              -- looks like it will be necessary to add some helper
+              -- functions to the SAPSummary interface to allow for
+              -- direct queries that return real AbstractAccessPaths.
+              return undefined
+            InstructionC i -> do
+              cap <- accessPath i
+              baseArg <- accessPathBaseArgument cap
+              let absPath = abstractAccessPath cap
+              -- Extend absPath by each of the paths described in ffs.
+              -- These are *all* owned fields:
+              --
+              -- S.union acc (S.fromList extended)
+              return undefined
+            _ -> Nothing
+        -- Calling a known finalizer on some value
         True ->
           case valueContent' arg of
             InstructionC CallInst { callFunction = cf } -> undefined
@@ -252,6 +295,15 @@ identifyOwnedFields cg pta finSumm ownedFields funcLike = do
               let absPath = abstractAccessPath accPath
               return $ S.insert absPath acc
             _ -> return acc
+
+finalizedFields :: [ParamAnnotation] -> Maybe [(String, [AccessType])]
+finalizedFields ps =
+  case foldr collectFinalizedFields [] ps of
+    [] -> Nothing
+    flds -> Just flds
+  where
+    collectFinalizedFields (PAFinalizeField fs) acc = fs ++ acc
+    collectFinalizedFields _ acc = acc
 
 -- Starting from the arguments passed to finalizers, trace backwards
 -- to construct an access path.  This is a top-down construction, but
@@ -270,6 +322,11 @@ identifyOwnedFields cg pta finSumm ownedFields funcLike = do
 --
 -- we could see that a->children->e is finalized, which would let us
 -- know that anything stored to a->children->e is a transfer...
+
+accessPathBaseArgument :: AccessPath -> Maybe Argument
+accessPathBaseArgument p =
+  fromValue $ valueContent' (accessPathBaseValue p)
+
 
 -- Testing
 

@@ -76,8 +76,17 @@ instance HasDiagnostics SAPSummary where
 type Analysis = AnalysisMonad () ()
 
 instance SummarizeModule SAPSummary where
-  summarizeArgument _ _ = []
-  summarizeFunction _ _ = []
+  summarizeArgument a (SAPSummary _ as _) =
+    fromMaybe [] $ do
+      ar <- M.lookup a as
+      let toExternal (WritePath ix p _) =
+            Just (ix, show (abstractAccessPathBaseType p), abstractAccessPathComponents p)
+      return [(PASAPWrite $ mapMaybe toExternal $ S.toList ar, [])]
+  summarizeFunction f (SAPSummary rs _ _) =
+    fromMaybe [] $ do
+      fr <- M.lookup f rs
+      let toExternal (ix, p) = (ix, show (abstractAccessPathBaseType p), abstractAccessPathComponents p)
+      return [(FASAPReturn $ map toExternal $ S.toList fr, [])]
 
 identifySAPs :: (FuncLike funcLike, HasFunction funcLike)
                 => DependencySummary

@@ -47,6 +47,7 @@ data ParamAnnotation = PAArray !Int
                      | PAFptrEscape
                      | PAWillEscape
                      | PATransfer
+                     | PASAPWrite [(Int, String, [AccessType])]
                      | PAScalarEffectAddOne String [AccessType]
                      | PAScalarEffectSubOne String [AccessType]
                      deriving (Show, Read, Generic, Eq, Ord)
@@ -118,6 +119,7 @@ data FuncAnnotation = FAAllocator String -- ^ Record the associated finalizer
                     | FANoRet -- ^ The function does not return to the caller
                     | FAVarArg
                     | FACondFinalizer
+                    | FASAPReturn [(Int, String, [AccessType])]
                     | FAReportsErrors (Set ErrorAction) ErrorReturn
                     deriving (Show, Read, Generic, Eq, Ord)
 instance FromJSON FuncAnnotation

@@ -25,7 +25,7 @@ main :: IO ()
 main = do
   args <- getArgs
   let pattern = case args of
-        [] -> "tests/sap/return/*.c"
+        [] -> "tests/sap/finalize/*.c"
         [infile] -> infile
         _ -> error "At most one argument allowed"
   ds <- loadDependencies [] []
@@ -40,11 +40,11 @@ main = do
   where
     bcParser = parseLLVMFile defaultParserOptions
 
-type Summary = (Int, String, [AccessType])
+type Summary = (String, [AccessType])
 
-analyzeSAPs :: DependencySummary -> Module -> Map String (Set Summary)
+analyzeSAPs :: DependencySummary -> Module -> Map (String, String) (Set Summary)
 analyzeSAPs ds m =
-  sapReturnResultToTestFormat (_sapSummary res)
+  sapFinalizeResultToTestFormat (_sapSummary res)
   where
     ics = identifyIndirectCallTargets m
     cg = mkCallGraph m ics []

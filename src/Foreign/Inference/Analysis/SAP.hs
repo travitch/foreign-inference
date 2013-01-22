@@ -7,7 +7,8 @@ module Foreign.Inference.Analysis.SAP (
   identifySAPs,
   -- * Testing
   sapReturnResultToTestFormat,
-  sapArgumentResultToTestFormat
+  sapArgumentResultToTestFormat,
+  sapFinalizeResultToTestFormat
   ) where
 
 import GHC.Generics ( Generic )
@@ -30,15 +31,19 @@ import LLVM.Analysis.AccessPath
 import LLVM.Analysis.CallGraphSCCTraversal
 
 import Foreign.Inference.AnalysisMonad
+import Foreign.Inference.Analysis.Finalize
 import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
 
--- FIXME: This could be extended with a FinalizesPath constructor
--- to record transitive field finalizers
+import Debug.Trace
+debug = flip trace
+
 data AugmentedAccessPath = WritePath !Int AbstractAccessPath !Int
                            -- ^ Argument being stored into, Access
                            -- path into that argument, and the
                            -- argument being stored.
+                         | FinalizePath AbstractAccessPath
+                           -- ^ An argument field that is finalized
                          deriving (Eq, Ord, Show, Generic)
 
 instance NFData AugmentedAccessPath where
@@ -79,9 +84,18 @@ instance SummarizeModule SAPSummary where
   summarizeArgument a (SAPSummary _ as _) =
     fromMaybe [] $ do
       ar <- M.lookup a as
-      let toExternal (WritePath ix p _) =
-            Just (ix, show (abstractAccessPathBaseType p), abstractAccessPathComponents p)
-      return [(PASAPWrite $ mapMaybe toExternal $ S.toList ar, [])]
+      let toExternal (WritePath ix p _) (write, finalize) =
+            ((ix, show (abstractAccessPathBaseType p), abstractAccessPathComponents p):write, finalize)
+          toExternal (FinalizePath p) (write, finalize) =
+            (write, (show (abstractAccessPathBaseType p), abstractAccessPathComponents p):finalize)
+          externals = F.foldr toExternal ([], []) ar
+      case externals of
+        ([], []) -> return []
+        ([], finalize) -> return [(PAFinalizeField finalize, [])]
+        (write, []) -> return [(PASAPWrite write, [])]
+        (write, finalize) -> return [ (PAFinalizeField finalize, [])
+                                    , (PASAPWrite write, [])
+                                    ]
   summarizeFunction f (SAPSummary rs _ _) =
     fromMaybe [] $ do
       fr <- M.lookup f rs
@@ -91,9 +105,10 @@ instance SummarizeModule SAPSummary where
 identifySAPs :: (FuncLike funcLike, HasFunction funcLike)
                 => DependencySummary
                 -> Simple Lens compositeSummary SAPSummary
+                -> Simple Lens compositeSummary FinalizerSummary
                 -> ComposableAnalysis compositeSummary funcLike
-identifySAPs ds lns =
-  composableAnalysisM runner sapAnalysis lns
+identifySAPs ds =
+  composableDependencyAnalysisM runner sapAnalysis
   where
     runner a = runAnalysis a ds () ()
 
@@ -104,19 +119,21 @@ identifySAPs ds lns =
 -- At call intructions, extend callee paths that are passed some path
 -- based on an argument.
 sapAnalysis :: (FuncLike funcLike, HasFunction funcLike)
-               => funcLike
+               => FinalizerSummary
+               -> funcLike
                -> SAPSummary
                -> Analysis SAPSummary
-sapAnalysis flike s =
-  foldM (sapTransfer f) s (functionInstructions f)
+sapAnalysis finSumm flike s =
+  foldM (sapTransfer f finSumm) s (functionInstructions f)
   where
     f = getFunction flike
 
 sapTransfer :: Function
+               -> FinalizerSummary
                -> SAPSummary
                -> Instruction
                -> Analysis SAPSummary
-sapTransfer f s i =
+sapTransfer f finSumm s i =
   case i of
     RetInst { retInstValue = Just (valueContent' ->
       InstructionC PhiNode { phiIncomingValues = (map fst -> ivs) })} ->
@@ -135,12 +152,12 @@ sapTransfer f s i =
     StoreInst { storeValue = (valueContent' -> ArgumentC sv) } ->
       storeTransfer s i sv
 
-    CallInst { callFunction = (valueContent' -> FunctionC callee)
+    CallInst { callFunction = callee
              , callArguments = (map fst -> actuals) } ->
-      foldM (callTransfer callee actuals) s (zip [0..] actuals)
-    InvokeInst { invokeFunction = (valueContent' -> FunctionC callee)
+      foldM (callTransfer finSumm callee actuals) s (zip [0..] actuals)
+    InvokeInst { invokeFunction = callee
                , invokeArguments = (map fst -> actuals) } ->
-      foldM (callTransfer callee actuals) s (zip [0..] actuals)
+      foldM (callTransfer finSumm callee actuals) s (zip [0..] actuals)
 
     _ -> return s
 
@@ -161,25 +178,76 @@ sapTransfer f s i =
 -- produces the summary for @f@ based on the call to @g@.  This
 -- function is called once for each actual argument to the call of @g@
 -- by the top-level transfer function.
-callTransfer :: Function
+callTransfer :: FinalizerSummary
+                -> Value
                 -> [Value]
                 -> SAPSummary
                 -> (Int, Value)
                 -> Analysis SAPSummary
-callTransfer callee actuals s (argIx, actual) =
-  return $ fromMaybe s $ do
-    -- This formal is @x@ in @f@; it is a *formal* argument passed to
-    -- @g@ as an *actual* parameter.
-    formal <- fromValue actual
-    calleeFormal <- functionParameters callee `at` argIx
-    calleeFormalSumm <- M.lookup calleeFormal (s ^. sapArguments)
-    -- We now have to extend each of the summaries for this argument.
-    -- Each summary tells us which other actual this formal is stored
-    -- into.
-    let args' = F.foldr (augmentTransfer formal) (s ^. sapArguments) calleeFormalSumm
-    return $ (sapArguments .~ args') s
+callTransfer finSumm callee actuals s (argIx, actual) = do
+  argFin <- lookupArgumentSummaryList finSumm callee argIx
+  -- Note that, for now, this setup assumes that functions finalizing
+  -- their argument will not also write to a different field.  This
+  -- assumption could be lifted if it becomes an issue.
+  case PAFinalize `elem` argFin of
+    False -> return $ fromMaybe s $ do
+      calleeFunc <- fromValue callee
+      calleeFormal <- functionParameters calleeFunc `at` argIx
+      calleeFormalSumm <- M.lookup calleeFormal (s ^. sapArguments)
+      -- We now have to extend each of the summaries for this argument.
+      -- Each summary tells us which other actual this formal is stored
+      -- into.
+
+      case valueContent' actual of
+        -- This formal is @x@ in @f@; it is a *formal* argument passed
+        -- to @g@ as an *actual* parameter.  'argumentTransfer'
+        -- decides how to deal with the argument depending on the type
+        -- of augmented access path that is in play.
+        ArgumentC formal -> do
+          let args' = F.foldr (augmentTransfer formal) (s ^. sapArguments) calleeFormalSumm
+          return $ (sapArguments .~ args') s
+        -- Here, an instruction (from which we build an access path)
+        -- is passed to a callee with a summary.  If that summary is a
+        -- FinalizePath summary (we don't care about the case where a
+        -- field of one argument is stored into the field of another),
+        -- then we need to augment the FinalizePath.
+        InstructionC actualInst -> do
+          cap <- accessPath actualInst
+          baseArg <- accessPathBaseArgument cap
+          let absPath = abstractAccessPath cap
+              args' = F.foldr (finalizeTransfer baseArg absPath) (s ^. sapArguments) calleeFormalSumm
+          return $ (sapArguments .~ args') s
+        _ -> return s
+    -- For this case (the actual argument is finalized), we only need
+    -- to do something if we can construct an access path from the
+    -- argument.  The case where an Argument is being finalized is handled
+    -- in the finalizer analysis.
+    True -> return $ fromMaybe s $ do
+      actualInst <- fromValue actual
+      cap <- accessPath actualInst
+      baseArg <- accessPathBaseArgument cap
+      let absPath = abstractAccessPath cap
+          fp = FinalizePath absPath
+      return $ (sapArguments %~ M.insertWith S.union baseArg (S.singleton fp)) s
   where
-    -- Called once per summary for this argument.
+    -- Extend finalized paths
+    finalizeTransfer _ _ (WritePath _ _ _) argSumm = argSumm
+    finalizeTransfer baseArg curPath (FinalizePath p) argSumm =
+      fromMaybe argSumm $ do
+        p' <- curPath `appendAccessPath` p
+        let fp = FinalizePath p'
+        return $ M.insertWith S.union baseArg (S.singleton fp) argSumm
+
+    -- In this case, an argument is being passed directly to a callee
+    -- that finalizes some argument of the field.  We just need to
+    -- propagate the inferred annotation.
+    augmentTransfer formal fp@(FinalizePath _) argSumm =
+      M.insertWith S.union formal (S.singleton fp) argSumm
+    -- Called once per summary for this argument.  This is handling
+    -- when an argument is stored into some access path of another
+    -- argument.  This does not handle (and we do not care about)
+    -- cases where a field of an argument is stored into a field of a
+    -- different argument.
     augmentTransfer formal (WritePath dstArg p _) argSumm =
       fromMaybe argSumm $ do
         baseActual <- actuals `at` dstArg
@@ -328,7 +396,25 @@ sapArgumentResultToTestFormat =
       let f = argumentFunction a
           p1 = (identifierAsString (functionName f),
                 identifierAsString (argumentName a))
-      in (p1, S.map fromPath s)
+      in (p1, setMapMaybe fromPath s)
     fromPath (WritePath ix p _) =
-      (ix, show (abstractAccessPathBaseType p),
+      Just (ix, show (abstractAccessPathBaseType p),
        abstractAccessPathComponents p)
+    fromPath (FinalizePath _) = Nothing
+
+sapFinalizeResultToTestFormat :: SAPSummary -> Map (String, String) (Set (String, [AccessType]))
+sapFinalizeResultToTestFormat =
+  M.fromList . map toTestFormat . M.toList . (^. sapArguments)
+  where
+    toTestFormat (a, s) =
+      let f = argumentFunction a
+          p1 = (identifierAsString (functionName f),
+                identifierAsString (argumentName a))
+      in (p1, setMapMaybe fromPath s)
+    fromPath (WritePath _ _ _) = Nothing
+    fromPath (FinalizePath p) =
+      Just (show (abstractAccessPathBaseType p),
+            abstractAccessPathComponents p)
+
+setMapMaybe :: (Ord a, Ord b) => (a -> Maybe b) -> Set a -> Set b
+setMapMaybe f = S.fromList . mapMaybe f . S.toList

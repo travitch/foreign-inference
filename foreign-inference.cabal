@@ -188,3 +188,12 @@ test-suite SAPArgumentTests
   ghc-options: -Wall
   build-depends: llvm-analysis, llvm-data-interop, base, containers,
                  HUnit, foreign-inference, filepath
+
+test-suite SAPFinalizeTests
+  default-language: Haskell2010
+  type: exitcode-stdio-1.0
+  main-is: SAPFinalizeTests.hs
+  hs-source-dirs: tests
+  ghc-options: -Wall
+  build-depends: llvm-analysis, llvm-data-interop, base, containers,
+                 HUnit, foreign-inference, filepath

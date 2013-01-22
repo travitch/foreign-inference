@@ -16,6 +16,7 @@ import LLVM.Parse
 
 import Foreign.Inference.Interface
 import Foreign.Inference.Preprocessing
+import Foreign.Inference.Analysis.Finalize
 import Foreign.Inference.Analysis.IndirectCallResolver
 import Foreign.Inference.Analysis.SAP
 import Foreign.Inference.Analysis.Util.CompositeSummary
@@ -48,6 +49,8 @@ analyzeSAPs ds m =
     ics = identifyIndirectCallTargets m
     cg = mkCallGraph m ics []
     analyses :: [ComposableAnalysis AnalysisSummary FunctionMetadata]
-    analyses = [ identifySAPs ds sapSummary ]
+    analyses = [ identifyFinalizers ds ics finalizerSummary
+               , identifySAPs ds sapSummary finalizerSummary
+               ]
     analysisFunc = callGraphComposeAnalysis analyses
     res = callGraphSCCTraversal cg analysisFunc mempty

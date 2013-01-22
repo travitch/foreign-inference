@@ -1,0 +1,3 @@
+fromList [ (("g", "s"), fromList [("%struct.S*", [AccessDeref,AccessField 1])])
+         , (("f", "s"), fromList [("%struct.S*", [AccessDeref,AccessField 1])])
+         ]

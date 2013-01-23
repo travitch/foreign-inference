@@ -5,6 +5,8 @@
 module Foreign.Inference.Analysis.SAP (
   SAPSummary,
   identifySAPs,
+  finalizedPaths,
+  returnedPaths,
   -- * Testing
   sapReturnResultToTestFormat,
   sapArgumentResultToTestFormat,
@@ -72,7 +74,21 @@ data SAPSummary =
 
 $(makeLenses ''SAPSummary)
 
+finalizedPaths :: Argument -> SAPSummary -> Maybe [AbstractAccessPath]
+finalizedPaths a (SAPSummary _ _ fs _) = do
+  fps <- M.lookup a fs
+  return $ map (\(FinalizePath p) -> p) $ S.toList fps
 
+-- | Get the paths that function @f@ returns from its argument @a@
+returnedPaths :: Function -> Argument -> SAPSummary -> Maybe [AbstractAccessPath]
+returnedPaths f a (SAPSummary rs _ _ _) = do
+  rps <- M.lookup f rs
+  let aix = argumentIndex a
+      unwrap (ReturnPath ix p) =
+        case ix == aix of
+          True -> return p
+          False -> Nothing
+  return $ mapMaybe unwrap (S.toList rps)
 
 instance Eq SAPSummary where
   (SAPSummary r1 a1 f1 _) == (SAPSummary r2 a2 f2 _) =

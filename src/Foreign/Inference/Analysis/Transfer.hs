@@ -48,10 +48,11 @@ import Control.Monad.Trans.Maybe
 import qualified Data.Foldable as F
 import Data.Map ( Map )
 import qualified Data.Map as M
-import Data.Maybe ( fromMaybe )
+import Data.Maybe ( fromMaybe, mapMaybe )
 import Data.Monoid
 import Data.Set ( Set )
 import qualified Data.Set as S
+import Safe.Failure ( at )
 
 import LLVM.Analysis
 import LLVM.Analysis.AccessPath
@@ -264,46 +265,52 @@ identifyOwnedFields cg pta finSumm sapSumm ownedFields funcLike = do
         -- instead, check to see if the call is known to finalize some
         -- field of one of its arguments.
         False -> return $ fromMaybe acc $ do
-          ffs <- finalizedFields annots
+          calleeArg <- calleeFormalAt target ix
+          ffs <- finalizedPaths calleeArg sapSumm
           case valueContent' arg of
-            ArgumentC formal -> do
-              -- All of the paths described by ffs are owned fields, so
-              -- union them with acc
-              --
-              -- FIXME: The problem here is that reconstructing an
-              -- AbstractAccessPath from @ffs@ is really difficult. It
-              -- looks like it will be necessary to add some helper
-              -- functions to the SAPSummary interface to allow for
-              -- direct queries that return real AbstractAccessPaths.
-              return undefined
+            ArgumentC _ ->
+              -- All of the paths described by ffs are owned fields,
+              -- so union them with acc.  We don't need the ArgumentC
+              -- binding here; it is only to let us know that this
+              -- actual is really a formal in the current function and
+              -- we need to propagate information about it upwards in
+              -- the summary.
+              return $ acc `S.union` S.fromList ffs
             InstructionC i -> do
               cap <- accessPath i
-              baseArg <- accessPathBaseArgument cap
+              -- We don't need the base argument, we just need to know
+              -- that the base is an Argument.
+              _ <- accessPathBaseArgument cap
               let absPath = abstractAccessPath cap
+                  extended = mapMaybe (appendAccessPath absPath) ffs
               -- Extend absPath by each of the paths described in ffs.
               -- These are *all* owned fields:
-              --
-              -- S.union acc (S.fromList extended)
-              return undefined
+              return $ acc `S.union` S.fromList extended
             _ -> Nothing
         -- Calling a known finalizer on some value
         True ->
           case valueContent' arg of
-            InstructionC CallInst { callFunction = cf } -> undefined
+            -- Calling a finalizer on the result of a function call.
+            -- Here, we need to look up the function summary of cf and
+            -- see if it is returning some access path of one of its
+            -- actual arguments.
+            InstructionC CallInst { callFunction = (valueContent' -> FunctionC cf) } ->
+              return $ fromMaybe acc $ do
+                calleeArg <- calleeFormalAt cf ix
+                rps <- returnedPaths cf calleeArg sapSumm
+                return $ acc `S.union` S.fromList rps
+            -- Calling a finalizer on a local access path
             InstructionC i -> return $ fromMaybe acc $ do
               accPath <- accessPath i
               let absPath = abstractAccessPath accPath
               return $ S.insert absPath acc
             _ -> return acc
 
-finalizedFields :: [ParamAnnotation] -> Maybe [(String, [AccessType])]
-finalizedFields ps =
-  case foldr collectFinalizedFields [] ps of
-    [] -> Nothing
-    flds -> Just flds
-  where
-    collectFinalizedFields (PAFinalizeField fs) acc = fs ++ acc
-    collectFinalizedFields _ acc = acc
+calleeFormalAt :: (IsValue v) => v -> Int -> Maybe Argument
+calleeFormalAt target ix = do
+  callee <- fromValue (toValue target)
+  let params = functionParameters callee
+  params `at` ix
 
 -- Starting from the arguments passed to finalizers, trace backwards
 -- to construct an access path.  This is a top-down construction, but

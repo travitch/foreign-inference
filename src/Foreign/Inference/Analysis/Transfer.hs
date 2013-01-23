@@ -258,8 +258,6 @@ identifyOwnedFields cg pta finSumm sapSumm ownedFields funcLike = do
 
     addFieldIfFinalized target acc (ix, arg) = do
       annots <- lookupArgumentSummaryList finSumm target ix
-      -- FIXME: Check here for finalized fields; if we see a PAFinalizeField,
-      -- augment the access path of arg
       case PAFinalize `elem` annots of
         -- In this case we aren't seeing a known finalizer call;
         -- instead, check to see if the call is known to finalize some

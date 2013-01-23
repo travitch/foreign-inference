@@ -1,0 +1,1 @@
+fromList [ ("@add_component", fromList [ "%comp" ]) ]

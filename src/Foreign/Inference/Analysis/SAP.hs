@@ -7,6 +7,7 @@ module Foreign.Inference.Analysis.SAP (
   identifySAPs,
   finalizedPaths,
   returnedPaths,
+  writePaths,
   -- * Testing
   sapReturnResultToTestFormat,
   sapArgumentResultToTestFormat,
@@ -89,6 +90,17 @@ returnedPaths f a (SAPSummary rs _ _ _) = do
           True -> return p
           False -> Nothing
   return $ mapMaybe unwrap (S.toList rps)
+
+writePaths :: Argument -> SAPSummary -> Maybe [(Argument, AbstractAccessPath)]
+writePaths a (SAPSummary _ ws _ _) = do
+  wps <- M.lookup a ws
+  return $ mapMaybe unwrap (S.toList wps)
+  where
+    unwrap (WritePath ix p) = do
+      arg <- args `at` ix
+      return (arg, p)
+    f = argumentFunction a
+    args = functionParameters f
 
 instance Eq SAPSummary where
   (SAPSummary r1 a1 f1 _) == (SAPSummary r2 a2 f2 _) =

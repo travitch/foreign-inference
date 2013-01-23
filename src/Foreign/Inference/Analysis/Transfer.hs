@@ -153,7 +153,7 @@ identifyTransfers funcLikes cg ds pta p1res flens slens tlens =
     -- component of the analysis.
     ofields s = foldM (identifyOwnedFields cg pta finSumm sapSumm) s funcLikes
     tparms s ownedFields = do
-      s' <- foldM (identifyTransferredArguments pta ownedFields) s funcLikes
+      s' <- foldM (identifyTransferredArguments pta sapSumm ownedFields) s funcLikes
       case s' == s of
         True -> return s
         False -> tparms s' ownedFields
@@ -163,11 +163,12 @@ type Analysis = AnalysisMonad () ()
 
 identifyTransferredArguments :: (HasFunction funcLike)
                                 => IndirectCallSummary
+                                -> SAPSummary
                                 -> Set AbstractAccessPath
                                 -> TransferSummary
                                 -> funcLike
                                 -> Analysis TransferSummary
-identifyTransferredArguments pta ownedFields trSumm flike =
+identifyTransferredArguments pta sapSumm ownedFields trSumm flike =
   foldM checkTransfer trSumm (functionInstructions f)
   where
     f = getFunction flike
@@ -185,17 +186,60 @@ identifyTransferredArguments pta ownedFields trSumm flike =
               False -> return s
           | otherwise -> return s
         CallInst { callFunction = callee, callArguments = (map fst -> args) } ->
-          calleeArgumentFold argumentTransfer s pta callee args
+          calleeArgumentFold (argumentTransfer args) s pta callee args
         InvokeInst { invokeFunction = callee, invokeArguments = (map fst -> args) } ->
-          calleeArgumentFold argumentTransfer s pta callee args
+          calleeArgumentFold (argumentTransfer args) s pta callee args
         _ -> return s
 
-    argumentTransfer callee s (ix, (valueContent' -> ArgumentC arg)) = do
+    -- We only care about call arguments that are actually Arguments
+    -- in the caller because field->field transfers are outside the
+    -- scope of the analysis.
+    argumentTransfer actuals callee s (ix, (valueContent' -> ArgumentC arg)) = do
       annots <- lookupArgumentSummaryList s callee ix
       case PATransfer `elem` annots of
-        False -> return s
+        False ->
+          -- In this case, the argument position isn't known to be a
+          -- transfer argument.  We still have to check to see if the
+          -- argument is written into a field of another argument that
+          -- *is* owned.
+          --
+          -- For each of the write paths we get here, find the index
+          -- of the relevant target argument and look that up in
+          -- @args@.  Extend the path to args if necessary and see if
+          -- the result is owned.
+          return $ fromMaybe s $ do
+            wps <- writePaths arg sapSumm
+            return $ foldr (checkWritePath actuals arg) s wps
         True -> return $ (transferArguments %~ S.insert arg) s
-    argumentTransfer _ s _ = return s
+    argumentTransfer _ _ s _ = return s
+
+    checkWritePath actuals writtenFormal (destArg, wp) s =
+      fromMaybe s $ do
+        let destIx = argumentIndex destArg
+        actualDst <- actuals `at` destIx
+        extension <- accessPathOrArgument actualDst
+        case extension of
+          Left _ ->
+            case S.member wp ownedFields of
+              False -> Nothing
+              True -> return $ (transferArguments %~ S.insert writtenFormal) s
+          Right cap -> do
+            -- Ensure the base of the access path is an Argument
+            _ <- accessPathBaseArgument cap
+            let absPath = abstractAccessPath cap
+            extendedPath <- absPath `appendAccessPath` wp
+            case S.member extendedPath ownedFields of
+              False -> Nothing
+              True -> return $ (transferArguments %~ S.insert writtenFormal) s
+
+accessPathOrArgument :: Value -> Maybe (Either Argument AccessPath)
+accessPathOrArgument v =
+  case valueContent' v of
+    ArgumentC a -> return (Left a)
+    InstructionC i -> do
+      cap <- accessPath i
+      return (Right cap)
+    _ -> Nothing
 
 -- | Determine whether or not the given function is a finalizer.  We
 -- need this because we only want to infer ownership from finalizer

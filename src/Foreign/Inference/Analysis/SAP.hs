@@ -35,9 +35,6 @@ import Foreign.Inference.Analysis.Finalize
 import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
 
-import Debug.Trace
-debug = flip trace
-
 -- | Argument being stored into, Access path into that argument, and
 -- the argument being stored.
 data WritePath = WritePath !Int AbstractAccessPath

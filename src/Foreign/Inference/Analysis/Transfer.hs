@@ -5,31 +5,31 @@
 -- The motivation for this analysis is that escape analysis is a poor
 -- approximation of transfers.  Transfers are relatively rare:
 --
--- @inproceedings{DBLP:conf/oopsla/MaF07,
---   author    = {Kin-Keung Ma and
---                Jeffrey S. Foster},
---   title     = {Inferring aliasing and encapsulation properties for java},
---   booktitle = {OOPSLA},
---   year      = {2007},
---   pages     = {423-440},
---   ee        = {http://doi.acm.org/10.1145/1297027.1297059},
---   crossref  = {DBLP:conf/oopsla/2007},
---   bibsource = {DBLP, http://dblp.uni-trier.de}
--- }
--- @proceedings{DBLP:conf/oopsla/2007,
---   editor    = {Richard P. Gabriel and
---                David F. Bacon and
---                Cristina Videira Lopes and
---                Guy L. Steele Jr.},
---   title     = {Proceedings of the 22nd Annual ACM SIGPLAN Conference on
---                Object-Oriented Programming, Systems, Languages, and Applications,
---                OOPSLA 2007, October 21-25, 2007, Montreal, Quebec, Canada},
---   booktitle = {OOPSLA},
---   publisher = {ACM},
---   year      = {2007},
---   isbn      = {978-1-59593-786-5},
---   bibsource = {DBLP, http://dblp.uni-trier.de}
--- }
+-- > @inproceedings{DBLP:conf/oopsla/MaF07,
+-- >   author    = {Kin-Keung Ma and
+-- >                Jeffrey S. Foster},
+-- >   title     = {Inferring aliasing and encapsulation properties for java},
+-- >   booktitle = {OOPSLA},
+-- >   year      = {2007},
+-- >   pages     = {423-440},
+-- >   ee        = {http://doi.acm.org/10.1145/1297027.1297059},
+-- >   crossref  = {DBLP:conf/oopsla/2007},
+-- >   bibsource = {DBLP, http://dblp.uni-trier.de}
+-- > }
+-- > @proceedings{DBLP:conf/oopsla/2007,
+-- >   editor    = {Richard P. Gabriel and
+-- >                David F. Bacon and
+-- >                Cristina Videira Lopes and
+-- >                Guy L. Steele Jr.},
+-- >   title     = {Proceedings of the 22nd Annual ACM SIGPLAN Conference on
+-- >                Object-Oriented Programming, Systems, Languages, and Applications,
+-- >                OOPSLA 2007, October 21-25, 2007, Montreal, Quebec, Canada},
+-- >   booktitle = {OOPSLA},
+-- >   publisher = {ACM},
+-- >   year      = {2007},
+-- >   isbn      = {978-1-59593-786-5},
+-- >   bibsource = {DBLP, http://dblp.uni-trier.de}
+-- > }
 module Foreign.Inference.Analysis.Transfer (
   TransferSummary,
   identifyTransfers,
@@ -53,6 +53,7 @@ import Data.Monoid
 import Data.Set ( Set )
 import qualified Data.Set as S
 import Safe.Failure ( at )
+import Text.PrettyPrint.GenericPretty ( pretty )
 
 import LLVM.Analysis
 import LLVM.Analysis.AccessPath
@@ -155,7 +156,7 @@ identifyTransfers funcLikes cg ds pta p1res flens slens tlens =
     tparms s ownedFields = do
       s' <- foldM (identifyTransferredArguments pta sapSumm ownedFields) s funcLikes
       case s' == s of
-        True -> return s
+        True -> return s `debug` pretty (S.toList ownedFields)
         False -> tparms s' ownedFields
     a = ofields mempty >>= tparms trSumm
 
@@ -201,7 +202,7 @@ identifyTransferredArguments pta sapSumm ownedFields trSumm flike =
           -- In this case, the argument position isn't known to be a
           -- transfer argument.  We still have to check to see if the
           -- argument is written into a field of another argument that
-          -- *is* owned.
+          -- /is/ owned.
           --
           -- For each of the write paths we get here, find the index
           -- of the relevant target argument and look that up in
@@ -336,11 +337,24 @@ identifyOwnedFields cg pta finSumm sapSumm ownedFields funcLike = do
             -- Here, we need to look up the function summary of cf and
             -- see if it is returning some access path of one of its
             -- actual arguments.
-            InstructionC CallInst { callFunction = (valueContent' -> FunctionC cf) } ->
+            InstructionC CallInst { callFunction = (valueContent' -> FunctionC cf)
+                                  , callArguments = (map fst -> args)
+                                  } ->
               return $ fromMaybe acc $ do
                 calleeArg <- calleeFormalAt cf ix
                 rps <- returnedPaths cf calleeArg sapSumm
-                return $ acc `S.union` S.fromList rps
+                -- These paths (from @calleeArg@) are returned.  We
+                -- have to extend each path with the actual argument
+                -- passed in that position.
+                actualAtIx <- args `at` argumentIndex calleeArg
+                pathOrArg <- accessPathOrArgument actualAtIx
+                case pathOrArg `debug` show pathOrArg of
+                  Left _ ->
+                    return $ acc `S.union` S.fromList rps `debug` ("Freeing " ++ show arg ++ " " ++ show rps)
+                  Right p ->
+                    let absPath = abstractAccessPath p
+                        rps' = mapMaybe (appendAccessPath absPath) rps
+                    in return $ acc `S.union` S.fromList rps' `debug` pretty rps'
             -- Calling a finalizer on a local access path
             InstructionC i -> return $ fromMaybe acc $ do
               accPath <- accessPath i

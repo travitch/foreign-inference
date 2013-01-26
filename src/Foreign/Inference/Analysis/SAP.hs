@@ -1,4 +1,5 @@
 {-# LANGUAGE TemplateHaskell, DeriveGeneric, ViewPatterns #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE RankNTypes #-}
 -- | An analysis to identify @Symbolic Access Paths@ for each function
 -- in a Module.
@@ -16,9 +17,10 @@ module Foreign.Inference.Analysis.SAP (
 
 import GHC.Generics ( Generic )
 
+import Control.Arrow ( (&&&) )
 import Control.DeepSeq
 import Control.DeepSeq.Generics ( genericRnf )
-import Control.Lens ( Simple, makeLenses, (%~), (.~), (^.) )
+import Control.Lens ( Simple, makeLenses, (%~), (.~), (^.), set, view, lens )
 import Control.Monad ( foldM )
 import qualified Data.Foldable as F
 import Data.Map ( Map )
@@ -35,6 +37,7 @@ import LLVM.Analysis.CallGraphSCCTraversal
 
 import Foreign.Inference.AnalysisMonad
 import Foreign.Inference.Analysis.Finalize
+import Foreign.Inference.Analysis.SAPPTRel
 import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
 
@@ -141,15 +144,21 @@ instance SummarizeModule SAPSummary where
             (ix, show (abstractAccessPathBaseType p), abstractAccessPathComponents p)
       return [(FASAPReturn $ map toExternal $ S.toList fr, [])]
 
-identifySAPs :: (FuncLike funcLike, HasFunction funcLike)
+identifySAPs :: forall compositeSummary funcLike .
+                (FuncLike funcLike, HasFunction funcLike)
                 => DependencySummary
                 -> Simple Lens compositeSummary SAPSummary
+                -> Simple Lens compositeSummary SAPPTRelSummary
                 -> Simple Lens compositeSummary FinalizerSummary
                 -> ComposableAnalysis compositeSummary funcLike
-identifySAPs ds =
-  composableDependencyAnalysisM runner sapAnalysis
+identifySAPs ds lns ptrelL finL =
+  composableDependencyAnalysisM runner sapAnalysis lns depLens
   where
     runner a = runAnalysis a ds () ()
+    readL = view ptrelL &&& view finL
+    writeL csum (s, f) = (set ptrelL s . set finL f) csum
+    depLens :: Simple Lens compositeSummary (SAPPTRelSummary, FinalizerSummary)
+    depLens = lens readL writeL
 
 -- | For non-void functions, first check the return instruction and
 -- see if it is returning some access path.  Next, just iterate over
@@ -158,11 +167,11 @@ identifySAPs ds =
 -- At call intructions, extend callee paths that are passed some path
 -- based on an argument.
 sapAnalysis :: (FuncLike funcLike, HasFunction funcLike)
-               => FinalizerSummary
+               => (SAPPTRelSummary, FinalizerSummary)
                -> funcLike
                -> SAPSummary
                -> Analysis SAPSummary
-sapAnalysis finSumm flike s =
+sapAnalysis (ptrelSumm, finSumm) flike s =
   foldM (sapTransfer f finSumm) s (functionInstructions f)
   where
     f = getFunction flike

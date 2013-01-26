@@ -23,6 +23,7 @@ module Foreign.Inference.Analysis.Util.CompositeSummary (
   allocatorSummary,
   refCountSummary,
   sapSummary,
+  sapPTRelSummary,
   scalarEffectSummary,
   errorHandlingSummary,
   transferSummary,
@@ -53,6 +54,7 @@ import Foreign.Inference.Analysis.Output
 import Foreign.Inference.Analysis.RefCount
 import Foreign.Inference.Analysis.Return
 import Foreign.Inference.Analysis.SAP
+import Foreign.Inference.Analysis.SAPPTRel
 import Foreign.Inference.Analysis.ScalarEffects
 import Foreign.Inference.Analysis.Transfer
 import Foreign.Inference.Diagnostics
@@ -113,6 +115,7 @@ data AnalysisSummary =
                   , _errorHandlingSummary :: !ErrorSummary
                   , _transferSummary :: !TransferSummary
                   , _sapSummary :: !SAPSummary
+                  , _sapPTRelSummary :: !SAPPTRelSummary
                   }
   deriving (Eq, Generic)
 
@@ -134,6 +137,7 @@ instance Monoid AnalysisSummary where
                            , _errorHandlingSummary = mempty
                            , _transferSummary = mempty
                            , _sapSummary = mempty
+                           , _sapPTRelSummary = mempty
                            }
   mappend a1 a2 =
     AnalysisSummary { _nullableSummary = _nullableSummary a1 `mappend` _nullableSummary a2
@@ -148,6 +152,7 @@ instance Monoid AnalysisSummary where
                     , _errorHandlingSummary = _errorHandlingSummary a1 `mappend` _errorHandlingSummary a2
                     , _transferSummary = _transferSummary a1 `mappend` _transferSummary a2
                     , _sapSummary = _sapSummary a1 `mappend` _sapSummary a2
+                    , _sapPTRelSummary = _sapPTRelSummary a1 `mappend` _sapPTRelSummary a2
                     }
 
 -- | Apply a function that uniformly summarizes *all* of the
@@ -169,4 +174,5 @@ extractSummary summ f =
   , f (_errorHandlingSummary summ)
   , f (_transferSummary summ)
   , f (_sapSummary summ)
+  , f (_sapPTRelSummary summ)
   ]

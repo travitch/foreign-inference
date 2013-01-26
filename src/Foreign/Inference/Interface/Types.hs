@@ -58,7 +58,6 @@ instance ToJSON ParamAnnotation
 instance NFData ParamAnnotation where
   rnf = genericRnf
 
-deriving instance Generic AccessType
 instance FromJSON AccessType
 instance ToJSON AccessType
 

@@ -19,6 +19,7 @@ import Foreign.Inference.Analysis.Finalize
 import Foreign.Inference.Analysis.Transfer
 import Foreign.Inference.Analysis.IndirectCallResolver
 import Foreign.Inference.Analysis.SAP
+import Foreign.Inference.Analysis.SAPPTRel
 import Foreign.Inference.Analysis.Util.CompositeSummary
 
 main :: IO ()
@@ -49,7 +50,8 @@ analyzeTransfer ds m =
     funcLikes = map fromFunction (moduleDefinedFunctions m)
     analyses :: [ComposableAnalysis AnalysisSummary FunctionMetadata]
     analyses = [ identifyFinalizers ds pta finalizerSummary
-               , identifySAPs ds sapSummary finalizerSummary
+               , identifySAPPTRels ds sapPTRelSummary
+               , identifySAPs ds sapSummary sapPTRelSummary finalizerSummary
                ]
     pfunc = callGraphComposeAnalysis analyses
     res0 = parallelCallGraphSCCTraversal cg pfunc mempty

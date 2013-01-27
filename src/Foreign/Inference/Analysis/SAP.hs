@@ -41,6 +41,9 @@ import Foreign.Inference.Analysis.SAPPTRel
 import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
 
+import Debug.Trace
+debug = flip trace
+
 -- | Argument being stored into, Access path into that argument, and
 -- the argument being stored.
 data WritePath = WritePath !Int AbstractAccessPath
@@ -172,16 +175,17 @@ sapAnalysis :: (FuncLike funcLike, HasFunction funcLike)
                -> SAPSummary
                -> Analysis SAPSummary
 sapAnalysis (ptrelSumm, finSumm) flike s =
-  foldM (sapTransfer f finSumm) s (functionInstructions f)
+  foldM (sapTransfer f ptrelSumm finSumm) s (functionInstructions f)
   where
     f = getFunction flike
 
 sapTransfer :: Function
+               -> SAPPTRelSummary
                -> FinalizerSummary
                -> SAPSummary
                -> Instruction
                -> Analysis SAPSummary
-sapTransfer f finSumm s i =
+sapTransfer f ptrelSumm finSumm s i =
   case i of
     RetInst { retInstValue = Just (valueContent' ->
       InstructionC PhiNode { phiIncomingValues = (map fst -> ivs) })} ->
@@ -198,7 +202,7 @@ sapTransfer f finSumm s i =
     -- FIXME: If we are storing into the result of a callinst, check
     -- to see if that call has a summary that could be extended.
     StoreInst { storeValue = (valueContent' -> ArgumentC sv) } ->
-      storeTransfer s i sv
+      storeTransfer ptrelSumm s sv
 
     CallInst { callFunction = callee
              , callArguments = (map fst -> actuals) } ->
@@ -343,22 +347,21 @@ callTransfer finSumm callee actuals s (argIx, actual) = do
 -- > WritePath 0 S.<0> 1
 --
 -- Argument 1 is stored into field zero of argument 0.
-storeTransfer :: SAPSummary
-                 -> Instruction -- ^ Store instruction
+storeTransfer :: SAPPTRelSummary
+                 -> SAPSummary
                  -> Argument -- ^ The argument being stored
                  -> Analysis SAPSummary
-storeTransfer s storeInst storedArg =
-  return $ maybe s addStore res
+storeTransfer ptrelSumm s storedArg =
+  let ps = synthesizedPathsFor ptrelSumm storedArg
+  in return $ addStore $ foldr toWritePath [] ps
   where
     addStore res' =
-      (sapArguments %~ M.insertWith S.union storedArg (S.singleton res')) s
-    res = do
-      -- This is @s->bar@
-      cap <- accessPath storeInst
-      -- And this is @s@
-      base <- accessPathBaseArgument cap
-      let absPath = abstractAccessPath cap
-      return $! WritePath (argumentIndex base) absPath
+      (sapArguments %~ M.insertWith S.union storedArg (S.fromList res')) s
+    toWritePath p acc = fromMaybe acc $ do
+      base <- accessPathBaseArgument p
+      let absPath = abstractAccessPath p
+      return $! WritePath (argumentIndex base) absPath : acc
+
 
 -- | When the result of a call is returned, that call is known to
 -- return an access path *into* one of its arguments.  What we need to

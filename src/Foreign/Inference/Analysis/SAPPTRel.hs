@@ -90,20 +90,24 @@
 -- > }
 module Foreign.Inference.Analysis.SAPPTRel (
   SAPPTRelSummary,
-  identifySAPPTRels
+  identifySAPPTRels,
+  synthesizedPathsFor
   ) where
 
 import GHC.Generics ( Generic )
 
+import Control.Arrow ( second )
 import Control.DeepSeq
 import Control.DeepSeq.Generics ( genericRnf )
 import Control.Lens ( Simple, (%~), makeLenses )
+import qualified Data.Foldable as F
 import Data.Map ( Map )
 import qualified Data.Map as M
-import Data.Maybe ( fromMaybe )
+import Data.Maybe ( fromMaybe, mapMaybe )
 import Data.Monoid
 import Data.Set ( Set )
 import qualified Data.Set as S
+import qualified Text.PrettyPrint.GenericPretty as PP
 
 import LLVM.Analysis
 import LLVM.Analysis.AccessPath
@@ -115,9 +119,12 @@ import Foreign.Inference.AnalysisMonad
 import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
 
+import Debug.Trace
+debug = flip trace
+
 data SAPPTRelSummary =
   SAPPTRelSummary { _sapPaths :: Map Function (Map AccessPath (Set AccessPath))
-                  , _sapValues :: Map Function (Map AccessPath (Set Value))
+                  , _sapValues :: Map Function (Map Value (Set AccessPath))
                   , _sapDiagnostics :: Diagnostics
                   }
   deriving (Generic)
@@ -179,7 +186,7 @@ sapAnalysis funcLike s = do
   let exitInsts = functionExitInstructions f
       exitInfo = map (dataflowResult funcInfo) exitInsts
       SAPInfo ps vs = meets exitInfo
-  return $! (sapValues %~ M.insert f vs) $ (sapPaths %~ M.insert f ps) s
+  return $! (sapValues %~ M.insert f (invertMap vs)) $ (sapPaths %~ M.insert f (invertMap ps)) s
   where
     f = getFunction funcLike
 
@@ -196,14 +203,46 @@ sapTransfer s i =
         -- However, the RHS could be either a value or an access path.
         case valueAsAccessPath sv of
           Just storedPath ->
-            let ins = M.insertWith S.union destPath (S.singleton storedPath)
+            let ins = M.insert destPath (S.singleton storedPath)
             in return $ (sapInfoPaths %~ ins) s
           Nothing ->
-            let ins = M.insertWith S.union destPath (S.singleton sv)
+            let ins = M.insert destPath (S.singleton sv)
             in return $ (sapInfoValues %~ ins) s
     _ -> return s
 
 valueAsAccessPath :: Value -> Maybe AccessPath
-valueAsAccessPath v = do
-  i <- fromValue v
-  accessPath i
+valueAsAccessPath v = fromValue v >>= accessPath
+
+invertMap :: (Ord k, Ord v) => Map k (Set v) -> Map v (Set k)
+invertMap = foldr doInvert mempty . M.toList
+  where
+    doInvert (k, vset) acc =
+      F.foldr (\v a -> M.insertWith S.union v (S.singleton k) a) acc vset
+
+appendConcretePath :: AccessPath -> AccessPath -> Maybe AccessPath
+appendConcretePath (AccessPath b1 e1 p1) (AccessPath b2 e2 p2) =
+  -- case valueType e1 == valueType b2 of
+  --   False -> Nothing
+  --   True ->
+      Just $ AccessPath b1 e2 (p1 ++ p2)
+
+-- | Enumerate the 'AccessPath's that an 'Argument' is stored into,
+-- including 'AccessPath's synthesized from the PT relation.
+synthesizedPathsFor :: SAPPTRelSummary -> Argument -> [AccessPath]
+synthesizedPathsFor (SAPPTRelSummary p v _) a = fromMaybe [] $ do
+  vs <- M.lookup f v
+  ps <- M.lookup f p
+  endValPaths <- M.lookup (toValue a) vs
+  return () `debug` PP.pretty (S.toList endValPaths)
+  return () `debug` PP.pretty (map (second S.toList) (M.toList vs))
+  let maximalPaths = mapMaybe (extendPaths vs ps) (S.toList endValPaths)
+  return $ concat maximalPaths
+  where
+    f = argumentFunction a
+    extendPaths vs ps p0 = return $ fromMaybe [p0] $ do
+      let base = accessPathBaseValue p0
+      p' <- M.lookup base vs
+      return $ concat $ mapMaybe (extendPath vs ps p0) (S.toList p')
+    extendPath vs ps p0 p' = do
+      ep <- p' `appendConcretePath` p0
+      maybe (return [ep]) return (extendPaths vs ps ep)

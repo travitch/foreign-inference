@@ -19,6 +19,7 @@ import Foreign.Inference.Preprocessing
 import Foreign.Inference.Analysis.Finalize
 import Foreign.Inference.Analysis.IndirectCallResolver
 import Foreign.Inference.Analysis.SAP
+import Foreign.Inference.Analysis.SAPPTRel
 import Foreign.Inference.Analysis.Util.CompositeSummary
 
 main :: IO ()
@@ -50,7 +51,8 @@ analyzeSAPs ds m =
     cg = mkCallGraph m ics []
     analyses :: [ComposableAnalysis AnalysisSummary FunctionMetadata]
     analyses = [ identifyFinalizers ds ics finalizerSummary
-               , identifySAPs ds sapSummary finalizerSummary
+               , identifySAPPTRels ds sapPTRelSummary
+               , identifySAPs ds sapSummary sapPTRelSummary finalizerSummary
                ]
     analysisFunc = callGraphComposeAnalysis analyses
     res = callGraphSCCTraversal cg analysisFunc mempty

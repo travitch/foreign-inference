@@ -179,10 +179,6 @@ identifyTransferredArguments pta sapSumm ownedFields trSumm flike = do
       fromMaybe s $ do
         _ <- F.find (equivAccessPaths p) ownedFields
         return $ (transferArguments %~ S.insert formal) s
-      -- case F.find
-      --   case S.member p ownedFields `debug` show p `debug` show ownedFields of
-      --     False -> s
-      --     True -> (transferArguments %~ S.insert formal) s
 
     checkTransfer s i =
       case i of

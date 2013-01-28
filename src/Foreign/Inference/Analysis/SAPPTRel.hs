@@ -215,11 +215,8 @@ invertMap = foldr doInvert mempty . M.toList
       F.foldr (\v a -> M.insertWith S.union v (S.singleton k) a) acc vset
 
 appendConcretePath :: AccessPath -> AccessPath -> Maybe AccessPath
-appendConcretePath (AccessPath b1 e1 p1) (AccessPath b2 e2 p2) =
-  -- case valueType e1 == valueType b2 of
-  --   False -> Nothing
-  --   True ->
-      Just $ AccessPath b1 e2 (p1 ++ p2)
+appendConcretePath (AccessPath b1 _ p1) (AccessPath _ e2 p2) =
+  Just $ AccessPath b1 e2 (p1 ++ p2)
 
 -- | Enumerate the 'AccessPath's that an 'Argument' is stored into,
 -- including 'AccessPath's synthesized from the PT relation.

@@ -375,24 +375,6 @@ calleeFormalAt target ix = do
   let params = functionParameters callee
   params `at` ix
 
--- Starting from the arguments passed to finalizers, trace backwards
--- to construct an access path.  This is a top-down construction, but
--- should be reasonably efficient because we don't need to start at
--- very many places.
---
--- Maybe just use a recursive-descent kind of thing where actuals are
--- substituted for parameters...
---
--- Maybe modify the Finalizer analysis to note when the finalizer
--- *also* finalizes some owned fields.  This would let us build
--- finalized access paths bottom-up.  This would let us easily handle
--- a case like:
---
--- > freeChildren(a);
---
--- we could see that a->children->e is finalized, which would let us
--- know that anything stored to a->children->e is a transfer...
-
 accessPathBaseArgument :: AccessPath -> Maybe Argument
 accessPathBaseArgument p =
   fromValue $ valueContent' (accessPathBaseValue p)

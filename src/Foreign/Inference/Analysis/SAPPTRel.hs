@@ -225,8 +225,6 @@ synthesizedPathsFor (SAPPTRelSummary p v _) a = fromMaybe [] $ do
   vs <- M.lookup f v
   ps <- M.lookup f p
   endValPaths <- M.lookup (toValue a) vs
-  -- return () `debug` PP.pretty (S.toList endValPaths)
-  -- return () `debug` PP.pretty (map (second S.toList) (M.toList vs))
   let maximalPaths = mapMaybe (extendPaths vs ps) (S.toList endValPaths)
   return $ concat maximalPaths
   where

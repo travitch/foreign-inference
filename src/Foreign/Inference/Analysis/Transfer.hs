@@ -53,7 +53,6 @@ import Data.Monoid
 import Data.Set ( Set )
 import qualified Data.Set as S
 import Safe.Failure ( at )
-import Text.PrettyPrint.GenericPretty ( pretty )
 
 import LLVM.Analysis
 import LLVM.Analysis.AccessPath
@@ -67,9 +66,6 @@ import Foreign.Inference.Analysis.Finalize
 import Foreign.Inference.Analysis.IndirectCallResolver
 import Foreign.Inference.Analysis.SAP
 import Foreign.Inference.Analysis.Util.CalleeFold
-
-import Debug.Trace
-debug = flip trace
 
 data TransferSummary = TransferSummary {
   _transferArguments :: Set Argument,
@@ -156,7 +152,7 @@ identifyTransfers funcLikes cg ds pta p1res flens slens tlens =
     tparms s ownedFields = do
       s' <- foldM (identifyTransferredArguments pta sapSumm ownedFields) s funcLikes
       case s' == s of
-        True -> return s `debug` pretty (S.toList ownedFields)
+        True -> return s -- `debug` pretty (S.toList ownedFields)
         False -> tparms s' ownedFields
     a = ofields mempty >>= tparms trSumm
 
@@ -169,11 +165,25 @@ identifyTransferredArguments :: (HasFunction funcLike)
                                 -> TransferSummary
                                 -> funcLike
                                 -> Analysis TransferSummary
-identifyTransferredArguments pta sapSumm ownedFields trSumm flike =
-  foldM checkTransfer trSumm (functionInstructions f)
+identifyTransferredArguments pta sapSumm ownedFields trSumm flike = do
+  trSumm' <- foldM checkWrittenFormals trSumm formals
+  foldM checkTransfer trSumm' (functionInstructions f)
   where
     f = getFunction flike
     formals = functionParameters f
+    checkWrittenFormals s formal =
+      return $ fromMaybe s $ do
+        wps <- writePaths formal sapSumm
+        return $ foldr (checkWrittenFormal formal) s wps
+    checkWrittenFormal formal (_, p) s =
+      fromMaybe s $ do
+        _ <- F.find (equivAccessPaths p) ownedFields
+        return $ (transferArguments %~ S.insert formal) s
+      -- case F.find
+      --   case S.member p ownedFields `debug` show p `debug` show ownedFields of
+      --     False -> s
+      --     True -> (transferArguments %~ S.insert formal) s
+
     checkTransfer s i =
       case i of
         StoreInst { storeValue = (valueContent' -> ArgumentC sv) }
@@ -186,6 +196,7 @@ identifyTransferredArguments pta sapSumm ownedFields trSumm flike =
               True -> return $! (transferArguments %~ S.insert sv) s
               False -> return s
           | otherwise -> return s
+
         CallInst { callFunction = callee, callArguments = (map fst -> args) } ->
           calleeArgumentFold (argumentTransfer args) s pta callee args
         InvokeInst { invokeFunction = callee, invokeArguments = (map fst -> args) } ->
@@ -348,13 +359,13 @@ identifyOwnedFields cg pta finSumm sapSumm ownedFields funcLike = do
                 -- passed in that position.
                 actualAtIx <- args `at` argumentIndex calleeArg
                 pathOrArg <- accessPathOrArgument actualAtIx
-                case pathOrArg `debug` show pathOrArg of
+                case pathOrArg of
                   Left _ ->
-                    return $ acc `S.union` S.fromList rps `debug` ("Freeing " ++ show arg ++ " " ++ show rps)
+                    return $ acc `S.union` S.fromList rps
                   Right p ->
                     let absPath = abstractAccessPath p
                         rps' = mapMaybe (appendAccessPath absPath) rps
-                    in return $ acc `S.union` S.fromList rps' `debug` pretty rps'
+                    in return $ acc `S.union` S.fromList rps'
             -- Calling a finalizer on a local access path
             InstructionC i -> return $ fromMaybe acc $ do
               accPath <- accessPath i
@@ -390,6 +401,14 @@ accessPathBaseArgument :: AccessPath -> Maybe Argument
 accessPathBaseArgument p =
   fromValue $ valueContent' (accessPathBaseValue p)
 
+-- The end type does not always match up for various unimportant
+-- reasons.  All that really matters is that the base types and path
+-- components match.  It might be worth pushing this down to the
+-- AccessPath Eq instance, but I don't know what effect that will have
+-- on the derived Ord instance.
+equivAccessPaths :: AbstractAccessPath -> AbstractAccessPath -> Bool
+equivAccessPaths (AbstractAccessPath bt1 _ c1) (AbstractAccessPath bt2 _ c2) =
+  bt1 == bt2 && c1 == c2
 
 -- Testing
 

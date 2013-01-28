@@ -96,7 +96,6 @@ module Foreign.Inference.Analysis.SAPPTRel (
 
 import GHC.Generics ( Generic )
 
-import Control.Arrow ( second )
 import Control.DeepSeq
 import Control.DeepSeq.Generics ( genericRnf )
 import Control.Lens ( Simple, (%~), makeLenses )
@@ -107,7 +106,6 @@ import Data.Maybe ( fromMaybe, mapMaybe )
 import Data.Monoid
 import Data.Set ( Set )
 import qualified Data.Set as S
-import qualified Text.PrettyPrint.GenericPretty as PP
 
 import LLVM.Analysis
 import LLVM.Analysis.AccessPath
@@ -118,9 +116,6 @@ import LLVM.Analysis.Dataflow
 import Foreign.Inference.AnalysisMonad
 import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
-
-import Debug.Trace
-debug = flip trace
 
 data SAPPTRelSummary =
   SAPPTRelSummary { _sapPaths :: Map Function (Map AccessPath (Set AccessPath))
@@ -233,8 +228,8 @@ synthesizedPathsFor (SAPPTRelSummary p v _) a = fromMaybe [] $ do
   vs <- M.lookup f v
   ps <- M.lookup f p
   endValPaths <- M.lookup (toValue a) vs
-  return () `debug` PP.pretty (S.toList endValPaths)
-  return () `debug` PP.pretty (map (second S.toList) (M.toList vs))
+  -- return () `debug` PP.pretty (S.toList endValPaths)
+  -- return () `debug` PP.pretty (map (second S.toList) (M.toList vs))
   let maximalPaths = mapMaybe (extendPaths vs ps) (S.toList endValPaths)
   return $ concat maximalPaths
   where

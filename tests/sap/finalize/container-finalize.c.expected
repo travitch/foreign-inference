@@ -1,0 +1,4 @@
+fromList [ (("free_S","s"), fromList [ ("%struct.S*",[AccessDeref,AccessField 0,AccessDeref,AccessField 0])
+                                     , ("%struct.S*",[AccessDeref,AccessField 0,AccessDeref,AccessField 0,AccessDeref,AccessField 0])])
+         , (("list_pop","lst"),fromList [("%struct.list_t*",[AccessDeref,AccessField 0])])
+         ]

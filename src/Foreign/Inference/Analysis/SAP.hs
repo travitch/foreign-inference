@@ -41,9 +41,6 @@ import Foreign.Inference.Analysis.SAPPTRel
 import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
 
-import Debug.Trace
-debug = flip trace
-
 -- | Argument being stored into, Access path into that argument, and
 -- the argument being stored.
 data WritePath = WritePath !Int AbstractAccessPath
@@ -277,17 +274,52 @@ callTransfer finSumm callee actuals s (argIx, actual) = do
           return $ (sapFinalize .~ fins') s
         _ -> return s
     -- For this case (the actual argument is finalized), we only need
-    -- to do something if we can construct an access path from the
-    -- argument.  The case where an Argument is being finalized is handled
-    -- in the finalizer analysis.
+    -- to do something if
+    --
+    -- (1) we can construct an access path from the argument.  The
+    --     case where an Argument is being finalized is handled in the
+    --     finalizer analysis.
+    --
+    -- (2) The instruction argument is a Call that returns an access
+    --     path.
     True -> return $ fromMaybe s $ do
       actualInst <- fromValue actual
-      cap <- accessPath actualInst
-      baseArg <- accessPathBaseArgument cap
-      let absPath = abstractAccessPath cap
-          fp = FinalizePath absPath
-      return $ (sapFinalize %~ M.insertWith S.union baseArg (S.singleton fp)) s
+      case actualInst of
+        CallInst { callFunction = (valueContent' -> FunctionC argCallee)
+                 , callArguments = (map fst -> riActuals)
+                 } -> do
+          retPaths <- M.lookup argCallee (s ^. sapReturns)
+          return $ F.foldr (toFinalizedPath riActuals) s retPaths
+        _ -> do
+          cap <- accessPath actualInst
+          baseArg <- accessPathBaseArgument cap
+          let absPath = abstractAccessPath cap
+              fp = FinalizePath absPath
+          return $ (sapFinalize %~ M.insertWith S.union baseArg (S.singleton fp)) s
   where
+    toFinalizedPath riActuals (ReturnPath ix p) fsumm =
+      fromMaybe fsumm $ do
+        mappedArg <- riActuals `at` ix
+        pOrArg <- accessPathOrArgument mappedArg
+        case pOrArg of
+          -- This looks something like
+          --
+          -- > foo = funcReturningPath(a);
+          -- > free(foo);
+          --
+          -- So the finalized path is just whatever is returned
+          Left mappedArg' ->
+            let fp = FinalizePath p
+            in return $ (sapFinalize %~ M.insertWith S.union mappedArg' (S.singleton fp)) fsumm
+          -- This case is more complicated:
+          --
+          -- > foo = funcReturningPath(a->baz);
+          -- > free(foo);
+          Right mappedPath -> do
+            argBase <- accessPathBaseArgument mappedPath
+            p' <- abstractAccessPath mappedPath `appendAccessPath` p
+            let fp = FinalizePath p'
+            return $ (sapFinalize %~ M.insertWith S.union argBase (S.singleton fp)) fsumm
     -- Extend finalized paths
     finalizeTransfer baseArg curPath (FinalizePath p) argSumm =
       fromMaybe argSumm $ do
@@ -415,12 +447,24 @@ returnValueTransfer f s i = return $ fromMaybe s $ do
   a <- accessPathBaseArgument p
   return $ addArg (argumentIndex a)
 
+-- Utilities
+
 valuesAsInsts :: [Value] -> [Instruction]
 valuesAsInsts = mapMaybe fromValue
 
 accessPathBaseArgument :: AccessPath -> Maybe Argument
 accessPathBaseArgument p =
   fromValue $ valueContent' (accessPathBaseValue p)
+
+accessPathOrArgument :: Value -> Maybe (Either Argument AccessPath)
+accessPathOrArgument v =
+  case valueContent' v of
+    ArgumentC a -> return (Left a)
+    InstructionC i -> do
+      cap <- accessPath i
+      return (Right cap)
+    _ -> Nothing
+
 
 -- Testing
 

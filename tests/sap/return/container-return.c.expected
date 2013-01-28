@@ -1,0 +1,1 @@
+fromList [("list_pop",fromList [(0,"%struct.list_t*",[AccessDeref,AccessField 0,AccessDeref,AccessField 0])])]

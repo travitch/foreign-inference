@@ -102,7 +102,7 @@ import Control.Lens ( Simple, (%~), makeLenses )
 import qualified Data.Foldable as F
 import Data.Map ( Map )
 import qualified Data.Map as M
-import Data.Maybe ( fromMaybe, mapMaybe )
+import Data.Maybe ( fromMaybe )
 import Data.Monoid
 import Data.Set ( Set )
 import qualified Data.Set as S
@@ -141,7 +141,10 @@ instance Eq SAPPTRelSummary where
 instance Monoid SAPPTRelSummary where
   mempty = SAPPTRelSummary mempty mempty mempty
   (SAPPTRelSummary s1 v1 d1) `mappend` (SAPPTRelSummary s2 v2 d2) =
-    SAPPTRelSummary (M.union s1 s2) (M.union v1 v2) (d1 `mappend` d2)
+    SAPPTRelSummary { _sapPaths = M.union s1 s2
+                    , _sapValues = M.union v1 v2
+                    , _sapDiagnostics = d1 `mappend` d2
+                    }
 
 instance NFData SAPPTRelSummary where
   rnf = genericRnf
@@ -181,7 +184,9 @@ sapAnalysis funcLike s = do
   let exitInsts = functionExitInstructions f
       exitInfo = map (dataflowResult funcInfo) exitInsts
       SAPInfo ps vs = meets exitInfo
-  return $! (sapValues %~ M.insert f (invertMap vs)) $ (sapPaths %~ M.insert f (invertMap ps)) s
+      addVals = sapValues %~ M.insert f (invertMap vs)
+      addPaths = sapPaths %~ M.insert f (invertMap ps)
+  return $ addVals $ addPaths s
   where
     f = getFunction funcLike
 
@@ -208,31 +213,36 @@ sapTransfer s i =
 valueAsAccessPath :: Value -> Maybe AccessPath
 valueAsAccessPath v = fromValue v >>= accessPath
 
+
+appendConcretePath :: AccessPath -> AccessPath -> Maybe AccessPath
+appendConcretePath (AccessPath b1 _ p1) (AccessPath _ e2 p2) =
+  Just $ AccessPath b1 e2 (p1 ++ p2)
+
 invertMap :: (Ord k, Ord v) => Map k (Set v) -> Map v (Set k)
 invertMap = foldr doInvert mempty . M.toList
   where
     doInvert (k, vset) acc =
       F.foldr (\v a -> M.insertWith S.union v (S.singleton k) a) acc vset
 
-appendConcretePath :: AccessPath -> AccessPath -> Maybe AccessPath
-appendConcretePath (AccessPath b1 _ p1) (AccessPath _ e2 p2) =
-  Just $ AccessPath b1 e2 (p1 ++ p2)
-
 -- | Enumerate the 'AccessPath's that an 'Argument' is stored into,
 -- including 'AccessPath's synthesized from the PT relation.
 synthesizedPathsFor :: SAPPTRelSummary -> Argument -> [AccessPath]
-synthesizedPathsFor (SAPPTRelSummary p v _) a = fromMaybe [] $ do
+synthesizedPathsFor (SAPPTRelSummary _ v _) a = fromMaybe [] $ do
   vs <- M.lookup f v
-  ps <- M.lookup f p
   endValPaths <- M.lookup (toValue a) vs
-  let maximalPaths = mapMaybe (extendPaths vs ps) (S.toList endValPaths)
-  return $ concat maximalPaths
+  let res = F.foldr (extendPaths vs) mempty endValPaths
+  return (S.toList res)
   where
     f = argumentFunction a
-    extendPaths vs ps p0 = return $ fromMaybe [p0] $ do
-      let base = accessPathBaseValue p0
-      p' <- M.lookup base vs
-      return $ concat $ mapMaybe (extendPath vs ps p0) (S.toList p')
-    extendPath vs ps p0 p' = do
+    extendPaths vs p0 acc
+     | S.member p0 acc = acc
+     | otherwise = fromMaybe (S.insert p0 acc) $ do
+       let base = accessPathBaseValue p0
+           vs' = M.delete base vs
+       -- Note, as we use access path components, we remove them from
+       -- the map so that we don't re-use them in infinite cycles.
+       p' <- M.lookup base vs
+       return $ F.foldr (extendPath vs' p0) acc p'
+    extendPath vs p0 p' acc = fromMaybe acc $ do
       ep <- p' `appendConcretePath` p0
-      maybe (return [ep]) return (extendPaths vs ps ep)
+      return $ extendPaths vs ep acc

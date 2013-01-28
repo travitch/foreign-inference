@@ -166,6 +166,10 @@ identifyTransferredArguments :: (HasFunction funcLike)
                                 -> funcLike
                                 -> Analysis TransferSummary
 identifyTransferredArguments pta sapSumm ownedFields trSumm flike = do
+  -- The preliminary pass with checkWrittenFormals uses the results of
+  -- the SymbolicAccessPath analysis to resolve complex
+  -- interprocedural field writes.  This includes container-like
+  -- manipulations.
   trSumm' <- foldM checkWrittenFormals trSumm formals
   foldM checkTransfer trSumm' (functionInstructions f)
   where
@@ -182,6 +186,10 @@ identifyTransferredArguments pta sapSumm ownedFields trSumm flike = do
 
     checkTransfer s i =
       case i of
+        -- This case handles simple transfers (where a function
+        -- locally stores an argument into a field of another
+        -- argument.  More complex cases are handled in
+        -- checkWrittenFormals
         StoreInst { storeValue = (valueContent' -> ArgumentC sv) }
           | sv `elem` formals -> return $ fromMaybe s $ do
             -- We don't extract the storeAddress above because the

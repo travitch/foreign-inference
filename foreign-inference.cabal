@@ -64,7 +64,7 @@ library
                  failure >= 0.2, safe-failure, GenericPretty > 1,
                  regex-tdfa, transformers >= 0.2 && < 0.4, hbgl,
                  hjsmin, graphviz, semigroups, file-embed >= 0.0.4.2,
-                 sbv >= 2.9, ifscs,
+                 sbv >= 2.9, ifscs, suffixtree, split,
                  -- For the reporting code
                  archive-inspection, directory, attoparsec >= 0.10 && < 1.0,
                  hamlet >= 1, blaze-builder, blaze-html, shakespeare-text, parallel-io

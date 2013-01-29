@@ -23,12 +23,17 @@ import Control.DeepSeq.Generics ( genericRnf )
 import Control.Lens ( Simple, makeLenses, (%~), (.~), (^.), set, view, lens )
 import Control.Monad ( foldM )
 import qualified Data.Foldable as F
+import Data.Function ( on )
+import qualified Data.List as L
+import qualified Data.List.Split as L
 import Data.Map ( Map )
 import qualified Data.Map as M
 import Data.Maybe ( fromMaybe, mapMaybe )
 import Data.Monoid
 import Data.Set ( Set )
 import qualified Data.Set as S
+import Data.SuffixTree ( STree )
+import qualified Data.SuffixTree as ST
 import Safe.Failure ( at )
 
 import LLVM.Analysis
@@ -124,7 +129,8 @@ instance NFData SAPSummary where
 instance HasDiagnostics SAPSummary where
   diagnosticLens = sapDiagnostics
 
-type Analysis = AnalysisMonad () ()
+type PTCache = Map Argument [AccessPath]
+type Analysis = AnalysisMonad () PTCache
 
 instance SummarizeModule SAPSummary where
   summarizeArgument a (SAPSummary _ as fs _) =
@@ -154,7 +160,7 @@ identifySAPs :: forall compositeSummary funcLike .
 identifySAPs ds lns ptrelL finL =
   composableDependencyAnalysisM runner sapAnalysis lns depLens
   where
-    runner a = runAnalysis a ds () ()
+    runner a = runAnalysis a ds () mempty
     readL = view ptrelL &&& view finL
     writeL csum (s, f) = (set ptrelL s . set finL f) csum
     depLens :: Simple Lens compositeSummary (SAPPTRelSummary, FinalizerSummary)
@@ -294,7 +300,7 @@ callTransfer finSumm callee actuals s (argIx, actual) = do
           cap <- accessPath actualInst
           baseArg <- accessPathBaseArgument cap
           let absPath = abstractAccessPath cap
-              fp = FinalizePath absPath
+              fp = FinalizePath (simplifyAbstractAccessPath absPath)
           return $ (sapFinalize %~ M.insertWith S.union baseArg (S.singleton fp)) s
   where
     toFinalizedPath riActuals (ReturnPath ix p) fsumm =
@@ -309,7 +315,7 @@ callTransfer finSumm callee actuals s (argIx, actual) = do
           --
           -- So the finalized path is just whatever is returned
           Left mappedArg' ->
-            let fp = FinalizePath p
+            let fp = FinalizePath (simplifyAbstractAccessPath p)
             in return $ (sapFinalize %~ M.insertWith S.union mappedArg' (S.singleton fp)) fsumm
           -- This case is more complicated:
           --
@@ -318,13 +324,13 @@ callTransfer finSumm callee actuals s (argIx, actual) = do
           Right mappedPath -> do
             argBase <- accessPathBaseArgument mappedPath
             p' <- abstractAccessPath mappedPath `appendAccessPath` p
-            let fp = FinalizePath p'
+            let fp = FinalizePath (simplifyAbstractAccessPath p')
             return $ (sapFinalize %~ M.insertWith S.union argBase (S.singleton fp)) fsumm
     -- Extend finalized paths
     finalizeTransfer baseArg curPath (FinalizePath p) argSumm =
       fromMaybe argSumm $ do
         p' <- curPath `appendAccessPath` p
-        let fp = FinalizePath p'
+        let fp = FinalizePath (simplifyAbstractAccessPath p')
         return $ M.insertWith S.union baseArg (S.singleton fp) argSumm
 
     -- In this case, an argument is being passed directly to a callee
@@ -352,7 +358,7 @@ callTransfer finSumm callee actuals s (argIx, actual) = do
             -- if it was just an argument passed down to @g@ instead
             -- of a field access.
             let dstArg' = argumentIndex argActual
-                wp = WritePath dstArg' p
+                wp = WritePath dstArg' (simplifyAbstractAccessPath p)
             return $ M.insertWith S.union formal (S.singleton wp) argSumm
           _ -> do
             -- In this case, the actual argument is some field or
@@ -366,7 +372,7 @@ callTransfer finSumm callee actuals s (argIx, actual) = do
             -- observed.
             p' <- absPath `appendAccessPath` p
             let dstArg' = argumentIndex baseArg
-                wp = WritePath dstArg' p'
+                wp = WritePath dstArg' (simplifyAbstractAccessPath p')
             return $ M.insertWith S.union formal (S.singleton wp) argSumm
 
 -- | If this StoreInst represents the store of an Argument into a
@@ -383,16 +389,17 @@ storeTransfer :: SAPPTRelSummary
                  -> SAPSummary
                  -> Argument -- ^ The argument being stored
                  -> Analysis SAPSummary
-storeTransfer ptrelSumm s storedArg =
-  let ps = synthesizedPathsFor ptrelSumm storedArg
-  in return $ addStore $ foldr toWritePath [] ps
+storeTransfer ptrelSumm s storedArg = do
+  ps <- lookupPTCache ptrelSumm storedArg
+  return $ addStore $ foldr toWritePath [] ps
   where
     addStore res' =
       (sapArguments %~ M.insertWith S.union storedArg (S.fromList res')) s
     toWritePath p acc = fromMaybe acc $ do
       base <- accessPathBaseArgument p
       let absPath = abstractAccessPath p
-      return $! WritePath (argumentIndex base) absPath : acc
+          wp = WritePath (argumentIndex base) (simplifyAbstractAccessPath absPath)
+      return $! wp : acc
 
 
 -- | When the result of a call is returned, that call is known to
@@ -424,7 +431,7 @@ transitiveReturnTransfer f s@(SAPSummary rs _ _ _) callee args =
       let absPath = abstractAccessPath cap
           tix = argumentIndex formal
       tp <- absPath `appendAccessPath` p
-      return $ S.singleton (ReturnPath tix tp)
+      return $ S.singleton (ReturnPath tix (simplifyAbstractAccessPath tp))
 
 -- FIXME: This could actually probably work on external functions,
 -- too, if we are careful in representing access paths
@@ -442,7 +449,7 @@ returnValueTransfer f s i = return $ fromMaybe s $ do
   p <- accessPath i
   let absPath = abstractAccessPath p
       addArg aid =
-        let v = S.singleton $ ReturnPath aid absPath
+        let v = S.singleton $ ReturnPath aid (simplifyAbstractAccessPath absPath)
         in (sapReturns %~ M.insertWith S.union f v) s
   a <- accessPathBaseArgument p
   return $ addArg (argumentIndex a)
@@ -465,6 +472,64 @@ accessPathOrArgument v =
       return (Right cap)
     _ -> Nothing
 
+lookupPTCache :: SAPPTRelSummary -> Argument -> Analysis [AccessPath]
+lookupPTCache s a = do
+  m <- analysisGet
+  case M.lookup a m of
+    Just ps -> return ps
+    Nothing -> do
+      let ps = synthesizedPathsFor s a
+      analysisPut $! M.insert a ps m
+      return ps
+
+-- | This analysis computes fixed-points over strongly-connected
+-- components in the call graph.  Mutually recursive functions can
+-- generate *infinite* access paths (consider the case of walking a
+-- linked list recursively).  Infinite paths prevent the analysis from
+-- reaching a fixed point.
+--
+-- To compensate, each generated path is /simplified/ with this
+-- function.  Simplification essentially just drops cycles in the
+-- access path induced by recursion.  It works by finding the longest
+-- repeated subsequence of field accesses and removing all but one
+-- directly adjacent copy.  This is a heuristic.  To do it properly,
+-- each path component would need to be annotated with the struct type
+-- it refers to (to ensure that the fields <1> and <2> in
+-- f.<1>.<2>.<1>.<2> are all really the same).  This could probably be
+-- patched in without too much trouble.
+--
+-- The proper fix is to represent symbolic access paths in the same
+-- way as the referenced paper: as DFAs.  This way path modifications
+-- can be represented as concatenation followed by determinization and
+-- minimization.  Then the resulting DFAs could be compared for
+-- equality.  This is fairly challenging and would require a bit of
+-- work with graph isomorphism to test equality.
+simplifyAbstractAccessPath :: AbstractAccessPath -> AbstractAccessPath
+simplifyAbstractAccessPath aap@(AbstractAccessPath b e cs)
+  | null lrs = aap
+  | otherwise = AbstractAccessPath b e (simplifySequence lrs cs)
+  where
+    t = ST.construct cs
+    lrs = longestRepeatedSubsequence t
+
+simplifySequence :: (Eq a) => [a] -> [a] -> [a]
+simplifySequence subseq s =
+  concat $ pfx ++ keep : L.dropWhile (==subseq) rest
+  where
+    (pfx, keep:rest) = L.span (/=subseq) splits
+    splits = filter (not . null) $ L.split (L.onSublist subseq) s
+
+longestRepeatedSubsequence :: STree a -> [a]
+longestRepeatedSubsequence = snd . go (0, [])
+  where
+    ordering = compare `on` fst
+    go acc ST.Leaf = acc
+    go acc (ST.Node es) = L.maximumBy ordering $ map (byEdge acc) es
+    byEdge acc (_, ST.Leaf) = acc
+    byEdge (sz, _) (pfx, t) =
+      let pfx' = ST.prefix pfx
+          sz' = sz + length pfx'
+      in go (sz', pfx') t
 
 -- Testing
 

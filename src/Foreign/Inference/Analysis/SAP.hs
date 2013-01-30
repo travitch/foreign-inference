@@ -46,6 +46,9 @@ import Foreign.Inference.Analysis.SAPPTRel
 import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
 
+import Debug.Trace
+debug = flip trace
+
 -- | Argument being stored into, Access path into that argument, and
 -- the argument being stored.
 data WritePath = WritePath !Int AbstractAccessPath
@@ -178,7 +181,8 @@ sapAnalysis :: (FuncLike funcLike, HasFunction funcLike)
                -> SAPSummary
                -> Analysis SAPSummary
 sapAnalysis (ptrelSumm, finSumm) flike s =
-  foldM (sapTransfer f ptrelSumm finSumm) s (functionInstructions f)
+  foldM (sapTransfer f ptrelSumm finSumm) s (functionInstructions f) `debug`
+    ("SAP: " ++ show (functionName f))
   where
     f = getFunction flike
 
@@ -301,7 +305,7 @@ callTransfer finSumm callee actuals s (argIx, actual) = do
           baseArg <- accessPathBaseArgument cap
           let absPath = abstractAccessPath cap
               fp = FinalizePath (simplifyAbstractAccessPath absPath)
-          return $ (sapFinalize %~ M.insertWith S.union baseArg (S.singleton fp)) s
+          return $ (sapFinalize %~ M.insertWith S.union baseArg (S.singleton fp)) s `debug` show fp
   where
     toFinalizedPath riActuals (ReturnPath ix p) fsumm =
       fromMaybe fsumm $ do
@@ -316,7 +320,7 @@ callTransfer finSumm callee actuals s (argIx, actual) = do
           -- So the finalized path is just whatever is returned
           Left mappedArg' ->
             let fp = FinalizePath (simplifyAbstractAccessPath p)
-            in return $ (sapFinalize %~ M.insertWith S.union mappedArg' (S.singleton fp)) fsumm
+            in return $ (sapFinalize %~ M.insertWith S.union mappedArg' (S.singleton fp)) fsumm `debug` show fp
           -- This case is more complicated:
           --
           -- > foo = funcReturningPath(a->baz);
@@ -325,13 +329,13 @@ callTransfer finSumm callee actuals s (argIx, actual) = do
             argBase <- accessPathBaseArgument mappedPath
             p' <- abstractAccessPath mappedPath `appendAccessPath` p
             let fp = FinalizePath (simplifyAbstractAccessPath p')
-            return $ (sapFinalize %~ M.insertWith S.union argBase (S.singleton fp)) fsumm
+            return $ (sapFinalize %~ M.insertWith S.union argBase (S.singleton fp)) fsumm `debug` show fp
     -- Extend finalized paths
     finalizeTransfer baseArg curPath (FinalizePath p) argSumm =
       fromMaybe argSumm $ do
         p' <- curPath `appendAccessPath` p
         let fp = FinalizePath (simplifyAbstractAccessPath p')
-        return $ M.insertWith S.union baseArg (S.singleton fp) argSumm
+        return $ M.insertWith S.union baseArg (S.singleton fp) argSumm `debug` show fp
 
     -- In this case, an argument is being passed directly to a callee
     -- that finalizes some argument of the field.  We just need to
@@ -505,26 +509,50 @@ lookupPTCache s a = do
 -- equality.  This is fairly challenging and would require a bit of
 -- work with graph isomorphism to test equality.
 simplifyAbstractAccessPath :: AbstractAccessPath -> AbstractAccessPath
-simplifyAbstractAccessPath aap@(AbstractAccessPath b e cs)
-  | null lrs = aap
-  | otherwise = AbstractAccessPath b e (simplifySequence lrs cs)
-  where
-    t = ST.construct cs
-    lrs = longestRepeatedSubsequence t
+simplifyAbstractAccessPath aap@(AbstractAccessPath b e cs) =
+  fromMaybe aap $ do
+    t <- tagComponentsWithType b cs
+    let t' = ST.construct t
+        lrs = longestRepeatedSubsequence t'
+    case null lrs of
+      True -> fail "No repeated subsequence"
+      False ->
+        let cs' = map snd $ simplifySequence lrs t
+        in return $ AbstractAccessPath b e cs'
 
-simplifySequence :: (Eq a) => [a] -> [a] -> [a]
-simplifySequence subseq s =
-  concat $ pfx ++ keep : L.dropWhile (==subseq) rest
+tagComponentsWithType :: Type -> [AccessType] -> Maybe [(Type, AccessType)]
+tagComponentsWithType _ [] = return []
+tagComponentsWithType baseType (c:cs) = do
+  return () `debug` ("tagComponentsWithType " ++ show baseType ++ " . " ++ show (c:cs))
+  nt <- nextType baseType c
+  rest <- tagComponentsWithType nt cs
+  return $ (baseType, c) : rest
   where
-    (pfx, keep:rest) = L.span (/=subseq) splits
+    nextType (TypePointer t' _) AccessDeref = return t'
+    nextType (TypePointer t' _) AccessArray = return t'
+    nextType (TypeStruct _ ts _) (AccessField ix) =
+      case ix < length ts of
+        False -> fail "tagComponentsWithType: index out of range"
+        True -> return $ ts !! ix
+    nextType t access = fail ("Unexpected " ++ show baseType ++ " . " ++ show (c:cs))
+
+simplifySequence :: (Show a, Eq a) => [a] -> [a] -> [a]
+simplifySequence subseq s =
+  res `debug` ("> " ++ show s ++ " simplified to " ++ show res)
+  where
+    res = concat $ concatMap replaceRun $ L.group splits
     splits = filter (not . null) $ L.split (L.onSublist subseq) s
+    replaceRun [] = []
+    replaceRun g@(r:_) = if subseq == r then [r] else g
 
 longestRepeatedSubsequence :: STree a -> [a]
 longestRepeatedSubsequence = snd . go (0, [])
   where
     ordering = compare `on` fst
     go acc ST.Leaf = acc
-    go acc (ST.Node es) = L.maximumBy ordering $ map (byEdge acc) es
+    go acc (ST.Node es)
+      | null es = acc
+      | otherwise = L.maximumBy ordering $ map (byEdge acc) es
     byEdge acc (_, ST.Leaf) = acc
     byEdge (sz, _) (pfx, t) =
       let pfx' = ST.prefix pfx

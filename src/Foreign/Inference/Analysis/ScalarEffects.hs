@@ -56,9 +56,9 @@ summarizeEffectArgument a (ScalarEffectSummary s) =
   case HM.lookup a s of
     Nothing -> []
     Just (EffectAdd1 (AbstractAccessPath t _ ats)) ->
-      [(PAScalarEffectAddOne (show t) ats, [])]
+      [(PAScalarEffectAddOne (show t) (map snd ats), [])]
     Just (EffectSub1 (AbstractAccessPath t _ ats)) ->
-      [(PAScalarEffectSubOne (show t) ats, [])]
+      [(PAScalarEffectSubOne (show t) (map snd ats), [])]
 
 identifyScalarEffects :: (FuncLike funcLike, HasCFG funcLike, HasFunction funcLike)
                          => Simple Lens compositeSummary ScalarEffectSummary

@@ -138,9 +138,9 @@ type Analysis = AnalysisMonad () PTCache
 instance SummarizeModule SAPSummary where
   summarizeArgument a (SAPSummary _ as fs _) =
     let externalizeWrite (WritePath ix p) =
-          (ix, show (abstractAccessPathBaseType p), abstractAccessPathComponents p)
+          (ix, show (abstractAccessPathBaseType p), map snd $ abstractAccessPathComponents p)
         externalizeFinalize (FinalizePath p) =
-          (show (abstractAccessPathBaseType p), abstractAccessPathComponents p)
+          (show (abstractAccessPathBaseType p), map snd $ abstractAccessPathComponents p)
         toAnnot con elts = [(con elts, [])]
         fs' = maybe [] (toAnnot PAFinalizeField . map externalizeFinalize . S.toList) (M.lookup a fs)
         as' = maybe [] (toAnnot PASAPWrite . map externalizeWrite . S.toList) (M.lookup a as)
@@ -150,7 +150,7 @@ instance SummarizeModule SAPSummary where
     fromMaybe [] $ do
       fr <- M.lookup f rs
       let toExternal (ReturnPath ix p) =
-            (ix, show (abstractAccessPathBaseType p), abstractAccessPathComponents p)
+            (ix, show (abstractAccessPathBaseType p), map snd $ abstractAccessPathComponents p)
       return [(FASAPReturn $ map toExternal $ S.toList fr, [])]
 
 identifySAPs :: forall compositeSummary funcLike .
@@ -511,30 +511,30 @@ lookupPTCache s a = do
 simplifyAbstractAccessPath :: AbstractAccessPath -> AbstractAccessPath
 simplifyAbstractAccessPath aap@(AbstractAccessPath b e cs) =
   fromMaybe aap $ do
-    t <- tagComponentsWithType b cs
-    let t' = ST.construct t
+--    t <- tagComponentsWithType b cs
+    let t' = ST.construct cs
         lrs = longestRepeatedSubsequence t'
     case null lrs of
       True -> fail "No repeated subsequence"
       False ->
-        let cs' = map snd $ simplifySequence lrs t
+        let cs' = simplifySequence lrs cs
         in return $ AbstractAccessPath b e cs'
 
-tagComponentsWithType :: Type -> [AccessType] -> Maybe [(Type, AccessType)]
-tagComponentsWithType _ [] = return []
-tagComponentsWithType baseType (c:cs) = do
-  return () `debug` ("tagComponentsWithType " ++ show baseType ++ " . " ++ show (c:cs))
-  nt <- nextType baseType c
-  rest <- tagComponentsWithType nt cs
-  return $ (baseType, c) : rest
-  where
-    nextType (TypePointer t' _) AccessDeref = return t'
-    nextType (TypePointer t' _) AccessArray = return t'
-    nextType (TypeStruct _ ts _) (AccessField ix) =
-      case ix < length ts of
-        False -> fail "tagComponentsWithType: index out of range"
-        True -> return $ ts !! ix
-    nextType t access = fail ("Unexpected " ++ show baseType ++ " . " ++ show (c:cs))
+-- tagComponentsWithType :: Type -> [AccessType] -> Maybe [(Type, AccessType)]
+-- tagComponentsWithType _ [] = return []
+-- tagComponentsWithType baseType (c:cs) = do
+--   return () `debug` ("tagComponentsWithType " ++ show baseType ++ " . " ++ show (c:cs))
+--   nt <- nextType baseType c
+--   rest <- tagComponentsWithType nt cs
+--   return $ (baseType, c) : rest
+--   where
+--     nextType (TypePointer t' _) AccessDeref = return t'
+--     nextType (TypePointer t' _) AccessArray = return t'
+--     nextType (TypeStruct _ ts _) (AccessField ix) =
+--       case ix < length ts of
+--         False -> fail "tagComponentsWithType: index out of range"
+--         True -> return $ ts !! ix
+--     nextType t access = fail ("Unexpected " ++ show baseType ++ " . " ++ show (c:cs))
 
 simplifySequence :: (Show a, Eq a) => [a] -> [a] -> [a]
 simplifySequence subseq s =
@@ -570,7 +570,7 @@ sapReturnResultToTestFormat =
        S.map fromRetPath s)
     fromRetPath (ReturnPath ix p) =
       (ix, show (abstractAccessPathBaseType p),
-       abstractAccessPathComponents p)
+       map snd $ abstractAccessPathComponents p)
 
 sapArgumentResultToTestFormat :: SAPSummary -> Map (String, String) (Set (Int, String, [AccessType]))
 sapArgumentResultToTestFormat =
@@ -583,7 +583,7 @@ sapArgumentResultToTestFormat =
       in (p1, S.map fromPath s)
     fromPath (WritePath ix p) =
       (ix, show (abstractAccessPathBaseType p),
-       abstractAccessPathComponents p)
+       map snd $ abstractAccessPathComponents p)
 
 sapFinalizeResultToTestFormat :: SAPSummary -> Map (String, String) (Set (String, [AccessType]))
 sapFinalizeResultToTestFormat =
@@ -596,4 +596,4 @@ sapFinalizeResultToTestFormat =
       in (p1, S.map fromPath s)
     fromPath (FinalizePath p) =
       (show (abstractAccessPathBaseType p),
-       abstractAccessPathComponents p)
+       map snd $ abstractAccessPathComponents p)

@@ -67,6 +67,10 @@ import Foreign.Inference.Analysis.IndirectCallResolver
 import Foreign.Inference.Analysis.SAP
 import Foreign.Inference.Analysis.Util.CalleeFold
 
+-- import qualified Text.PrettyPrint.GenericPretty as PP
+-- import Debug.Trace
+-- debug = flip trace
+
 data TransferSummary = TransferSummary {
   _transferArguments :: Set Argument,
   _transferDiagnostics :: Diagnostics
@@ -152,7 +156,7 @@ identifyTransfers funcLikes cg ds pta p1res flens slens tlens =
     tparms s ownedFields = do
       s' <- foldM (identifyTransferredArguments pta sapSumm ownedFields) s funcLikes
       case s' == s of
-        True -> return s -- `debug` pretty (S.toList ownedFields)
+        True -> return s -- `debug` PP.pretty (S.toList ownedFields)
         False -> tparms s' ownedFields
     a = ofields mempty >>= tparms trSumm
 
@@ -393,8 +397,11 @@ accessPathBaseArgument p =
 -- AccessPath Eq instance, but I don't know what effect that will have
 -- on the derived Ord instance.
 equivAccessPaths :: AbstractAccessPath -> AbstractAccessPath -> Bool
-equivAccessPaths (AbstractAccessPath bt1 _ c1) (AbstractAccessPath bt2 _ c2) =
-  bt1 == bt2 && c1 == c2
+equivAccessPaths p1@(AbstractAccessPath bt1 _ c1) p2@(AbstractAccessPath bt2 _ c2) =
+  bt1 == bt2 && c1' == c2'
+  where
+    c1' = filter (/=AccessDeref) $ map snd c1
+    c2' = filter (/=AccessDeref) $ map snd c2
 
 -- Testing
 

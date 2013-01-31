@@ -23,17 +23,12 @@ import Control.DeepSeq.Generics ( genericRnf )
 import Control.Lens ( Simple, makeLenses, (%~), (.~), (^.), set, view, lens )
 import Control.Monad ( foldM )
 import qualified Data.Foldable as F
-import Data.Function ( on )
-import qualified Data.List as L
-import qualified Data.List.Split as L
 import Data.Map ( Map )
 import qualified Data.Map as M
 import Data.Maybe ( fromMaybe, mapMaybe )
 import Data.Monoid
 import Data.Set ( Set )
 import qualified Data.Set as S
-import Data.SuffixTree ( STree )
-import qualified Data.SuffixTree as ST
 import Safe.Failure ( at )
 
 import LLVM.Analysis
@@ -46,8 +41,8 @@ import Foreign.Inference.Analysis.SAPPTRel
 import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
 
-import Debug.Trace
-debug = flip trace
+-- import Debug.Trace
+-- debug = flip trace
 
 -- | Argument being stored into, Access path into that argument, and
 -- the argument being stored.
@@ -138,9 +133,9 @@ type Analysis = AnalysisMonad () PTCache
 instance SummarizeModule SAPSummary where
   summarizeArgument a (SAPSummary _ as fs _) =
     let externalizeWrite (WritePath ix p) =
-          (ix, show (abstractAccessPathBaseType p), map snd $ abstractAccessPathComponents p)
+          (ix, show (abstractAccessPathBaseType p), abstractAccessPathComponents p)
         externalizeFinalize (FinalizePath p) =
-          (show (abstractAccessPathBaseType p), map snd $ abstractAccessPathComponents p)
+          (show (abstractAccessPathBaseType p), abstractAccessPathComponents p)
         toAnnot con elts = [(con elts, [])]
         fs' = maybe [] (toAnnot PAFinalizeField . map externalizeFinalize . S.toList) (M.lookup a fs)
         as' = maybe [] (toAnnot PASAPWrite . map externalizeWrite . S.toList) (M.lookup a as)
@@ -150,7 +145,7 @@ instance SummarizeModule SAPSummary where
     fromMaybe [] $ do
       fr <- M.lookup f rs
       let toExternal (ReturnPath ix p) =
-            (ix, show (abstractAccessPathBaseType p), map snd $ abstractAccessPathComponents p)
+            (ix, show (abstractAccessPathBaseType p), abstractAccessPathComponents p)
       return [(FASAPReturn $ map toExternal $ S.toList fr, [])]
 
 identifySAPs :: forall compositeSummary funcLike .
@@ -181,8 +176,8 @@ sapAnalysis :: (FuncLike funcLike, HasFunction funcLike)
                -> SAPSummary
                -> Analysis SAPSummary
 sapAnalysis (ptrelSumm, finSumm) flike s =
-  foldM (sapTransfer f ptrelSumm finSumm) s (functionInstructions f) `debug`
-    ("SAP: " ++ show (functionName f))
+  foldM (sapTransfer f ptrelSumm finSumm) s (functionInstructions f)--  `debug`
+    -- ("SAP: " ++ show (functionName f))
   where
     f = getFunction flike
 
@@ -304,8 +299,9 @@ callTransfer finSumm callee actuals s (argIx, actual) = do
           cap <- accessPath actualInst
           baseArg <- accessPathBaseArgument cap
           let absPath = abstractAccessPath cap
-              fp = FinalizePath (simplifyAbstractAccessPath absPath)
-          return $ (sapFinalize %~ M.insertWith S.union baseArg (S.singleton fp)) s `debug` show fp
+          sp <- simplifyAbstractAccessPath absPath
+          let fp = FinalizePath sp
+          return $ (sapFinalize %~ M.insertWith S.union baseArg (S.singleton fp)) s -- `debug` show fp
   where
     toFinalizedPath riActuals (ReturnPath ix p) fsumm =
       fromMaybe fsumm $ do
@@ -318,9 +314,10 @@ callTransfer finSumm callee actuals s (argIx, actual) = do
           -- > free(foo);
           --
           -- So the finalized path is just whatever is returned
-          Left mappedArg' ->
-            let fp = FinalizePath (simplifyAbstractAccessPath p)
-            in return $ (sapFinalize %~ M.insertWith S.union mappedArg' (S.singleton fp)) fsumm `debug` show fp
+          Left mappedArg' -> do
+            sp <- simplifyAbstractAccessPath p
+            let fp = FinalizePath sp
+            return $ (sapFinalize %~ M.insertWith S.union mappedArg' (S.singleton fp)) fsumm -- `debug` show fp
           -- This case is more complicated:
           --
           -- > foo = funcReturningPath(a->baz);
@@ -328,14 +325,16 @@ callTransfer finSumm callee actuals s (argIx, actual) = do
           Right mappedPath -> do
             argBase <- accessPathBaseArgument mappedPath
             p' <- abstractAccessPath mappedPath `appendAccessPath` p
-            let fp = FinalizePath (simplifyAbstractAccessPath p')
-            return $ (sapFinalize %~ M.insertWith S.union argBase (S.singleton fp)) fsumm `debug` show fp
+            sp <- simplifyAbstractAccessPath p'
+            let fp = FinalizePath sp
+            return $ (sapFinalize %~ M.insertWith S.union argBase (S.singleton fp)) fsumm -- `debug` show fp
     -- Extend finalized paths
     finalizeTransfer baseArg curPath (FinalizePath p) argSumm =
       fromMaybe argSumm $ do
         p' <- curPath `appendAccessPath` p
-        let fp = FinalizePath (simplifyAbstractAccessPath p')
-        return $ M.insertWith S.union baseArg (S.singleton fp) argSumm `debug` show fp
+        sp <- simplifyAbstractAccessPath p'
+        let fp = FinalizePath sp
+        return $ M.insertWith S.union baseArg (S.singleton fp) argSumm -- `debug` show fp
 
     -- In this case, an argument is being passed directly to a callee
     -- that finalizes some argument of the field.  We just need to
@@ -361,8 +360,9 @@ callTransfer finSumm callee actuals s (argIx, actual) = do
             -- In the example, this would be the first argument to @g@
             -- if it was just an argument passed down to @g@ instead
             -- of a field access.
+            sp <- simplifyAbstractAccessPath p
             let dstArg' = argumentIndex argActual
-                wp = WritePath dstArg' (simplifyAbstractAccessPath p)
+                wp = WritePath dstArg' sp
             return $ M.insertWith S.union formal (S.singleton wp) argSumm
           _ -> do
             -- In this case, the actual argument is some field or
@@ -375,8 +375,9 @@ callTransfer finSumm callee actuals s (argIx, actual) = do
             -- Extend the summary from @g@ with the @t->s@ we just
             -- observed.
             p' <- absPath `appendAccessPath` p
+            sp <- simplifyAbstractAccessPath p'
             let dstArg' = argumentIndex baseArg
-                wp = WritePath dstArg' (simplifyAbstractAccessPath p')
+                wp = WritePath dstArg' sp
             return $ M.insertWith S.union formal (S.singleton wp) argSumm
 
 -- | If this StoreInst represents the store of an Argument into a
@@ -402,7 +403,8 @@ storeTransfer ptrelSumm s storedArg = do
     toWritePath p acc = fromMaybe acc $ do
       base <- accessPathBaseArgument p
       let absPath = abstractAccessPath p
-          wp = WritePath (argumentIndex base) (simplifyAbstractAccessPath absPath)
+      sp <- simplifyAbstractAccessPath absPath
+      let wp = WritePath (argumentIndex base) sp
       return $! wp : acc
 
 
@@ -435,7 +437,8 @@ transitiveReturnTransfer f s@(SAPSummary rs _ _ _) callee args =
       let absPath = abstractAccessPath cap
           tix = argumentIndex formal
       tp <- absPath `appendAccessPath` p
-      return $ S.singleton (ReturnPath tix (simplifyAbstractAccessPath tp))
+      sp <- simplifyAbstractAccessPath tp
+      return $ S.singleton (ReturnPath tix sp)
 
 -- FIXME: This could actually probably work on external functions,
 -- too, if we are careful in representing access paths
@@ -452,8 +455,9 @@ returnValueTransfer f s InvokeInst { invokeArguments = (map fst -> args)
 returnValueTransfer f s i = return $ fromMaybe s $ do
   p <- accessPath i
   let absPath = abstractAccessPath p
-      addArg aid =
-        let v = S.singleton $ ReturnPath aid (simplifyAbstractAccessPath absPath)
+  sp <- simplifyAbstractAccessPath absPath
+  let addArg aid =
+        let v = S.singleton $ ReturnPath aid sp
         in (sapReturns %~ M.insertWith S.union f v) s
   a <- accessPathBaseArgument p
   return $ addArg (argumentIndex a)
@@ -492,15 +496,9 @@ lookupPTCache s a = do
 -- linked list recursively).  Infinite paths prevent the analysis from
 -- reaching a fixed point.
 --
--- To compensate, each generated path is /simplified/ with this
--- function.  Simplification essentially just drops cycles in the
--- access path induced by recursion.  It works by finding the longest
--- repeated subsequence of field accesses and removing all but one
--- directly adjacent copy.  This is a heuristic.  To do it properly,
--- each path component would need to be annotated with the struct type
--- it refers to (to ensure that the fields <1> and <2> in
--- f.<1>.<2>.<1>.<2> are all really the same).  This could probably be
--- patched in without too much trouble.
+-- To avoid this, truncate paths (by returning Nothing) that refer to
+-- the same field access twice.  Any such access implies that the path
+-- is describing a cycle.
 --
 -- The proper fix is to represent symbolic access paths in the same
 -- way as the referenced paper: as DFAs.  This way path modifications
@@ -508,56 +506,11 @@ lookupPTCache s a = do
 -- minimization.  Then the resulting DFAs could be compared for
 -- equality.  This is fairly challenging and would require a bit of
 -- work with graph isomorphism to test equality.
-simplifyAbstractAccessPath :: AbstractAccessPath -> AbstractAccessPath
-simplifyAbstractAccessPath aap@(AbstractAccessPath b e cs) =
-  fromMaybe aap $ do
---    t <- tagComponentsWithType b cs
-    let t' = ST.construct cs
-        lrs = longestRepeatedSubsequence t'
-    case null lrs of
-      True -> fail "No repeated subsequence"
-      False ->
-        let cs' = simplifySequence lrs cs
-        in return $ AbstractAccessPath b e cs'
-
--- tagComponentsWithType :: Type -> [AccessType] -> Maybe [(Type, AccessType)]
--- tagComponentsWithType _ [] = return []
--- tagComponentsWithType baseType (c:cs) = do
---   return () `debug` ("tagComponentsWithType " ++ show baseType ++ " . " ++ show (c:cs))
---   nt <- nextType baseType c
---   rest <- tagComponentsWithType nt cs
---   return $ (baseType, c) : rest
---   where
---     nextType (TypePointer t' _) AccessDeref = return t'
---     nextType (TypePointer t' _) AccessArray = return t'
---     nextType (TypeStruct _ ts _) (AccessField ix) =
---       case ix < length ts of
---         False -> fail "tagComponentsWithType: index out of range"
---         True -> return $ ts !! ix
---     nextType t access = fail ("Unexpected " ++ show baseType ++ " . " ++ show (c:cs))
-
-simplifySequence :: (Show a, Eq a) => [a] -> [a] -> [a]
-simplifySequence subseq s =
-  res `debug` ("> " ++ show s ++ " simplified to " ++ show res)
+simplifyAbstractAccessPath :: AbstractAccessPath -> Maybe AbstractAccessPath
+simplifyAbstractAccessPath p@(AbstractAccessPath _ _ cs) =
+  if length cs == S.size css then return p else fail "Cyclic path"
   where
-    res = concat $ concatMap replaceRun $ L.group splits
-    splits = filter (not . null) $ L.split (L.onSublist subseq) s
-    replaceRun [] = []
-    replaceRun g@(r:_) = if subseq == r then [r] else g
-
-longestRepeatedSubsequence :: STree a -> [a]
-longestRepeatedSubsequence = snd . go (0, [])
-  where
-    ordering = compare `on` fst
-    go acc ST.Leaf = acc
-    go acc (ST.Node es)
-      | null es = acc
-      | otherwise = L.maximumBy ordering $ map (byEdge acc) es
-    byEdge acc (_, ST.Leaf) = acc
-    byEdge (sz, _) (pfx, t) =
-      let pfx' = ST.prefix pfx
-          sz' = sz + length pfx'
-      in go (sz', pfx') t
+    css = S.fromList cs
 
 -- Testing
 
@@ -570,7 +523,7 @@ sapReturnResultToTestFormat =
        S.map fromRetPath s)
     fromRetPath (ReturnPath ix p) =
       (ix, show (abstractAccessPathBaseType p),
-       map snd $ abstractAccessPathComponents p)
+       abstractAccessPathComponents p)
 
 sapArgumentResultToTestFormat :: SAPSummary -> Map (String, String) (Set (Int, String, [AccessType]))
 sapArgumentResultToTestFormat =
@@ -583,7 +536,7 @@ sapArgumentResultToTestFormat =
       in (p1, S.map fromPath s)
     fromPath (WritePath ix p) =
       (ix, show (abstractAccessPathBaseType p),
-       map snd $ abstractAccessPathComponents p)
+       abstractAccessPathComponents p)
 
 sapFinalizeResultToTestFormat :: SAPSummary -> Map (String, String) (Set (String, [AccessType]))
 sapFinalizeResultToTestFormat =
@@ -596,4 +549,4 @@ sapFinalizeResultToTestFormat =
       in (p1, S.map fromPath s)
     fromPath (FinalizePath p) =
       (show (abstractAccessPathBaseType p),
-       map snd $ abstractAccessPathComponents p)
+       abstractAccessPathComponents p)

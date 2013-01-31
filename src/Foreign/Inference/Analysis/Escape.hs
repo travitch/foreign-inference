@@ -506,5 +506,5 @@ escapeResultToTestFormat er =
       in M.insertWith' S.union fname newEntries acc
     toFieldRef aname (tag, fld) =
       case abstractAccessPathComponents fld of
-        [(_, AccessField ix)] -> Just $ (tag, printf "%s.<%d>" aname ix)
+        [AccessField ix] -> Just $ (tag, printf "%s.<%d>" aname ix)
         _ -> Nothing

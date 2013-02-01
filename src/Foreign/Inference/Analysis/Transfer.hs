@@ -241,9 +241,6 @@ identifyTransferredArguments pta sapSumm ownedFields trSumm flike = do
         case extension of
           Left _ -> do
             _ <- F.find (equivAccessPaths wp) ownedFields
-            -- case S.member wp ownedFields of
-            --   False -> Nothing
-            --   True ->
             return $ (transferArguments %~ S.insert writtenFormal) s
           Right cap -> do
             -- Ensure the base of the access path is an Argument
@@ -251,9 +248,6 @@ identifyTransferredArguments pta sapSumm ownedFields trSumm flike = do
             let absPath = abstractAccessPath cap
             extendedPath <- absPath `appendAccessPath` wp
             _ <- F.find (equivAccessPaths extendedPath) ownedFields
-            -- case S.member extendedPath ownedFields of
-            --   False -> Nothing
-            --   True ->
             return $ (transferArguments %~ S.insert writtenFormal) s
 
 accessPathOrArgument :: Value -> Maybe (Either Argument AccessPath)

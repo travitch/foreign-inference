@@ -1,0 +1,5 @@
+fromList [ ("@property_new_string",fromList ["%s"])
+         , ("@property_set_string",fromList ["%s"])
+         , ("@value_new_string",fromList ["%s"])
+         , ("@value_set_string",fromList ["%s"])
+         ]

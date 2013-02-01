@@ -508,9 +508,12 @@ lookupPTCache s a = do
 -- work with graph isomorphism to test equality.
 simplifyAbstractAccessPath :: AbstractAccessPath -> Maybe AbstractAccessPath
 simplifyAbstractAccessPath p@(AbstractAccessPath _ _ cs) =
-  if length cs == S.size css then return p else fail "Cyclic path"
+  if length cs' == S.size css then return p else fail "Cyclic path"
   where
-    css = S.fromList cs
+    cs' = filter ((/=AccessDeref) . snd) cs
+    css = S.fromList cs'
+
+-- FIXME: Maybe only field/union accesses matter here?
 
 -- Testing
 

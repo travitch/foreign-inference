@@ -117,6 +117,9 @@ import Foreign.Inference.AnalysisMonad
 import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
 
+-- import Debug.Trace
+-- debug = flip trace
+
 data SAPPTRelSummary =
   SAPPTRelSummary { _sapPaths :: Map Function (Map AccessPath (Set AccessPath))
                   , _sapValues :: Map Function (Map Value (Set AccessPath))
@@ -206,7 +209,22 @@ sapTransfer s i =
             let ins = M.insert destPath (S.singleton storedPath)
             in return $ (sapInfoPaths %~ ins) s
           Nothing ->
-            let ins = M.insert destPath (S.singleton sv)
+            -- Note, when we are storing the value here, we key it by
+            -- the value /stripped of bitcasts/.  This is a kind of
+            -- normalization step to make it simple to look up the
+            -- value (either casted or not) when we synthesize new
+            -- paths (below).
+            --
+            -- This wasn't necessary in the past, but due to a change
+            -- in access path construction, bitcasts are no longer
+            -- included as the base of the access path.  That means,
+            -- in this case, when we see a value stored, we need to
+            -- ignore its bitcast so that we can look it up later
+            -- (otherwise we search by the un-bitcasted value,
+            -- obtained from an access path base, and find no
+            -- results).
+            let sv' = stripBitcasts sv
+                ins = M.insert destPath (S.singleton sv')
             in return $ (sapInfoValues %~ ins) s
     _ -> return s
 
@@ -214,9 +232,9 @@ valueAsAccessPath :: Value -> Maybe AccessPath
 valueAsAccessPath v = fromValue v >>= accessPath
 
 
-appendConcretePath :: AccessPath -> AccessPath -> Maybe AccessPath
+appendConcretePath :: AccessPath -> AccessPath -> AccessPath
 appendConcretePath (AccessPath b1 _ p1) (AccessPath _ e2 p2) =
-  Just $ AccessPath b1 e2 (p1 ++ p2)
+  AccessPath b1 e2 (p1 ++ p2)
 
 invertMap :: (Ord k, Ord v) => Map k (Set v) -> Map v (Set k)
 invertMap = foldr doInvert mempty . M.toList
@@ -243,6 +261,6 @@ synthesizedPathsFor (SAPPTRelSummary _ v _) a = fromMaybe [] $ do
        -- the map so that we don't re-use them in infinite cycles.
        p' <- M.lookup base vs
        return $ F.foldr (extendPath vs' p0) acc p'
-    extendPath vs p0 p' acc = fromMaybe acc $ do
-      ep <- p' `appendConcretePath` p0
-      return $ extendPaths vs ep acc
+    extendPath vs p0 p' acc =
+      let ep = p' `appendConcretePath` p0
+      in extendPaths vs ep acc

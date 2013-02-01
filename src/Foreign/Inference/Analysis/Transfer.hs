@@ -239,18 +239,22 @@ identifyTransferredArguments pta sapSumm ownedFields trSumm flike = do
         actualDst <- actuals `at` destIx
         extension <- accessPathOrArgument actualDst
         case extension of
-          Left _ ->
-            case S.member wp ownedFields of
-              False -> Nothing
-              True -> return $ (transferArguments %~ S.insert writtenFormal) s
+          Left _ -> do
+            _ <- F.find (equivAccessPaths wp) ownedFields
+            -- case S.member wp ownedFields of
+            --   False -> Nothing
+            --   True ->
+            return $ (transferArguments %~ S.insert writtenFormal) s
           Right cap -> do
             -- Ensure the base of the access path is an Argument
             _ <- accessPathBaseArgument cap
             let absPath = abstractAccessPath cap
             extendedPath <- absPath `appendAccessPath` wp
-            case S.member extendedPath ownedFields of
-              False -> Nothing
-              True -> return $ (transferArguments %~ S.insert writtenFormal) s
+            _ <- F.find (equivAccessPaths extendedPath) ownedFields
+            -- case S.member extendedPath ownedFields of
+            --   False -> Nothing
+            --   True ->
+            return $ (transferArguments %~ S.insert writtenFormal) s
 
 accessPathOrArgument :: Value -> Maybe (Either Argument AccessPath)
 accessPathOrArgument v =
@@ -397,7 +401,7 @@ accessPathBaseArgument p =
 -- AccessPath Eq instance, but I don't know what effect that will have
 -- on the derived Ord instance.
 equivAccessPaths :: AbstractAccessPath -> AbstractAccessPath -> Bool
-equivAccessPaths p1@(AbstractAccessPath bt1 _ c1) p2@(AbstractAccessPath bt2 _ c2) =
+equivAccessPaths (AbstractAccessPath bt1 _ c1) (AbstractAccessPath bt2 _ c2) =
   bt1 == bt2 && c1' == c2'
   where
     c1' = filter (/=AccessDeref) $ map snd c1

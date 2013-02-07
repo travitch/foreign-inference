@@ -250,15 +250,6 @@ identifyTransferredArguments pta sapSumm ownedFields trSumm flike = do
             _ <- F.find (equivAccessPaths extendedPath) ownedFields
             return $ (transferArguments %~ S.insert writtenFormal) s
 
-accessPathOrArgument :: Value -> Maybe (Either Argument AccessPath)
-accessPathOrArgument v =
-  case valueContent' v of
-    ArgumentC a -> return (Left a)
-    InstructionC i -> do
-      cap <- accessPath i
-      return (Right cap)
-    _ -> Nothing
-
 -- | Determine whether or not the given function is a finalizer.  We
 -- need this because we only want to infer ownership from finalizer
 -- calls *within another finalizer*.
@@ -337,10 +328,9 @@ identifyOwnedFields cg pta finSumm sapSumm ownedFields funcLike = do
               -- the summary.
               return $ acc `S.union` S.fromList ffs
             InstructionC i -> do
-              cap <- accessPath i
               -- We don't need the base argument, we just need to know
               -- that the base is an Argument.
-              _ <- accessPathBaseArgument cap
+              (cap, _) <- anyArgumentAccessPath i
               let absPath = abstractAccessPath cap
                   extended = mapMaybe (appendAccessPath absPath) ffs
               -- Extend absPath by each of the paths described in ffs.

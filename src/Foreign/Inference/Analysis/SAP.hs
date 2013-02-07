@@ -1,6 +1,6 @@
 {-# LANGUAGE TemplateHaskell, DeriveGeneric, ViewPatterns #-}
+{-# LANGUAGE RankNTypes, FlexibleContexts #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE RankNTypes #-}
 -- | An analysis to identify @Symbolic Access Paths@ for each function
 -- in a Module.
 module Foreign.Inference.Analysis.SAP (
@@ -10,6 +10,9 @@ module Foreign.Inference.Analysis.SAP (
   returnedPaths,
   returnedContainerPaths,
   writePaths,
+  -- * Helpers
+  accessPathOrArgument,
+  anyArgumentAccessPath,
   -- * Testing
   sapReturnResultToTestFormat,
   sapArgumentResultToTestFormat,
@@ -21,6 +24,7 @@ import GHC.Generics ( Generic )
 import Control.Arrow ( (&&&) )
 import Control.DeepSeq
 import Control.DeepSeq.Generics ( genericRnf )
+import Control.Failure
 import Control.Lens ( Simple, makeLenses, (%~), (.~), (^.), set, view, lens )
 import Control.Monad ( foldM )
 import qualified Data.Foldable as F
@@ -250,9 +254,8 @@ storedReturnValueTransfer :: SAPSummary
 storedReturnValueTransfer s i callee actuals =
   return $ fromMaybe s $ do
     rcps <- M.lookup callee (s ^. sapReturnContainer)
-    destPath <- accessPath i
     -- This is the argument we are storing the return value into.
-    destArg <- accessPathBaseArgument destPath
+    (destPath, destArg) <- anyArgumentAccessPath i
     -- Now we have to add a WritePath that joins destPath to each of
     -- the RCPs.
     let absDest = abstractAccessPath destPath
@@ -309,6 +312,10 @@ callTransfer finSumm callee actuals s (argIx, actual) = do
         -- to @g@ as an *actual* parameter.  'argumentTransfer'
         -- decides how to deal with the argument depending on the type
         -- of augmented access path that is in play.
+        --
+        -- Note: in either of these cases, the actual could be a phi
+        -- node.  That is more likely to be important in the second
+        -- case.
         ArgumentC formal -> do
           let args = s ^. sapArguments
               fins = s ^. sapFinalize
@@ -323,8 +330,7 @@ callTransfer finSumm callee actuals s (argIx, actual) = do
         -- field of one argument is stored into the field of another),
         -- then we need to augment the FinalizePath.
         InstructionC actualInst -> do
-          cap <- accessPath actualInst
-          baseArg <- accessPathBaseArgument cap
+          (cap, baseArg) <- anyArgumentAccessPath actualInst
           let absPath = abstractAccessPath cap
               fins = s ^. sapFinalize
               calleeFinalizeSumm = M.lookup calleeFormal fins
@@ -349,8 +355,7 @@ callTransfer finSumm callee actuals s (argIx, actual) = do
           retPaths <- M.lookup argCallee (s ^. sapReturns)
           return $ F.foldr (toFinalizedPath riActuals) s retPaths
         _ -> do
-          cap <- accessPath actualInst
-          baseArg <- accessPathBaseArgument cap
+          (cap, baseArg) <- anyArgumentAccessPath actualInst
           let absPath = abstractAccessPath cap
           sp <- simplifyAbstractAccessPath absPath
           let fp = FinalizePath sp
@@ -421,9 +426,8 @@ callTransfer finSumm callee actuals s (argIx, actual) = do
             -- In this case, the actual argument is some field or
             -- array access.  That is @t->s@
             actualInst <- fromValue baseActual
-            cap' <- accessPath actualInst
-            -- @t@ in the example
-            baseArg <- accessPathBaseArgument cap'
+            -- baseArg is @t@ in the example
+            (cap', baseArg) <- anyArgumentAccessPath actualInst
             let absPath = abstractAccessPath cap'
             -- Extend the summary from @g@ with the @t->s@ we just
             -- observed.
@@ -555,12 +559,38 @@ accessPathBaseArgument :: AccessPath -> Maybe Argument
 accessPathBaseArgument p =
   fromValue $ valueContent' (accessPathBaseValue p)
 
+-- | Return any access path from this instruction that is based on an
+-- Argument.  This is a helper for dealing with phi nodes, at least
+-- one value of which would generate an argument-based access path.
+-- The path returned is arbitrary.  More complete handling would deal
+-- with /all/ such paths.
+anyArgumentAccessPath :: (Failure AccessPathError m)
+                         => Instruction
+                         -> m (AccessPath, Argument)
+anyArgumentAccessPath i =
+  case i of
+    PhiNode { phiIncomingValues = (map fst -> ivs) } ->
+      tryAccessPath ivs
+    _ -> do
+      p <- accessPath i
+      case valueContent' (accessPathBaseValue p) of
+        ArgumentC a -> return (p, a)
+        _ -> failure $ NoPathError (toValue i)
+  where
+    tryAccessPath [] = failure $ NoPathError (toValue i)
+    tryAccessPath (v:rest) = maybe (tryAccessPath rest) return $ do
+      vi <- fromValue v
+      p <- accessPath vi
+      case valueContent' (accessPathBaseValue p) of
+        ArgumentC a -> return (p, a)
+        _ -> fail "try next"
+
 accessPathOrArgument :: Value -> Maybe (Either Argument AccessPath)
 accessPathOrArgument v =
   case valueContent' v of
     ArgumentC a -> return (Left a)
     InstructionC i -> do
-      cap <- accessPath i
+      (cap, _) <- anyArgumentAccessPath i
       return (Right cap)
     _ -> Nothing
 

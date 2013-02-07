@@ -211,14 +211,16 @@ instructionEscapeCore ignorePred i (EscapeSummary egs _ _ _ _) = do
     s:_ -> return (sinkWitness s)
 
 summarizeEscapeArgument :: Argument -> EscapeSummary -> [(ParamAnnotation, [Witness])]
-summarizeEscapeArgument a er =
-  case HM.lookup a (er ^. escapeArguments) of
-    Nothing -> []
-    Just (DirectEscape, w@RetInst {}) -> [(PAWillEscape, [Witness w "ret"])]
-    Just (t, w@StoreInst {}) -> [(tagToAnnot t, [Witness w "store"])]
-    Just (t, w@CallInst {}) -> [(tagToAnnot t, [Witness w "call"])]
-    Just (t, w@InvokeInst {}) -> [(tagToAnnot t, [Witness w "call"])]
-    Just (t, w) -> [(tagToAnnot t, [Witness w "access"])]
+summarizeEscapeArgument a er
+  | not (isPointerType a) = []
+  | otherwise =
+    case HM.lookup a (er ^. escapeArguments) of
+      Nothing -> []
+      Just (DirectEscape, w@RetInst {}) -> [(PAWillEscape, [Witness w "ret"])]
+      Just (t, w@StoreInst {}) -> [(tagToAnnot t, [Witness w "store"])]
+      Just (t, w@CallInst {}) -> [(tagToAnnot t, [Witness w "call"])]
+      Just (t, w@InvokeInst {}) -> [(tagToAnnot t, [Witness w "call"])]
+      Just (t, w) -> [(tagToAnnot t, [Witness w "access"])]
   where
     tagToAnnot t =
       case t of
@@ -432,6 +434,11 @@ isEscapeAnnot a =
     _ -> False
 -- Ignore PAWillEscape for now...
 
+isPointerType :: (IsValue a) => a -> Bool
+isPointerType v =
+  case valueType v of
+    TypePointer _ _ -> True
+    _ -> False
 
 -- Given a GetElementPtrInst, return its base and the path accessed
 -- IFF the base was an Argument.

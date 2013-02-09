@@ -233,8 +233,8 @@ valueAsAccessPath v = fromValue v >>= accessPath
 
 
 appendConcretePath :: AccessPath -> AccessPath -> AccessPath
-appendConcretePath (AccessPath b1 _ p1) (AccessPath _ e2 p2) =
-  AccessPath b1 e2 (p1 ++ p2)
+appendConcretePath (AccessPath b1 bt1 _ p1) (AccessPath _ _ e2 p2) =
+  AccessPath b1 bt1 e2 (p1 ++ p2)
 
 invertMap :: (Ord k, Ord v) => Map k (Set v) -> Map v (Set k)
 invertMap = foldr doInvert mempty . M.toList

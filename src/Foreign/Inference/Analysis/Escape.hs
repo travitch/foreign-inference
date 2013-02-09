@@ -31,6 +31,7 @@ import Data.Maybe ( fromMaybe, isNothing, mapMaybe )
 import Data.Set ( Set )
 import qualified Data.Set as S
 import Data.Monoid
+import Safe.Failure ( at )
 import Text.Printf
 
 import LLVM.Analysis
@@ -416,6 +417,10 @@ buildValueFlowGraph ics summ is = do
         Just PAEscape ->  argEscapeConstraint callInst DirectEscape actual incs
         Just PAContractEscape -> argEscapeConstraint callInst BrokenContractEscape actual incs
         Just PAFptrEscape -> argEscapeConstraint callInst IndirectEscape actual incs
+        Just (PAArgEscape argIx)
+          | callInstActualIsAlloca callInst argIx -> return incs
+          | otherwise ->
+            argEscapeConstraint callInst (ArgumentEscape argIx) actual incs
         _ -> return incs
 
 -- Note, it isn't quite obvious what to do with PAArgEscape here.
@@ -423,6 +428,25 @@ buildValueFlowGraph ics summ is = do
     addIndirectEscape callInst incs actual
       | notPointer actual = return incs
       | otherwise = argEscapeConstraint callInst IndirectEscape actual incs
+
+-- FIXME This should be a "not address taken" alloca - that is, not
+-- passed to any functions.
+callInstActualIsAlloca :: Instruction -> Int -> Bool
+callInstActualIsAlloca i ix =
+  case i of
+    CallInst { callArguments = (map fst -> args) } ->
+      isAlloca args
+    InvokeInst { invokeArguments = (map fst -> args) } ->
+      isAlloca args
+    _ -> False
+  where
+    isAlloca args =
+      fromMaybe False $ do
+        actual <- args `at` ix
+        actualInst <- fromValue actual
+        case actualInst of
+          AllocaInst {} -> return True
+          _ -> fail "Not an alloca"
 
 isEscapeAnnot :: ParamAnnotation -> Bool
 isEscapeAnnot a =

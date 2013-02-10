@@ -200,7 +200,10 @@ identifyTransferredArguments pta sapSumm ownedFields trSumm flike = do
             -- access path construction handles that
             acp <- accessPath i
             let absPath = abstractAccessPath acp
-            case S.member absPath ownedFields of
+            -- If the store address is a local (that is never
+            -- finalized), then this is obviously not transferred.
+--            return () `debug` (" Checking a transfer in " ++ show (functionName f) ++ " " ++ show absPath ++ " from " ++ show acp)
+            case S.member absPath ownedFields && not (localDestNotFinalized acp f) of
               True -> return $! (transferArguments %~ S.insert sv) s
               False -> return s
           | otherwise -> return s
@@ -249,6 +252,15 @@ identifyTransferredArguments pta sapSumm ownedFields trSumm flike = do
             extendedPath <- absPath `appendAccessPath` wp
             _ <- F.find (equivAccessPaths extendedPath) ownedFields
             return $ (transferArguments %~ S.insert writtenFormal) s
+
+localDestNotFinalized :: AccessPath -> Function -> Bool
+localDestNotFinalized acp f = fromMaybe False $ do
+  -- An alloca means we stored into a local.
+  AllocaInst {} <- fromValue (accessPathBaseValue acp)
+  -- FIXME: Check to ensure it really isn't finalized.  For now we are
+  -- assuming that locals are never finalized, which is almost certainly
+  -- true by definition...
+  return True
 
 -- | Determine whether or not the given function is a finalizer.  We
 -- need this because we only want to infer ownership from finalizer

@@ -30,6 +30,13 @@ module Foreign.Inference.Analysis.IndirectCallResolver (
   indirectCallTargets
   ) where
 
+import Data.Map ( Map )
+import qualified Data.Map as M
+import Data.Maybe ( fromMaybe )
+import Data.Monoid
+import Data.Set ( Set )
+import qualified Data.Set as S
+
 import LLVM.Analysis
 import LLVM.Analysis.ClassHierarchy
 import LLVM.Analysis.PointsTo
@@ -49,6 +56,7 @@ instance PointsToAnalysis IndirectCallSummary where
 data IndirectCallSummary =
   ICS { summaryTargets :: Andersen
       , resolverCHA :: CHA
+      , globalInits :: Map (Type, Int) (Set Value)
       }
 
 -- If i is a Load of a global with an initializer (or a GEP of a
@@ -62,6 +70,15 @@ indirectCallInitializers ics v =
   case valueContent' v of
     FunctionC f -> [toValue f]
     ExternalFunctionC ef -> [toValue ef]
+    InstructionC li@LoadInst { loadAddress = (valueContent' ->
+      InstructionC GetElementPtrInst { getElementPtrValue = base
+                                     , getElementPtrIndices = [ (valueContent -> ConstantC ConstantInt { constantIntValue = 0 })
+                                                              , (valueContent -> ConstantC ConstantInt { constantIntValue = (fromIntegral -> ix) })
+                                                              ]
+                                     })} -> fromMaybe (lookupInst li) $ do
+      let baseTy = valueType base
+      globInits <- M.lookup (baseTy, ix) (globalInits ics)
+      return $ S.toList globInits ++ lookupInst li
     -- Here, walk the initializer if it isn't a simple integer
     -- constant We discard the first index because while the global
     -- variable is a pointer type, the initializer is not (because all
@@ -129,7 +146,7 @@ indirectCallTargets ics i =
 -- of possible function pointers that object fields can point to.
 identifyIndirectCallTargets :: Module -> IndirectCallSummary
 identifyIndirectCallTargets m =
-  ICS (runPointsToAnalysisWith ignoreNonFptr m) (runCHA m)
+  ICS (runPointsToAnalysisWith ignoreNonFptr m) (runCHA m) gis
   where
     ignoreNonFptr = ignoreNonFptrType . valueType
     ignoreNonFptrType t =
@@ -137,3 +154,16 @@ identifyIndirectCallTargets m =
         TypeFunction _ _ _ -> False
         TypePointer t' _ -> ignoreNonFptrType t'
         _ -> True
+    gis = foldr extractGlobalFieldInits mempty (moduleGlobalVariables m)
+
+-- FIXME: One day push this hack down into the andersen analysis.
+extractGlobalFieldInits :: GlobalVariable -> Map (Type, Int) (Set Value) -> Map (Type, Int) (Set Value)
+extractGlobalFieldInits gv acc = fromMaybe acc $ do
+  ConstantC ConstantStruct { constantStructValues = vs } <- globalVariableInitializer gv
+  return $ foldr (addFieldInit (valueType gv)) acc (zip [0..] vs)
+
+addFieldInit t (ix, v) =
+  M.insertWith S.union (t, ix) (S.singleton v)
+
+-- Find all initializers of function types to global fields.  Make a map
+-- of (struct type, field no) -> {initializers}

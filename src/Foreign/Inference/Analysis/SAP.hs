@@ -38,6 +38,7 @@ import Safe.Failure ( at )
 
 import LLVM.Analysis
 import LLVM.Analysis.AccessPath
+import LLVM.Analysis.PointsTo
 import LLVM.Analysis.CallGraphSCCTraversal
 
 import Foreign.Inference.AnalysisMonad
@@ -46,6 +47,7 @@ import Foreign.Inference.Analysis.SAPPTRel
 import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
 import Foreign.Inference.Internal.FlattenValue
+import Foreign.Inference.Analysis.Util.CalleeFold
 
 -- import Debug.Trace
 -- debug = flip trace
@@ -174,15 +176,16 @@ instance SummarizeModule SAPSummary where
             (ix, show (abstractAccessPathBaseType p), abstractAccessPathComponents p)
       return [(FASAPReturn $ map toExternal $ S.toList fr, [])]
 
-identifySAPs :: forall compositeSummary funcLike .
-                (FuncLike funcLike, HasFunction funcLike)
+identifySAPs :: forall compositeSummary funcLike pta .
+                (FuncLike funcLike, HasFunction funcLike, PointsToAnalysis pta)
                 => DependencySummary
+                -> pta
                 -> Simple Lens compositeSummary SAPSummary
                 -> Simple Lens compositeSummary SAPPTRelSummary
                 -> Simple Lens compositeSummary FinalizerSummary
                 -> ComposableAnalysis compositeSummary funcLike
-identifySAPs ds lns ptrelL finL =
-  composableDependencyAnalysisM runner sapAnalysis lns depLens
+identifySAPs ds pta lns ptrelL finL =
+  composableDependencyAnalysisM runner (sapAnalysis pta) lns depLens
   where
     runner a = runAnalysis a ds () mempty
     readL = view ptrelL &&& view finL
@@ -196,24 +199,27 @@ identifySAPs ds lns ptrelL finL =
 --
 -- At call intructions, extend callee paths that are passed some path
 -- based on an argument.
-sapAnalysis :: (FuncLike funcLike, HasFunction funcLike)
-               => (SAPPTRelSummary, FinalizerSummary)
+sapAnalysis :: (FuncLike funcLike, HasFunction funcLike, PointsToAnalysis pta)
+               => pta
+               -> (SAPPTRelSummary, FinalizerSummary)
                -> funcLike
                -> SAPSummary
                -> Analysis SAPSummary
-sapAnalysis (ptrelSumm, finSumm) flike s =
-  foldM (sapTransfer f ptrelSumm finSumm) s (functionInstructions f)--  `debug`
+sapAnalysis pta (ptrelSumm, finSumm) flike s =
+  foldM (sapTransfer pta f ptrelSumm finSumm) s (functionInstructions f)--  `debug`
     -- ("SAP: " ++ show (functionName f))
   where
     f = getFunction flike
 
-sapTransfer :: Function
+sapTransfer :: (PointsToAnalysis pta)
+               => pta
+               ->Function
                -> SAPPTRelSummary
                -> FinalizerSummary
                -> SAPSummary
                -> Instruction
                -> Analysis SAPSummary
-sapTransfer f ptrelSumm finSumm s i =
+sapTransfer pta f ptrelSumm finSumm s i =
   case i of
     RetInst { retInstValue = Just (valueContent' ->
       InstructionC PhiNode { phiIncomingValues = (map fst -> ivs) })} ->
@@ -239,10 +245,12 @@ sapTransfer f ptrelSumm finSumm s i =
 
     CallInst { callFunction = callee
              , callArguments = (map fst -> actuals) } ->
-      foldM (callTransfer finSumm callee actuals) s (zip [0..] actuals)
+      calleeArgumentFold (callTransfer finSumm actuals) s pta callee actuals
+--      foldM (callTransfer finSumm callee actuals) s (zip [0..] actuals)
     InvokeInst { invokeFunction = callee
                , invokeArguments = (map fst -> actuals) } ->
-      foldM (callTransfer finSumm callee actuals) s (zip [0..] actuals)
+      calleeArgumentFold (callTransfer finSumm actuals) s pta callee actuals
+--      foldM (callTransfer finSumm callee actuals) s (zip [0..] actuals)
 
     _ -> return s
 
@@ -289,12 +297,12 @@ storedReturnValueTransfer s i callee actuals =
 -- function is called once for each actual argument to the call of @g@
 -- by the top-level transfer function.
 callTransfer :: FinalizerSummary
-                -> Value
                 -> [Value]
+                -> Value
                 -> SAPSummary
                 -> (Int, Value)
                 -> Analysis SAPSummary
-callTransfer finSumm callee actuals s (argIx, actual) = do
+callTransfer finSumm actuals callee s (argIx, actual) = do
   argFin <- lookupArgumentSummaryList finSumm callee argIx
   -- Note that, for now, this setup assumes that functions finalizing
   -- their argument will not also write to a different field.  This

@@ -53,7 +53,7 @@ identifyReturns :: (FuncLike funcLike, HasCFG funcLike)
                    => DependencySummary
                    -> Simple Lens compositeSummary ReturnSummary
                    -> ComposableAnalysis compositeSummary funcLike
-identifyReturns ds lns =
+identifyReturns _ {-ds-} lns =
   composableAnalysisM runIdentity analysisWrapper lns
   where
     analysisWrapper f (ReturnSummary s) = do

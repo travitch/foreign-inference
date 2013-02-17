@@ -41,7 +41,7 @@ import GHC.Generics ( Generic )
 
 import Control.DeepSeq
 import Control.DeepSeq.Generics ( genericRnf )
-import Control.Lens ( (%~), (.~), (^.), Simple, makeLenses )
+import Control.Lens ( Lens', (%~), (.~), (^.), makeLenses )
 import Control.Monad ( foldM, liftM, liftM2 )
 import Control.Monad.Trans
 import Control.Monad.Trans.Maybe
@@ -57,7 +57,6 @@ import Safe.Failure ( at )
 import LLVM.Analysis
 import LLVM.Analysis.AccessPath
 import LLVM.Analysis.CallGraph
-import LLVM.Analysis.CallGraphSCCTraversal
 
 import Foreign.Inference.AnalysisMonad
 import Foreign.Inference.Diagnostics
@@ -136,9 +135,9 @@ identifyTransfers :: (HasFunction funcLike, Eq compositeSummary)
                      -> DependencySummary
                      -> IndirectCallSummary
                      -> compositeSummary
-                     -> Simple Lens compositeSummary FinalizerSummary
-                     -> Simple Lens compositeSummary SAPSummary
-                     -> Simple Lens compositeSummary TransferSummary
+                     -> Lens' compositeSummary FinalizerSummary
+                     -> Lens' compositeSummary SAPSummary
+                     -> Lens' compositeSummary TransferSummary
                      -> compositeSummary
 identifyTransfers funcLikes cg ds pta p1res flens slens tlens =
   (tlens .~ res) p1res

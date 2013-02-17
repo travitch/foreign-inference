@@ -20,7 +20,7 @@ import GHC.Generics ( Generic )
 
 import Control.DeepSeq
 import Control.DeepSeq.Generics ( genericRnf )
-import Control.Lens ( Simple )
+import Control.Lens ( Lens' )
 import Control.Monad.Identity
 import qualified Data.HashMap.Strict as HM
 import Data.Monoid
@@ -61,7 +61,7 @@ summarizeEffectArgument a (ScalarEffectSummary s) =
       [(PAScalarEffectSubOne (show t) (map snd ats), [])]
 
 identifyScalarEffects :: (FuncLike funcLike, HasCFG funcLike, HasFunction funcLike)
-                         => Simple Lens compositeSummary ScalarEffectSummary
+                         => Lens' compositeSummary ScalarEffectSummary
                          -> ComposableAnalysis compositeSummary funcLike
 identifyScalarEffects =
   composableAnalysisM runIdentity analysisWrapper

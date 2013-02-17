@@ -18,7 +18,7 @@ import GHC.Generics ( Generic )
 
 import Control.DeepSeq
 import Control.DeepSeq.Generics ( genericRnf )
-import Control.Lens ( Simple, (^.), (%~), makeLenses )
+import Control.Lens ( Lens', (^.), (%~), makeLenses )
 import Control.Monad ( foldM )
 import qualified Data.Foldable as F
 import Data.Hashable
@@ -149,7 +149,7 @@ type Analysis = AnalysisMonad () ()
 identifyEscapes :: (FuncLike funcLike, HasFunction funcLike)
                    => DependencySummary
                    -> IndirectCallSummary
-                   -> Simple Lens compositeSummary EscapeSummary
+                   -> Lens' compositeSummary EscapeSummary
                    -> ComposableAnalysis compositeSummary funcLike
 identifyEscapes ds ics lns =
   composableAnalysisM runner escapeWrapper lns

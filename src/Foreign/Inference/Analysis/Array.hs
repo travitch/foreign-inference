@@ -19,7 +19,7 @@ import GHC.Generics ( Generic )
 import Control.Arrow
 import Control.DeepSeq
 import Control.DeepSeq.Generics ( genericRnf )
-import Control.Lens ( Simple, (.~), makeLenses )
+import Control.Lens ( Lens', (.~), makeLenses )
 import Control.Monad ( foldM )
 import Data.List ( foldl' )
 import Data.HashMap.Strict ( HashMap )
@@ -89,7 +89,7 @@ data PointerUse = IndexOperation Value [Value]
 
 identifyArrays :: (FuncLike funcLike, HasFunction funcLike)
                   => DependencySummary
-                  -> Simple Lens compositeSummary ArraySummary
+                  -> Lens' compositeSummary ArraySummary
                   -> ComposableAnalysis compositeSummary funcLike
 identifyArrays ds =
   composableAnalysisM runner arrayAnalysis

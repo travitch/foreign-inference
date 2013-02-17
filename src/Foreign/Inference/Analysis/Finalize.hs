@@ -23,7 +23,7 @@ import GHC.Generics ( Generic )
 
 import Control.DeepSeq
 import Control.DeepSeq.Generics ( genericRnf )
-import Control.Lens ( Simple, (.~), makeLenses )
+import Control.Lens ( Lens', (.~), makeLenses )
 import Control.Monad ( foldM )
 import Data.HashMap.Strict ( HashMap )
 import qualified Data.HashMap.Strict as HM
@@ -97,7 +97,7 @@ data FinalizerData =
 identifyFinalizers :: (FuncLike funcLike, HasFunction funcLike, HasCFG funcLike)
                       => DependencySummary
                       -> IndirectCallSummary
-                      -> Simple Lens compositeSummary FinalizerSummary
+                      -> Lens' compositeSummary FinalizerSummary
                       -> ComposableAnalysis compositeSummary funcLike
 identifyFinalizers ds ics =
   composableAnalysisM runner finalizerAnalysis

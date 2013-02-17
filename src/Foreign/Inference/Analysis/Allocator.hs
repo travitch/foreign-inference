@@ -38,7 +38,7 @@ import GHC.Generics ( Generic )
 import Control.Arrow ( (&&&) )
 import Control.DeepSeq
 import Control.DeepSeq.Generics ( genericRnf )
-import Control.Lens ( Simple, lens, view, set, (^.), (.~), makeLenses )
+import Control.Lens ( Lens', lens, view, set, (^.), (.~), makeLenses )
 import Data.Map ( Map )
 import qualified Data.Map as M
 import Data.Maybe ( isJust )
@@ -107,16 +107,16 @@ instance SummarizeModule AllocatorSummary where
 identifyAllocators :: forall compositeSummary funcLike . (FuncLike funcLike, HasFunction funcLike)
                       => DependencySummary
                       -> IndirectCallSummary
-                      -> Simple Lens compositeSummary AllocatorSummary
-                      -> Simple Lens compositeSummary EscapeSummary
-                      -> Simple Lens compositeSummary FinalizerSummary
+                      -> Lens' compositeSummary AllocatorSummary
+                      -> Lens' compositeSummary EscapeSummary
+                      -> Lens' compositeSummary FinalizerSummary
                       -> ComposableAnalysis compositeSummary funcLike
 identifyAllocators ds ics lns escLens finLens =
   composableDependencyAnalysisM runner allocatorAnalysis lns depLens
   where
     runner a = runAnalysis a ds readOnlyData ()
     readOnlyData = AllocatorData ics
-    depLens :: Simple Lens compositeSummary (EscapeSummary, FinalizerSummary)
+    depLens :: Lens' compositeSummary (EscapeSummary, FinalizerSummary)
     depLens = lens (view escLens &&& view finLens) (\csum (e, f) -> (set escLens e . set finLens f) csum)
 
 -- | If the function returns a pointer, it is a candidate for an

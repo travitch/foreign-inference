@@ -30,7 +30,7 @@ import GHC.Generics ( Generic )
 import Control.Arrow ( (&&&), second )
 import Control.DeepSeq
 import Control.DeepSeq.Generics ( genericRnf )
-import Control.Lens ( Simple, makeLenses, lens, set, view, (%~), (^.) )
+import Control.Lens ( Lens', makeLenses, lens, set, view, (%~), (^.) )
 import Control.Monad ( foldM )
 import Data.List ( find, groupBy )
 import Data.Map ( Map )
@@ -168,9 +168,9 @@ data OutData = OD { moduleSummary :: OutputSummary
 -- results.
 identifyOutput :: forall compositeSummary funcLike . (FuncLike funcLike, HasCFG funcLike, HasFunction funcLike)
                   => DependencySummary
-                  -> Simple Lens compositeSummary OutputSummary
-                  -> Simple Lens compositeSummary AllocatorSummary
-                  -> Simple Lens compositeSummary EscapeSummary
+                  -> Lens' compositeSummary OutputSummary
+                  -> Lens' compositeSummary AllocatorSummary
+                  -> Lens' compositeSummary EscapeSummary
                   -> ComposableAnalysis compositeSummary funcLike
 identifyOutput ds lns allocLens escapeLens =
   composableDependencyAnalysisM runner outAnalysis lns depLens
@@ -179,7 +179,7 @@ identifyOutput ds lns allocLens escapeLens =
     constData = OD mempty undefined undefined
     readerL = view allocLens &&& view escapeLens
     writerL csumm (a, e) = (set allocLens a . set escapeLens e) csumm
-    depLens :: Simple Lens compositeSummary (AllocatorSummary, EscapeSummary)
+    depLens :: Lens' compositeSummary (AllocatorSummary, EscapeSummary)
     depLens = lens readerL writerL
 
 
@@ -380,7 +380,7 @@ memcpyTransfer info i dest src _ {-bytes-} =
         _ -> Nothing
 
 merge :: (Ord k)
-         => Simple Lens info (Map k (ArgumentDirection, Set Witness))
+         => Lens' info (Map k (ArgumentDirection, Set Witness))
          -> Instruction -> k -> ArgumentDirection -> info -> info
 merge lns i arg ArgBoth info =
   let ws = S.singleton (Witness i (show ArgBoth))

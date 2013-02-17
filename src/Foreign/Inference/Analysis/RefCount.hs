@@ -33,7 +33,7 @@ import GHC.Generics ( Generic )
 import Control.Arrow
 import Control.DeepSeq
 import Control.DeepSeq.Generics ( genericRnf )
-import Control.Lens ( Simple, makeLenses, view, set, lens, (%~), (^.), (.~) )
+import Control.Lens ( Lens', makeLenses, view, set, lens, (%~), (^.), (.~) )
 import Data.Foldable ( find )
 import Data.HashSet ( HashSet )
 import qualified Data.HashSet as HS
@@ -192,9 +192,9 @@ type Analysis = AnalysisMonad () ()
 -- | The main analysis to identify both incref and decref functions.
 identifyRefCounting :: forall compositeSummary funcLike . (FuncLike funcLike, HasFunction funcLike, HasCFG funcLike)
                        => DependencySummary
-                       -> Simple Lens compositeSummary RefCountSummary
-                       -> Simple Lens compositeSummary FinalizerSummary
-                       -> Simple Lens compositeSummary ScalarEffectSummary
+                       -> Lens' compositeSummary RefCountSummary
+                       -> Lens' compositeSummary FinalizerSummary
+                       -> Lens' compositeSummary ScalarEffectSummary
                        -> ComposableAnalysis compositeSummary funcLike
 identifyRefCounting ds lns depLens1 depLens2 =
   composableDependencyAnalysisM runner refCountAnalysis lns depLens
@@ -202,7 +202,7 @@ identifyRefCounting ds lns depLens1 depLens2 =
     runner a = runAnalysis a ds () ()
     readL = view depLens1 &&& view depLens2
     writeL csum (f, s) = (set depLens1 f . set depLens2 s) csum
-    depLens :: Simple Lens compositeSummary (FinalizerSummary, ScalarEffectSummary)
+    depLens :: Lens' compositeSummary (FinalizerSummary, ScalarEffectSummary)
     depLens = lens readL writeL
 
 -- | Check to see if the given function is a conditional finalizer.

@@ -78,7 +78,7 @@ import GHC.Generics ( Generic )
 import Control.Arrow
 import Control.DeepSeq
 import Control.DeepSeq.Generics ( genericRnf )
-import Control.Lens ( Simple, makeLenses, (.~) )
+import Control.Lens ( Lens', makeLenses, (.~) )
 import Control.Monad ( foldM )
 import Data.Map ( Map )
 import qualified Data.Map as M
@@ -143,8 +143,8 @@ summarizeNullArgument a (NullableSummary s _) =
 identifyNullable :: (FuncLike funcLike, HasFunction funcLike, HasCFG funcLike,
                      HasCDG funcLike, HasDomTree funcLike)
                     => DependencySummary
-                    -> Simple Lens compositeSummary NullableSummary
-                    -> Simple Lens compositeSummary ReturnSummary
+                    -> Lens' compositeSummary NullableSummary
+                    -> Lens' compositeSummary ReturnSummary
                     -> ComposableAnalysis compositeSummary funcLike
 identifyNullable ds lns depLens =
   composableDependencyAnalysisM runner nullableAnalysis lns depLens

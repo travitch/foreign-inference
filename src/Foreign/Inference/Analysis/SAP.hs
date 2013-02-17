@@ -25,7 +25,7 @@ import Control.Arrow ( (&&&) )
 import Control.DeepSeq
 import Control.DeepSeq.Generics ( genericRnf )
 import Control.Failure
-import Control.Lens ( Simple, makeLenses, (%~), (.~), (^.), set, view, lens )
+import Control.Lens ( Lens', makeLenses, (%~), (.~), (^.), set, view, lens )
 import Control.Monad ( foldM )
 import qualified Data.Foldable as F
 import Data.Map ( Map )
@@ -180,9 +180,9 @@ identifySAPs :: forall compositeSummary funcLike pta .
                 (FuncLike funcLike, HasFunction funcLike, PointsToAnalysis pta)
                 => DependencySummary
                 -> pta
-                -> Simple Lens compositeSummary SAPSummary
-                -> Simple Lens compositeSummary SAPPTRelSummary
-                -> Simple Lens compositeSummary FinalizerSummary
+                -> Lens' compositeSummary SAPSummary
+                -> Lens' compositeSummary SAPPTRelSummary
+                -> Lens' compositeSummary FinalizerSummary
                 -> ComposableAnalysis compositeSummary funcLike
 identifySAPs ds pta lns ptrelL finL =
   composableDependencyAnalysisM runner (sapAnalysis pta) lns depLens
@@ -190,7 +190,7 @@ identifySAPs ds pta lns ptrelL finL =
     runner a = runAnalysis a ds () mempty
     readL = view ptrelL &&& view finL
     writeL csum (s, f) = (set ptrelL s . set finL f) csum
-    depLens :: Simple Lens compositeSummary (SAPPTRelSummary, FinalizerSummary)
+    depLens :: Lens' compositeSummary (SAPPTRelSummary, FinalizerSummary)
     depLens = lens readL writeL
 
 -- | For non-void functions, first check the return instruction and

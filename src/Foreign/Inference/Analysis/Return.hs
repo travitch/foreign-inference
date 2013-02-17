@@ -14,7 +14,7 @@ import GHC.Generics ( Generic )
 
 import Control.DeepSeq
 import Control.DeepSeq.Generics ( genericRnf )
-import Control.Lens ( Simple )
+import Control.Lens ( Lens' )
 import Data.Monoid
 import Data.HashSet ( HashSet )
 import qualified Data.HashSet as S
@@ -53,7 +53,7 @@ type Analysis = AnalysisMonad () ()
 
 identifyReturns :: (FuncLike funcLike, HasCFG funcLike)
                    => DependencySummary
-                   -> Simple Lens compositeSummary ReturnSummary
+                   -> Lens' compositeSummary ReturnSummary
                    -> ComposableAnalysis compositeSummary funcLike
 identifyReturns ds lns =
   composableAnalysisM runner analysisWrapper lns

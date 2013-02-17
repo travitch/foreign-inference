@@ -97,7 +97,7 @@ import GHC.Generics ( Generic )
 
 import Control.DeepSeq
 import Control.DeepSeq.Generics ( genericRnf )
-import Control.Lens ( Simple, (%~), makeLenses )
+import Control.Lens ( Lens', (%~), makeLenses )
 import qualified Data.Foldable as F
 import Data.Map ( Map )
 import qualified Data.Map as M
@@ -160,7 +160,7 @@ instance SummarizeModule SAPPTRelSummary where
 
 identifySAPPTRels :: (FuncLike funcLike, HasFunction funcLike, HasCFG funcLike)
                      => DependencySummary
-                     -> Simple Lens compositeSummary SAPPTRelSummary
+                     -> Lens' compositeSummary SAPPTRelSummary
                      -> ComposableAnalysis compositeSummary funcLike
 identifySAPPTRels ds =
   composableAnalysisM runner sapAnalysis

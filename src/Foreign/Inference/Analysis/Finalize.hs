@@ -137,25 +137,23 @@ data FinalizerInfo =
 -- track variables that are currently being tested for NULL; if those
 -- variables are used to make a call through a function pointer, then
 -- do a bit of magic in the meet function to allow this.
-instance MeetSemiLattice FinalizerInfo where
-  meet (FinalizerInfo s1 m1) (FinalizerInfo s2 m2) =
-    FinalizerInfo { notFinalizedOrNull = HS.union s1 s2
-                  , finalizedWitnesses = HM.unionWith S.union m1 m2
-                  }
+-- instance MeetSemiLattice FinalizerInfo where
+
+meet :: FinalizerInfo -> FinalizerInfo -> FinalizerInfo
+meet (FinalizerInfo s1 m1) (FinalizerInfo s2 m2) =
+  FinalizerInfo { notFinalizedOrNull = HS.union s1 s2
+                , finalizedWitnesses = HM.unionWith S.union m1 m2
+                }
 
 -- Switch to using finalizedOrNull with intersection.  Use SMT for
 -- null/not null.  Perhaps use a lower-level is-null-at-point analysis
 -- that could be shared between this and nullability.  At the same
 -- time, push some SMT helpers down to llvm-analysis.
 
-instance BoundedMeetSemiLattice FinalizerInfo where
-  top = FinalizerInfo mempty mempty
+top :: FinalizerInfo
+top = FinalizerInfo mempty mempty
 
 type Analysis = AnalysisMonad FinalizerData ()
-
-instance DataflowAnalysis Analysis FinalizerInfo where
-  transfer = finalizerTransfer
-  edgeTransfer = finalizerEdgeTransfer
 
 finalizerAnalysis :: (FuncLike funcLike, HasFunction funcLike, HasCFG funcLike)
                      => funcLike -> FinalizerSummary -> Analysis FinalizerSummary
@@ -166,12 +164,15 @@ finalizerAnalysis funcLike s@(FinalizerSummary summ _) = do
   let envMod e = e { moduleSummary = s }
       set0 = HS.fromList $ filter isPointer (functionParameters f)
       fact0 = FinalizerInfo set0 mempty
+      analysis = dataflowAnalysis top meet finalizerTransfer
 
-  funcInfo <- analysisLocal envMod (forwardDataflow fact0 funcLike)
+  -- FIXME: This is no longer correct and will require some SMT help
+  -- to find null branches properly.  Alternative, push that down into
+  -- a sub-analysis that identifies parameters known to be NULL, which would
+  -- also be useful for the nullability analysis.
+  funcInfo <- analysisLocal envMod (forwardDataflow funcLike analysis fact0)
 
-  let exitInsts = functionExitInstructions f
-      exitInfo = map (dataflowResult funcInfo) exitInsts
-      FinalizerInfo notFinalized witnesses = meets exitInfo
+  let FinalizerInfo notFinalized witnesses = dataflowResult funcInfo
   -- The finalized parameters are those that are *NOT* in our fact set
   -- at the return instruction
       finalizedOrNull = set0 `HS.difference` notFinalized
@@ -185,11 +186,6 @@ finalizerAnalysis funcLike s@(FinalizerSummary summ _) = do
   return $! (finalizerSummary .~ newInfo `HM.union` summ) s
   where
     f = getFunction funcLike
-
-finalizerEdgeTransfer :: FinalizerInfo -> CFGEdge -> Analysis FinalizerInfo
-finalizerEdgeTransfer fi (TrueEdge v) = return $! processCFGEdge fi not v
-finalizerEdgeTransfer fi (FalseEdge v) = return $! processCFGEdge fi id v
-finalizerEdgeTransfer fi _ = return fi
 
 finalizerTransfer :: FinalizerInfo -> Instruction -> Analysis FinalizerInfo
 finalizerTransfer info i =
@@ -238,35 +234,6 @@ removeArgWithWitness a i reason (FinalizerInfo s m) =
   in FinalizerInfo { notFinalizedOrNull = HS.delete a s
                    , finalizedWitnesses = HM.insertWith S.union a (S.singleton w) m
                    }
-
--- | If we know, based on some incoming CFG edges, that an argument is
--- NULL, remove it from the current set and add the comparison or
--- branch instruction to the witness set for that argument.
-processCFGEdge :: FinalizerInfo -> (Bool -> Bool) -> Value -> FinalizerInfo
-processCFGEdge fi cond v =
-  case valueContent v of
-    InstructionC i@ICmpInst { cmpPredicate = ICmpEq
-                            , cmpV1 = (valueContent' -> ArgumentC v1)
-                            , cmpV2 = (valueContent -> ConstantC ConstantPointerNull {}) } ->
-      process' i fi v1 (cond True)
-    InstructionC i@ICmpInst { cmpPredicate = ICmpEq
-                            , cmpV2 = (valueContent' -> ArgumentC v2)
-                            , cmpV1 = (valueContent -> ConstantC ConstantPointerNull {}) } ->
-      process' i fi v2 (cond True)
-    InstructionC i@ICmpInst { cmpPredicate = ICmpNe
-                            , cmpV1 = (valueContent' -> ArgumentC v1)
-                            , cmpV2 = (valueContent -> ConstantC ConstantPointerNull {}) } ->
-      process' i fi v1 (cond False)
-    InstructionC i@ICmpInst { cmpPredicate = ICmpNe
-                            , cmpV2 = (valueContent' -> ArgumentC v2)
-                            , cmpV1 = (valueContent -> ConstantC ConstantPointerNull {}) } ->
-      process' i fi v2 (cond False)
-    _ -> fi
-
-process' :: Instruction -> FinalizerInfo -> Argument -> Bool -> FinalizerInfo
-process' i fi arg isNull
-  | isNull = fi
-  | otherwise = removeArgWithWitness arg i "null" fi
 
 -- Helpers
 

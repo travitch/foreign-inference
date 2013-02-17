@@ -15,7 +15,6 @@ import GHC.Generics ( Generic )
 import Control.DeepSeq
 import Control.DeepSeq.Generics ( genericRnf )
 import Control.Lens ( Simple )
-import Control.Monad.Identity
 import Data.Monoid
 import Data.HashSet ( HashSet )
 import qualified Data.HashSet as S
@@ -27,6 +26,7 @@ import LLVM.Analysis.NoReturn
 
 import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
+import Foreign.Inference.AnalysisMonad
 
 type SummaryType = HashSet Function
 data ReturnSummary = ReturnSummary !SummaryType
@@ -49,17 +49,22 @@ instance SummarizeModule ReturnSummary where
       True -> [(FANoRet, [])]
   summarizeArgument _ _ = []
 
+type Analysis = AnalysisMonad () ()
+
 identifyReturns :: (FuncLike funcLike, HasCFG funcLike)
                    => DependencySummary
                    -> Simple Lens compositeSummary ReturnSummary
                    -> ComposableAnalysis compositeSummary funcLike
-identifyReturns _ {-ds-} lns =
-  composableAnalysisM runIdentity analysisWrapper lns
+identifyReturns ds lns =
+  composableAnalysisM runner analysisWrapper lns
   where
-    analysisWrapper f (ReturnSummary s) = do
-      res <- noReturnAnalysis (const (return False)) f s -- extSumm f s
+    runner a = runAnalysis a ds () ()
+    analysisWrapper f rs@(ReturnSummary s) = do
+      res <- noReturnAnalysis (extSumm rs) f s
       return $! ReturnSummary res
-    -- extSumm ef =
-    --   case lookupFunctionSummary ds (undefined ::  ReturnSummary) ef of
-    --     Nothing -> return False
-    --     Just s -> return $ FANoRet `elem` s
+    extSumm :: ReturnSummary -> ExternalFunction -> Analysis Bool
+    extSumm rs ef = do
+      summ <- lookupFunctionSummary rs ef
+      case summ of
+        Nothing -> return False
+        Just s -> return $ FANoRet `elem` s

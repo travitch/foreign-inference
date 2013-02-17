@@ -143,6 +143,11 @@ instance MeetSemiLattice FinalizerInfo where
                   , finalizedWitnesses = HM.unionWith S.union m1 m2
                   }
 
+-- Switch to using finalizedOrNull with intersection.  Use SMT for
+-- null/not null.  Perhaps use a lower-level is-null-at-point analysis
+-- that could be shared between this and nullability.  At the same
+-- time, push some SMT helpers down to llvm-analysis.
+
 instance BoundedMeetSemiLattice FinalizerInfo where
   top = FinalizerInfo mempty mempty
 

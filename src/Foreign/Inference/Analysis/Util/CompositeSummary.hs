@@ -91,11 +91,11 @@ instance FuncLike FunctionMetadata where
                      , functionCFG = cfg
                      , functionCDG = controlDependenceGraph cfg
                      , functionDomTree = dominatorTree cfg
-                     , functionPostdomTree = postdominatorTree (reverseCFG cfg)
+                     , functionPostdomTree = postdominatorTree cfg
                      , functionBlockReturns = labelBlockReturns cfg
                      }
     where
-      cfg = mkCFG f
+      cfg = controlFlowGraph f
 
 instance HasCDG FunctionMetadata where
   getCDG = functionCDG

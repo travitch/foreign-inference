@@ -42,7 +42,6 @@ import LLVM.Analysis.BlockReturnValue
 import LLVM.Analysis.Dominance
 import LLVM.Analysis.CDG
 import LLVM.Analysis.CFG
-import LLVM.Analysis.Types
 
 import Foreign.Inference.Analysis.Allocator
 import Foreign.Inference.Analysis.Array

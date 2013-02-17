@@ -10,7 +10,7 @@ module Foreign.Inference.AnalysisMonad (
 
 import Control.Lens
 import Control.Monad ( liftM )
-import Control.Monad.RWS.Strict
+import Control.Monad.RWS.Strict hiding ( liftM )
 
 import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface

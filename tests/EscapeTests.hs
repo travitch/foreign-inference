@@ -45,7 +45,7 @@ analyzeEscapes ds m =
   escapeResultToTestFormat (_escapeSummary res)
   where
     ics = identifyIndirectCallTargets m
-    cg = mkCallGraph m ics []
+    cg = callGraph m ics []
     analyses :: [ComposableAnalysis AnalysisSummary FunctionMetadata]
     analyses = [ identifyEscapes ds ics escapeSummary ]
     analysisFunc = callGraphComposeAnalysis analyses

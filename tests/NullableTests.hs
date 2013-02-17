@@ -42,7 +42,7 @@ analyzeNullable ds m =
   nullSummaryToTestFormat (_nullableSummary res)
   where
     pta = identifyIndirectCallTargets m
-    cg = mkCallGraph m pta []
+    cg = callGraph m pta []
     analyses :: [ComposableAnalysis AnalysisSummary FunctionMetadata]
     analyses = [ identifyReturns ds returnSummary
                , identifyNullable ds nullableSummary returnSummary

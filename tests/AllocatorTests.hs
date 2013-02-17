@@ -43,7 +43,7 @@ analyzeAllocator ds m =
   allocatorSummaryToTestFormat (_allocatorSummary res)
   where
     ics = identifyIndirectCallTargets m
-    cg = mkCallGraph m ics []
+    cg = callGraph m ics []
     analyses :: [ComposableAnalysis AnalysisSummary FunctionMetadata]
     analyses = [ identifyEscapes ds ics escapeSummary
                , identifyFinalizers ds ics finalizerSummary

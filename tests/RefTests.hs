@@ -43,7 +43,7 @@ analyzeRefCounts ds m =
   refCountSummaryToTestFormat (_refCountSummary res)
   where
     ics = identifyIndirectCallTargets m
-    cg = mkCallGraph m ics []
+    cg = callGraph m ics []
     analyses :: [ComposableAnalysis AnalysisSummary FunctionMetadata]
     analyses = [ identifyFinalizers ds ics finalizerSummary
                , identifyScalarEffects scalarEffectSummary

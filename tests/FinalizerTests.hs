@@ -42,7 +42,7 @@ analyzeFinalize ds m =
   finalizerSummaryToTestFormat (_finalizerSummary res)
   where
     ics = identifyIndirectCallTargets m
-    cg = mkCallGraph m ics []
+    cg = callGraph m ics []
     analyses :: [ComposableAnalysis AnalysisSummary FunctionMetadata]
     analyses = [ identifyFinalizers ds ics finalizerSummary ]
     analysisFunc = callGraphComposeAnalysis analyses

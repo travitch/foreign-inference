@@ -48,11 +48,11 @@ analyzeSAPs ds m =
   sapArgumentResultToTestFormat (_sapSummary res)
   where
     ics = identifyIndirectCallTargets m
-    cg = mkCallGraph m ics []
+    cg = callGraph m ics []
     analyses :: [ComposableAnalysis AnalysisSummary FunctionMetadata]
     analyses = [ identifyFinalizers ds ics finalizerSummary
                , identifySAPPTRels ds sapPTRelSummary
-               , identifySAPs ds sapSummary sapPTRelSummary finalizerSummary
+               , identifySAPs ds ics sapSummary sapPTRelSummary finalizerSummary
                ]
     analysisFunc = callGraphComposeAnalysis analyses
     res = callGraphSCCTraversal cg analysisFunc mempty

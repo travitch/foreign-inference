@@ -45,13 +45,13 @@ analyzeTransfer ds m =
   transferSummaryToTestFormat (_transferSummary res)
   where
     pta = identifyIndirectCallTargets m
-    cg = mkCallGraph m pta []
+    cg = callGraph m pta []
     funcLikes :: [FunctionMetadata]
     funcLikes = map fromFunction (moduleDefinedFunctions m)
     analyses :: [ComposableAnalysis AnalysisSummary FunctionMetadata]
     analyses = [ identifyFinalizers ds pta finalizerSummary
                , identifySAPPTRels ds sapPTRelSummary
-               , identifySAPs ds sapSummary sapPTRelSummary finalizerSummary
+               , identifySAPs ds pta sapSummary sapPTRelSummary finalizerSummary
                ]
     pfunc = callGraphComposeAnalysis analyses
     res0 = parallelCallGraphSCCTraversal cg pfunc mempty

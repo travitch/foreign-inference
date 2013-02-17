@@ -44,7 +44,7 @@ analyzeOutput :: DependencySummary -> Module -> Map String (Set (String, ParamAn
 analyzeOutput ds m =
   outputSummaryToTestFormat (_outputSummary res)
   where
-    cg = mkCallGraph m ics []
+    cg = callGraph m ics []
     ics = identifyIndirectCallTargets m
     analyses :: [ComposableAnalysis AnalysisSummary FunctionMetadata]
     analyses = [ identifyEscapes ds ics escapeSummary

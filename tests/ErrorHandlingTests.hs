@@ -12,7 +12,6 @@ import System.FilePath ( (<.>) )
 import Test.HUnit ( assertEqual )
 
 import LLVM.Analysis
-import LLVM.Analysis.Types
 import LLVM.Analysis.Util.Testing
 import LLVM.Parse
 

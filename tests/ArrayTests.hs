@@ -38,7 +38,7 @@ analyzeArrays ds m =
   arraySummaryToTestFormat (_arraySummary res)
   where
     pta = identifyIndirectCallTargets m
-    cg = mkCallGraph m pta []
+    cg = callGraph m pta []
     analyses :: [ComposableAnalysis AnalysisSummary FunctionMetadata]
     analyses = [ identifyArrays ds arraySummary ]
     analysisFunc = callGraphComposeAnalysis analyses

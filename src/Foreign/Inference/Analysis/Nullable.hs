@@ -1,4 +1,4 @@
-{-# LANGUAGE MultiParamTypeClasses, TypeSynonymInstances, FlexibleInstances, RankNTypes #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ViewPatterns, DeriveGeneric, TemplateHaskell #-}
 -- | This module defines a Nullable pointer analysis.  It actually
 -- identifies non-nullable pointers (the rest are nullable).
@@ -70,6 +70,9 @@ module Foreign.Inference.Analysis.Nullable (
   nullSummaryToTestFormat
   ) where
 
+-- FIXME: This analysis is currently broken and requires some null
+-- pointer information from a lower-level analysis.
+
 import GHC.Generics ( Generic )
 
 import Control.Arrow
@@ -79,11 +82,11 @@ import Control.Lens ( Simple, makeLenses, (.~) )
 import Control.Monad ( foldM )
 import Data.Map ( Map )
 import qualified Data.Map as M
+import Data.Monoid
 import Data.Set ( Set )
 import qualified Data.Set as S
 import Data.HashMap.Strict ( HashMap )
 import qualified Data.HashMap.Strict as HM
-import Data.Monoid
 
 import LLVM.Analysis
 import LLVM.Analysis.CDG
@@ -163,19 +166,13 @@ data NullInfo = NInfo { nullArguments :: Set Argument
                       }
               deriving (Eq, Ord, Show)
 
-instance MeetSemiLattice NullInfo where
-  meet = meetNullInfo
-
-instance BoundedMeetSemiLattice NullInfo where
-  top = NInfo S.empty M.empty
+top :: NullInfo
+top = NInfo mempty mempty
 
 instance HasDiagnostics NullableSummary where
   diagnosticLens = nullableDiagnostics
 
 type Analysis = AnalysisMonad NullData NullState
-instance DataflowAnalysis Analysis NullInfo where
-  transfer = nullTransfer
-  edgeTransfer = nullEdgeTransfer
 
 meetNullInfo :: NullInfo -> NullInfo -> NullInfo
 meetNullInfo ni1 ni2 =
@@ -210,13 +207,13 @@ nullableAnalysis retSumm funcLike s@(NullableSummary summ _) = do
                    }
       args = filter isPointer (functionParameters f)
       fact0 = top { nullArguments = S.fromList args }
-  localInfo <- analysisLocal envMod (forwardDataflow fact0 funcLike)
+      analysis = dataflowAnalysis top meetNullInfo nullTransfer
+  localInfo <- analysisLocal envMod (forwardDataflow funcLike analysis fact0)
 
-  let exitInfo = map (dataflowResult localInfo) (functionExitInstructions f)
-      exitInfo' = meets exitInfo
-      notNullableArgs = S.toList $ S.fromList args `S.difference` nullArguments exitInfo'
+  let exitInfo = dataflowResult localInfo
+      notNullableArgs = S.toList $ S.fromList args `S.difference` nullArguments exitInfo
       argsAndWitnesses =
-        map (attachWitness (nullWitnesses exitInfo')) notNullableArgs
+        map (attachWitness (nullWitnesses exitInfo)) notNullableArgs
 
   -- Update the module symmary with the set of pointer parameters that
   -- we have proven are accessed unchecked.
@@ -232,11 +229,6 @@ attachWitness m a =
   case M.lookup a m of
     Nothing -> (a, [])
     Just is -> (a, S.toList is)
-
-nullEdgeTransfer :: NullInfo -> CFGEdge -> Analysis NullInfo
-nullEdgeTransfer ni (TrueEdge v) = return $! processCFGEdge ni id v
-nullEdgeTransfer ni (FalseEdge v) = return $! processCFGEdge ni not v
-nullEdgeTransfer ni _ = return ni
 
 -- | First, process the incoming CFG edges to learn about pointers
 -- that are known to be non-NULL.  Then use this updated information
@@ -423,53 +415,6 @@ isPointer v = case valueType v of
   TypePointer _ _ -> True
   _ -> False
 
--- | Examine the incoming edges and, if any tell us that a variable is
--- *not* NULL, remove that variable from the set of maybe null
--- pointers.
---
--- Note that all incoming edges must be consistent.  If there are two
--- incoming edges and only one says that the pointer is not null, that
--- doesn't help (since it might still be null on the other branch).
--- As a simplifying shortcut, only bother to add information for
--- single edges.
-removeNonNullPointers :: NullInfo -> [CFGEdge] -> NullInfo
-removeNonNullPointers ni [TrueEdge v] = processCFGEdge ni id v
-removeNonNullPointers ni [FalseEdge v] = processCFGEdge ni not v
-removeNonNullPointers ni _ = ni
-
--- | Given a condition from a CFG edge, determine if the condition
--- gives us information about the NULL-ness of a pointer.  If so,
--- update the NullInfo.
---
--- If a Phi node (or Select) is checked against NULL, put that node in
--- the not-null set.  Later on, if there is a use of a phi node, any
--- of the values that the phi node could represent are guarded/not
--- guarded.
-processCFGEdge :: NullInfo -> (Bool -> Bool) -> Value -> NullInfo
-processCFGEdge ni cond v = case valueContent v of
-  InstructionC ICmpInst { cmpPredicate = ICmpEq
-                        , cmpV1 = (valueContent' -> ArgumentC v1)
-                        , cmpV2 = (valueContent -> ConstantC ConstantPointerNull {}) } ->
-    process' ni v1 (cond True)
-  InstructionC ICmpInst { cmpPredicate = ICmpEq
-                        , cmpV2 = (valueContent' -> ArgumentC v2)
-                        , cmpV1 = (valueContent -> ConstantC ConstantPointerNull {}) } ->
-    process' ni v2 (cond True)
-  InstructionC ICmpInst { cmpPredicate = ICmpNe
-                        , cmpV1 = (valueContent' -> ArgumentC v1)
-                        , cmpV2 = (valueContent -> ConstantC ConstantPointerNull {}) } ->
-    process' ni v1 (cond False)
-  InstructionC ICmpInst { cmpPredicate = ICmpNe
-                        , cmpV2 = (valueContent' -> ArgumentC v2)
-                        , cmpV1 = (valueContent -> ConstantC ConstantPointerNull {}) } ->
-    process' ni v2 (cond False)
-  _ -> ni
-
-process' :: NullInfo -> Argument -> Bool -> NullInfo
-process' ni arg isNull =
-  case isNull of
-    True -> ni
-    False -> ni { nullArguments = arg `S.delete` nullArguments ni }
 
 -- Testing
 

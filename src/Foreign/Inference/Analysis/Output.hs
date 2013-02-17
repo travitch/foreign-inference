@@ -1,4 +1,4 @@
-{-# LANGUAGE TypeSynonymInstances, FlexibleInstances, MultiParamTypeClasses, RankNTypes, ScopedTypeVariables #-}
+{-# LANGUAGE RankNTypes, ScopedTypeVariables #-}
 {-# LANGUAGE ViewPatterns, DeriveGeneric, TemplateHaskell #-}
 -- | This analysis identifies output parameters.
 --
@@ -183,48 +183,42 @@ identifyOutput ds lns allocLens escapeLens =
     depLens = lens readerL writerL
 
 
-instance MeetSemiLattice OutInfo where
-  meet = meetOutInfo
+meetDir :: ArgumentDirection -> ArgumentDirection -> ArgumentDirection
+meetDir ArgIn ArgIn = ArgIn
+meetDir ArgOut ArgOut = ArgOut
+meetDir ArgOut (ArgOutAlloc _) = ArgOut
+meetDir (ArgOutAlloc _) ArgOut = ArgOut
+meetDir ArgIn ArgOut = ArgBoth
+meetDir ArgOut ArgIn = ArgBoth
+meetDir ArgIn (ArgOutAlloc _) = ArgBoth
+meetDir (ArgOutAlloc _) ArgIn = ArgBoth
 
-instance MeetSemiLattice ArgumentDirection where
-  meet ArgIn ArgIn = ArgIn
-  meet ArgOut ArgOut = ArgOut
-  meet ArgOut (ArgOutAlloc _) = ArgOut
-  meet (ArgOutAlloc _) ArgOut = ArgOut
-  meet ArgIn ArgOut = ArgBoth
-  meet ArgOut ArgIn = ArgBoth
-  meet ArgIn (ArgOutAlloc _) = ArgBoth
-  meet (ArgOutAlloc _) ArgIn = ArgBoth
+-- If the finalizers are different, consider this to just be a
+-- normal out parameter since we can't say which finalizer is
+-- involved.  We could possibly change this to at least tell the
+-- user that ownership is transfered but the finalizer is unknown.
+meetDir (ArgOutAlloc (is1, fin1)) (ArgOutAlloc (is2, fin2))
+  | fin1 == fin2 = ArgOutAlloc (S.union is1 is2, fin1)
+  | otherwise =
+    case (fin1, fin2) of
+      (OutFinalizerConflict, _) -> ArgOutAlloc (S.union is1 is2, OutFinalizerConflict)
+      (_, OutFinalizerConflict) -> ArgOutAlloc (S.union is1 is2, OutFinalizerConflict)
+      (OutFinalizerNull, OutFinalizerNull) -> ArgOutAlloc (mempty, OutFinalizerNull)
+      (OutFinalizerNull, OutFinalizer f) -> ArgOutAlloc (is2, OutFinalizer f)
+      (OutFinalizer f, OutFinalizerNull) -> ArgOutAlloc (is1, OutFinalizer f)
+      _ -> ArgOutAlloc (S.union is1 is2, OutFinalizerConflict)
 
-  -- If the finalizers are different, consider this to just be a
-  -- normal out parameter since we can't say which finalizer is
-  -- involved.  We could possibly change this to at least tell the
-  -- user that ownership is transfered but the finalizer is unknown.
-  meet (ArgOutAlloc (is1, fin1)) (ArgOutAlloc (is2, fin2))
-    | fin1 == fin2 = ArgOutAlloc (S.union is1 is2, fin1)
-    | otherwise =
-      case (fin1, fin2) of
-        (OutFinalizerConflict, _) -> ArgOutAlloc (S.union is1 is2, OutFinalizerConflict)
-        (_, OutFinalizerConflict) -> ArgOutAlloc (S.union is1 is2, OutFinalizerConflict)
-        (OutFinalizerNull, OutFinalizerNull) -> ArgOutAlloc (mempty, OutFinalizerNull)
-        (OutFinalizerNull, OutFinalizer f) -> ArgOutAlloc (is2, OutFinalizer f)
-        (OutFinalizer f, OutFinalizerNull) -> ArgOutAlloc (is1, OutFinalizer f)
-        _ -> ArgOutAlloc (S.union is1 is2, OutFinalizerConflict)
+meetDir ArgBoth _ = ArgBoth
+meetDir _ ArgBoth = ArgBoth
 
-  meet ArgBoth _ = ArgBoth
-  meet _ ArgBoth = ArgBoth
-
-instance BoundedMeetSemiLattice OutInfo where
-  top = OI mempty mempty
+top :: OutInfo
+top = OI mempty mempty
 
 meetOutInfo :: OutInfo -> OutInfo -> OutInfo
 meetOutInfo (OI m1 mf1) (OI m2 mf2) =
   OI (M.unionWith meetWithWitness m1 m2) (M.unionWith meetWithWitness mf1 mf2)
   where
-    meetWithWitness (v1, w1) (v2, w2) = (meet v1 v2, S.union w1 w2)
-
-instance DataflowAnalysis Analysis OutInfo where
-  transfer = outTransfer
+    meetWithWitness (v1, w1) (v2, w2) = (meetDir v1 v2, S.union w1 w2)
 
 type Analysis = AnalysisMonad OutData ()
 
@@ -238,17 +232,15 @@ outAnalysis (allocSumm, escSumm) funcLike s = do
                    , allocatorSummary = allocSumm
                    , escapeSummary = escSumm
                    }
-  funcInfo <- analysisLocal envMod (forwardDataflow top funcLike)
-  let exitInfo = map (dataflowResult funcInfo) (functionExitInstructions f)
-      OI exitInfo' fexitInfo' = meets exitInfo
-      exitInfo'' = M.map (second S.toList) exitInfo' -- (\(a, ws) -> (a, S.toList ws)) exitInfo'
-      fexitInfo'' = M.map (second S.toList) fexitInfo' -- (\(a, ws) -> (a, S.toList ws)) fexitInfo'
+      analysis = dataflowAnalysis top meetOutInfo outTransfer
+  funcInfo <- analysisLocal envMod (forwardDataflow funcLike analysis top)
+  let OI exitInfo fexitInfo = dataflowResult funcInfo
+      exitInfo' = M.map (second S.toList) exitInfo
+      fexitInfo' = M.map (second S.toList) fexitInfo
   -- Merge the local information we just computed with the global
   -- summary.  Prefer the locally computed info if there are
   -- collisions (could arise while processing SCCs).
-  return $! (outputSummary %~ M.union exitInfo'') $ (outputFieldSummary %~ M.union fexitInfo'') s
-  where
-    f = getFunction funcLike
+  return $! (outputSummary %~ M.union exitInfo') $ (outputFieldSummary %~ M.union fexitInfo') s
 
 -- | If the given @callInst@ is an allocated value (i.e., call to an
 -- allocator) and it does not escape via any means other than the

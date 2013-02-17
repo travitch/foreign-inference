@@ -1,6 +1,5 @@
 {-# LANGUAGE DeriveGeneric, TemplateHaskell, ViewPatterns #-}
-{-# LANGUAGE RankNTypes, TypeSynonymInstances, FlexibleInstances #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE RankNTypes #-}
 -- | This is an analysis to support the Symbolic Access Path (SAP)
 -- analysis.  It computes, for every instruction, the PT (points-to)
 -- relation from @conf\/cgo\/MatosevicA12@.  This information helps to
@@ -168,25 +167,21 @@ identifySAPPTRels ds =
   where
     runner a = runAnalysis a ds () ()
 
-instance MeetSemiLattice SAPInfo where
-  meet (SAPInfo s1 v1) (SAPInfo s2 v2) =
+meet :: SAPInfo -> SAPInfo -> SAPInfo
+meet (SAPInfo s1 v1) (SAPInfo s2 v2) =
     SAPInfo (M.unionWith S.union s1 s2) (M.unionWith S.union v1 v2)
 
-instance BoundedMeetSemiLattice SAPInfo where
-  top = SAPInfo mempty mempty
+top :: SAPInfo
+top = SAPInfo mempty mempty
 
 type Analysis = AnalysisMonad () ()
-
-instance DataflowAnalysis Analysis SAPInfo where
-  transfer = sapTransfer
 
 sapAnalysis :: (FuncLike funcLike, HasFunction funcLike, HasCFG funcLike)
                => funcLike -> SAPPTRelSummary -> Analysis SAPPTRelSummary
 sapAnalysis funcLike s = do
-  funcInfo <- forwardDataflow top funcLike
-  let exitInsts = functionExitInstructions f
-      exitInfo = map (dataflowResult funcInfo) exitInsts
-      SAPInfo ps vs = meets exitInfo
+  let analysis = dataflowAnalysis top meet sapTransfer
+  funcInfo <- forwardDataflow funcLike analysis top
+  let SAPInfo ps vs = dataflowResult funcInfo
       addVals = sapValues %~ M.insert f (invertMap vs)
       addPaths = sapPaths %~ M.insert f (invertMap ps)
   return $ addVals $ addPaths s

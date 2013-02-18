@@ -42,6 +42,7 @@ import LLVM.Analysis.BlockReturnValue
 import LLVM.Analysis.Dominance
 import LLVM.Analysis.CDG
 import LLVM.Analysis.CFG
+import LLVM.Analysis.NullPointers
 
 import Foreign.Inference.Analysis.Allocator
 import Foreign.Inference.Analysis.Array
@@ -68,7 +69,11 @@ data FunctionMetadata =
                    , functionDomTree :: DominatorTree
                    , functionPostdomTree :: PostdominatorTree
                    , functionBlockReturns :: BlockReturns
+                   , functionNullPointers :: NullPointersSummary
                    }
+
+instance HasNullSummary FunctionMetadata where
+  getNullSummary = functionNullPointers
 
 instance HasBlockReturns FunctionMetadata where
   getBlockReturns = functionBlockReturns
@@ -89,12 +94,14 @@ instance FuncLike FunctionMetadata where
   fromFunction f =
     FunctionMetadata { functionOriginal = f
                      , functionCFG = cfg
-                     , functionCDG = controlDependenceGraph cfg
+                     , functionCDG = cdg
                      , functionDomTree = dominatorTree cfg
                      , functionPostdomTree = postdominatorTree cfg
                      , functionBlockReturns = labelBlockReturns cfg
+                     , functionNullPointers = nullPointersAnalysis cdg
                      }
     where
+      cdg = controlDependenceGraph cfg
       cfg = controlFlowGraph f
 
 instance HasCDG FunctionMetadata where

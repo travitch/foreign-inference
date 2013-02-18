@@ -23,7 +23,7 @@ import GHC.Generics ( Generic )
 
 import Control.DeepSeq
 import Control.DeepSeq.Generics ( genericRnf )
-import Control.Lens ( Lens', (.~), makeLenses )
+import Control.Lens ( Lens', (%~), (.~), makeLenses )
 import Control.Monad ( foldM )
 import Data.HashMap.Strict ( HashMap )
 import qualified Data.HashMap.Strict as HM
@@ -31,6 +31,7 @@ import Data.HashSet ( HashSet )
 import qualified Data.HashSet as HS
 import Data.Map ( Map )
 import qualified Data.Map as M
+import Data.Maybe ( fromMaybe )
 import Data.Monoid
 import Data.Set ( Set )
 import qualified Data.Set as S
@@ -39,15 +40,16 @@ import LLVM.Analysis
 import LLVM.Analysis.CFG
 import LLVM.Analysis.CallGraphSCCTraversal
 import LLVM.Analysis.Dataflow
+import LLVM.Analysis.NullPointers
 
 import Foreign.Inference.AnalysisMonad
 import Foreign.Inference.Analysis.IndirectCallResolver
 import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
 
--- import Text.Printf
--- import Debug.Trace
--- debug = flip trace
+import Text.Printf
+import Debug.Trace
+debug = flip trace
 
 -- | If an argument is finalized, it will be in the map with its
 -- associated witnesses.  If no witnesses could be identified, the
@@ -94,17 +96,6 @@ data FinalizerData =
                 , singleInitSummary :: IndirectCallSummary
                 }
 
-identifyFinalizers :: (FuncLike funcLike, HasFunction funcLike, HasCFG funcLike)
-                      => DependencySummary
-                      -> IndirectCallSummary
-                      -> Lens' compositeSummary FinalizerSummary
-                      -> ComposableAnalysis compositeSummary funcLike
-identifyFinalizers ds ics =
-  composableAnalysisM runner finalizerAnalysis
-  where
-    runner a = runAnalysis a ds constData ()
-    constData = FinalizerData mempty ics
-
 -- | Find all functions of one parameter that finalize the given type.
 automaticFinalizersForType :: FinalizerSummary -> Type -> [Function]
 automaticFinalizersForType (FinalizerSummary s _) t =
@@ -117,10 +108,24 @@ automaticFinalizersForType (FinalizerSummary s _) t =
 
 -- | The dataflow fact tracking things that are not finalizedOrNull
 data FinalizerInfo =
-  FinalizerInfo { notFinalizedOrNull :: HashSet Argument
-                , finalizedWitnesses :: HashMap Argument (Set Witness)
+  FinalizerInfo { _finalizedOrNull :: HashSet Argument
+                , _finalizedWitnesses :: HashMap Argument (Set Witness)
                 }
   deriving (Eq, Show)
+
+$(makeLenses ''FinalizerInfo)
+
+identifyFinalizers :: (FuncLike funcLike, HasFunction funcLike,
+                       HasCFG funcLike, HasNullSummary funcLike)
+                      => DependencySummary
+                      -> IndirectCallSummary
+                      -> Lens' compositeSummary FinalizerSummary
+                      -> ComposableAnalysis compositeSummary funcLike
+identifyFinalizers ds ics =
+  composableAnalysisM runner finalizerAnalysis
+  where
+    runner a = runAnalysis a ds constData ()
+    constData = FinalizerData mempty ics
 
 -- | FIXME: To deal with finalizers called through function pointers,
 -- a more sophisticated approach is required.  Paths are allowed to
@@ -141,8 +146,8 @@ data FinalizerInfo =
 
 meet :: FinalizerInfo -> FinalizerInfo -> FinalizerInfo
 meet (FinalizerInfo s1 m1) (FinalizerInfo s2 m2) =
-  FinalizerInfo { notFinalizedOrNull = HS.union s1 s2
-                , finalizedWitnesses = HM.unionWith S.union m1 m2
+  FinalizerInfo { _finalizedOrNull = HS.intersection s1 s2
+                , _finalizedWitnesses = HM.unionWith S.union m1 m2
                 }
 
 -- Switch to using finalizedOrNull with intersection.  Use SMT for
@@ -150,21 +155,23 @@ meet (FinalizerInfo s1 m1) (FinalizerInfo s2 m2) =
 -- that could be shared between this and nullability.  At the same
 -- time, push some SMT helpers down to llvm-analysis.
 
-top :: FinalizerInfo
-top = FinalizerInfo mempty mempty
-
 type Analysis = AnalysisMonad FinalizerData ()
 
-finalizerAnalysis :: (FuncLike funcLike, HasFunction funcLike, HasCFG funcLike)
-                     => funcLike -> FinalizerSummary -> Analysis FinalizerSummary
+finalizerAnalysis :: (FuncLike funcLike, HasFunction funcLike,
+                      HasCFG funcLike, HasNullSummary funcLike)
+                     => funcLike
+                     -> FinalizerSummary
+                     -> Analysis FinalizerSummary
 finalizerAnalysis funcLike s@(FinalizerSummary summ _) = do
   -- Update the immutable data with the information we have gathered
   -- from the rest of the module so far.  We want to be able to access
   -- this in the Reader environment
   let envMod e = e { moduleSummary = s }
-      set0 = HS.fromList $ filter isPointer (functionParameters f)
-      fact0 = FinalizerInfo set0 mempty
-      analysis = dataflowAnalysis top meet finalizerTransfer
+      univSet = HS.fromList $ filter isPointer (functionParameters f)
+--      set0 = HS.fromList $ filter isPointer (functionParameters f)
+      top = FinalizerInfo univSet mempty
+      fact0 = FinalizerInfo mempty mempty
+      analysis = dataflowAnalysis top meet (finalizerTransfer nps)
 
   -- FIXME: This is no longer correct and will require some SMT help
   -- to find null branches properly.  Alternative, push that down into
@@ -172,12 +179,12 @@ finalizerAnalysis funcLike s@(FinalizerSummary summ _) = do
   -- also be useful for the nullability analysis.
   funcInfo <- analysisLocal envMod (forwardDataflow funcLike analysis fact0)
 
-  let FinalizerInfo notFinalized witnesses = dataflowResult funcInfo
+  let FinalizerInfo finalized witnesses = dataflowResult funcInfo
   -- The finalized parameters are those that are *NOT* in our fact set
   -- at the return instruction
-      finalizedOrNull = set0 `HS.difference` notFinalized
+--      finalizedOrNull = finalized -- set0 `HS.difference` notFinalized
       attachWitness a = HM.insert a (S.toList (HM.lookupDefault mempty a witnesses))
-      newInfo = HS.foldr attachWitness mempty finalizedOrNull
+      newInfo = HS.foldr attachWitness mempty finalized
   -- Note, we perform the union with newInfo first so that any
   -- repeated keys take their value from what we just computed.  This
   -- is important for processing SCCs in the call graph, where a
@@ -186,15 +193,36 @@ finalizerAnalysis funcLike s@(FinalizerSummary summ _) = do
   return $! (finalizerSummary .~ newInfo `HM.union` summ) s
   where
     f = getFunction funcLike
+    nps = getNullSummary funcLike
 
-finalizerTransfer :: FinalizerInfo -> Instruction -> Analysis FinalizerInfo
-finalizerTransfer info i =
+finalizerTransfer :: NullPointersSummary
+                     -> FinalizerInfo
+                     -> Instruction
+                     -> Analysis FinalizerInfo
+finalizerTransfer nps info i =
   case i of
     CallInst { callFunction = calledFunc, callArguments = args } ->
-      callTransfer i (stripBitcasts calledFunc) (map fst args) info
+      callTransfer i (stripBitcasts calledFunc) (map fst args) info'
     InvokeInst { invokeFunction = calledFunc, invokeArguments = args } ->
-      callTransfer i (stripBitcasts calledFunc) (map fst args) info
-    _ -> return info
+      callTransfer i (stripBitcasts calledFunc) (map fst args) info'
+    _ -> return info'
+  where
+    info' = addNullsForEntryInstruction nps i info
+
+addNullsForEntryInstruction :: NullPointersSummary
+                               -> Instruction
+                               -> FinalizerInfo
+                               -> FinalizerInfo
+addNullsForEntryInstruction nps i info
+  | instructionIsEntry i =
+    foldr addNullArg info (nullPointersAt nps i) `debug` show nps
+  | otherwise = info
+
+
+addNullArg :: Value -> FinalizerInfo -> FinalizerInfo
+addNullArg v info = fromMaybe info $ do
+  arg <- fromValue v
+  return $ (finalizedOrNull %~ HS.insert arg) info
 
 callTransfer :: Instruction -> Value -> [Value] -> FinalizerInfo -> Analysis FinalizerInfo
 callTransfer callInst v as info =
@@ -225,14 +253,18 @@ callTransfer callInst v as info =
       attrs <- lookupArgumentSummaryList ms v ix
       case PAFinalize `elem` attrs of
         False -> return acc
-        True -> return $! removeArgWithWitness a callInst "finalized" acc
+        True -> return $! addArgWithWitness a callInst "finalized" acc
     checkArg _ acc _ = return acc
 
-removeArgWithWitness :: Argument -> Instruction -> String -> FinalizerInfo -> FinalizerInfo
-removeArgWithWitness a i reason (FinalizerInfo s m) =
+
+-- Perhaps modify the function call transfer here?  If we are calling a
+-- finalizer on a value that we know IS NOT NULL,
+
+addArgWithWitness :: Argument -> Instruction -> String -> FinalizerInfo -> FinalizerInfo
+addArgWithWitness a i reason (FinalizerInfo s m) =
   let w = Witness i reason
-  in FinalizerInfo { notFinalizedOrNull = HS.delete a s
-                   , finalizedWitnesses = HM.insertWith S.union a (S.singleton w) m
+  in FinalizerInfo { _finalizedOrNull = HS.insert a s
+                   , _finalizedWitnesses = HM.insertWith S.union a (S.singleton w) m
                    }
 
 -- Helpers

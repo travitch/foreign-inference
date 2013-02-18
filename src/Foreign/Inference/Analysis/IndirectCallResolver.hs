@@ -161,9 +161,9 @@ extractGlobalFieldInits :: GlobalVariable -> Map (Type, Int) (Set Value) -> Map 
 extractGlobalFieldInits gv acc = fromMaybe acc $ do
   ConstantC ConstantStruct { constantStructValues = vs } <- globalVariableInitializer gv
   return $ foldr (addFieldInit (valueType gv)) acc (zip [0..] vs)
-
-addFieldInit t (ix, v) =
-  M.insertWith S.union (t, ix) (S.singleton v)
+  where
+    addFieldInit t (ix, v) =
+      M.insertWith S.union (t, ix) (S.singleton v)
 
 -- Find all initializers of function types to global fields.  Make a map
 -- of (struct type, field no) -> {initializers}

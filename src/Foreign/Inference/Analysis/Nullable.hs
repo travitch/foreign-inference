@@ -1,4 +1,4 @@
-{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE RankNTypes, PatternGuards #-}
 {-# LANGUAGE ViewPatterns, DeriveGeneric, TemplateHaskell #-}
 -- | This module defines a Nullable pointer analysis.  It actually
 -- identifies non-nullable pointers (the rest are nullable).
@@ -79,9 +79,10 @@ import Control.Arrow
 import Control.DeepSeq
 import Control.DeepSeq.Generics ( genericRnf )
 import Control.Lens ( Lens', makeLenses, (.~) )
-import Control.Monad ( foldM )
+import Control.Monad ( foldM, unless )
 import Data.Map ( Map )
 import qualified Data.Map as M
+import Data.Maybe ( fromMaybe )
 import Data.Monoid
 import Data.Set ( Set )
 import qualified Data.Set as S
@@ -255,26 +256,20 @@ nullTransfer ni i =
     _ -> return ni
 
 valueDereferenced :: Instruction -> Value -> NullInfo -> Analysis NullInfo
-valueDereferenced i ptr ni =
-  case memAccessBase ptr of
-    Nothing -> return ni
-    Just v -> do
-      v' <- mustExecuteValue v
-      case v' of
-        Nothing -> return ni
-        Just mustVal ->
-          case valueContent' mustVal of
-            ArgumentC a ->
-              case a `S.member` args of
-                -- Already removed, no new info
-                False -> return ni
-                True ->
-                  return ni { nullArguments = S.delete a args
-                            , nullWitnesses =
-                                 let w = Witness i "deref"
-                                 in M.insertWith' S.union a (S.singleton w) ws
-                            }
-            _ -> return ni
+valueDereferenced i ptr ni
+  | Just v <- memAccessBase ptr = do
+    v' <- mustExecuteValue v
+    case v' of
+      Nothing -> return ni
+      Just mustVal -> return $ fromMaybe ni $ do
+        a <- fromValue mustVal
+        unless (S.member a args) (fail "Not a NULL argument")
+        return ni { nullArguments = S.delete a args
+                  , nullWitnesses =
+                    let w = Witness i "deref"
+                    in M.insertWith' S.union a (S.singleton w) ws
+                  }
+  | otherwise = return ni
   where
     args = nullArguments ni
     ws = nullWitnesses ni

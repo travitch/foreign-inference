@@ -95,6 +95,7 @@ import LLVM.Analysis.CFG
 import LLVM.Analysis.CallGraphSCCTraversal
 import LLVM.Analysis.Dataflow
 import LLVM.Analysis.Dominance
+import LLVM.Analysis.NullPointers
 
 import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
@@ -208,7 +209,7 @@ nullableAnalysis retSumm funcLike s@(NullableSummary summ _) = do
                    }
       args = filter isPointer (functionParameters f)
       fact0 = top { nullArguments = S.fromList args }
-      analysis = dataflowAnalysis top meetNullInfo nullTransfer
+      analysis = fwdDataflowEdgeAnalysis top meetNullInfo nullTransfer nullEdgeTransfer
   localInfo <- analysisLocal envMod (forwardDataflow funcLike analysis fact0)
 
   let exitInfo = dataflowResult localInfo
@@ -230,6 +231,12 @@ attachWitness m a =
   case M.lookup a m of
     Nothing -> (a, [])
     Just is -> (a, S.toList is)
+
+nullEdgeTransfer :: NullInfo -> Instruction -> Analysis [(BasicBlock, NullInfo)]
+nullEdgeTransfer ni i = return $ fromMaybe [] $ do
+  (_, val, notNullBlock) <- branchNullInfo i
+  arg <- fromValue val
+  return [(notNullBlock, ni { nullArguments = arg `S.delete` nullArguments ni })]
 
 -- | First, process the incoming CFG edges to learn about pointers
 -- that are known to be non-NULL.  Then use this updated information

@@ -47,10 +47,6 @@ import Foreign.Inference.Analysis.IndirectCallResolver
 import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
 
-import Text.Printf
-import Debug.Trace
-debug = flip trace
-
 -- | If an argument is finalized, it will be in the map with its
 -- associated witnesses.  If no witnesses could be identified, the
 -- witness list will simply be empty.
@@ -150,11 +146,6 @@ meet (FinalizerInfo s1 m1) (FinalizerInfo s2 m2) =
                 , _finalizedWitnesses = HM.unionWith S.union m1 m2
                 }
 
--- Switch to using finalizedOrNull with intersection.  Use SMT for
--- null/not null.  Perhaps use a lower-level is-null-at-point analysis
--- that could be shared between this and nullability.  At the same
--- time, push some SMT helpers down to llvm-analysis.
-
 type Analysis = AnalysisMonad FinalizerData ()
 
 finalizerAnalysis :: (FuncLike funcLike, HasFunction funcLike,
@@ -168,10 +159,9 @@ finalizerAnalysis funcLike s@(FinalizerSummary summ _) = do
   -- this in the Reader environment
   let envMod e = e { moduleSummary = s }
       univSet = HS.fromList $ filter isPointer (functionParameters f)
---      set0 = HS.fromList $ filter isPointer (functionParameters f)
       top = FinalizerInfo univSet mempty
       fact0 = FinalizerInfo mempty mempty
-      analysis = dataflowAnalysis top meet (finalizerTransfer nps)
+      analysis = fwdDataflowEdgeAnalysis top meet finalizerTransfer finalizerEdgeTransfer
 
   -- FIXME: This is no longer correct and will require some SMT help
   -- to find null branches properly.  Alternative, push that down into
@@ -180,9 +170,6 @@ finalizerAnalysis funcLike s@(FinalizerSummary summ _) = do
   funcInfo <- analysisLocal envMod (forwardDataflow funcLike analysis fact0)
 
   let FinalizerInfo finalized witnesses = dataflowResult funcInfo
-  -- The finalized parameters are those that are *NOT* in our fact set
-  -- at the return instruction
---      finalizedOrNull = finalized -- set0 `HS.difference` notFinalized
       attachWitness a = HM.insert a (S.toList (HM.lookupDefault mempty a witnesses))
       newInfo = HS.foldr attachWitness mempty finalized
   -- Note, we perform the union with newInfo first so that any
@@ -195,29 +182,24 @@ finalizerAnalysis funcLike s@(FinalizerSummary summ _) = do
     f = getFunction funcLike
     nps = getNullSummary funcLike
 
-finalizerTransfer :: NullPointersSummary
-                     -> FinalizerInfo
+finalizerEdgeTransfer :: FinalizerInfo
+                         -> Instruction
+                         -> Analysis [(BasicBlock, FinalizerInfo)]
+finalizerEdgeTransfer info i = return $ fromMaybe [] $ do
+  (nullBlock, val, _) <- branchNullInfo i
+  -- On the NULL block, insert val
+  return $ [(nullBlock, addNullArg val info)]
+
+finalizerTransfer :: FinalizerInfo
                      -> Instruction
                      -> Analysis FinalizerInfo
-finalizerTransfer nps info i =
+finalizerTransfer info i =
   case i of
     CallInst { callFunction = calledFunc, callArguments = args } ->
-      callTransfer i (stripBitcasts calledFunc) (map fst args) info'
+      callTransfer i (stripBitcasts calledFunc) (map fst args) info
     InvokeInst { invokeFunction = calledFunc, invokeArguments = args } ->
-      callTransfer i (stripBitcasts calledFunc) (map fst args) info'
-    _ -> return info'
-  where
-    info' = addNullsForEntryInstruction nps i info
-
-addNullsForEntryInstruction :: NullPointersSummary
-                               -> Instruction
-                               -> FinalizerInfo
-                               -> FinalizerInfo
-addNullsForEntryInstruction nps i info
-  | instructionIsEntry i =
-    foldr addNullArg info (nullPointersAt nps i) `debug` show nps
-  | otherwise = info
-
+      callTransfer i (stripBitcasts calledFunc) (map fst args) info
+    _ -> return info
 
 addNullArg :: Value -> FinalizerInfo -> FinalizerInfo
 addNullArg v info = fromMaybe info $ do

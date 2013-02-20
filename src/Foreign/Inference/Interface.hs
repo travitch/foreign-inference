@@ -147,7 +147,7 @@ data DependencySummary =
 isRefCountedObject :: DependencySummary -> Type -> Maybe (String, String)
 isRefCountedObject ds t =
   case t of
-    TypeStruct (Just _) _ _ -> do
+    TypeStruct (Right _) _ _ -> do
       let Just n = structTypeToName t
       Map.lookup n (refCountSuperclasses ds)
     _ -> Nothing
@@ -608,8 +608,8 @@ typeToCType isUnsigned t = case t of
   TypePointer t' _ -> do
     tt <- typeToCType False t'
     return $! CPointer tt
-  TypeStruct (Just n) _ _ -> return $! CStruct (sanitizeStructName n) []
-  TypeStruct Nothing ts _ -> do
+  TypeStruct (Right n) _ _ -> return $! CStruct (sanitizeStructName n) []
+  TypeStruct (Left _) ts _ -> do
     tts <- mapM (typeToCType False) ts
     return $! CAnonStruct tts
   TypeFP128 -> Nothing

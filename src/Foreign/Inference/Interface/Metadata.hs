@@ -63,8 +63,8 @@ moduleInterfaceStructTypes m = opaqueTypes ++ concreteTypes
 --   foldr extractInterfaceStructTypes M.empty . moduleDefinedFunctions
 
 structTypeName :: Type -> String
-structTypeName (TypeStruct (Just name) _ _) = sanitizeStructName name
-structTypeName (TypeStruct Nothing _ _) = "anon"
+structTypeName (TypeStruct (Right name) _ _) = sanitizeStructName name
+structTypeName (TypeStruct (Left tid) _ _) = ("anon" ++ show tid)
 structTypeName t = $failure ("Expected struct type: " ++ show t)
 
 toOpaqueCType :: String -> CType
@@ -140,12 +140,12 @@ extractInterfaceStructTypes f (typeMDMap, opaqueTypes) =
 toStructType :: (Type, Maybe Metadata)
                 -> ([(Type, Metadata)], HashSet Type)
                 -> ([(Type, Metadata)], HashSet Type)
-toStructType (t@(TypeStruct (Just _) _ _),
+toStructType (t@(TypeStruct (Right _) _ _),
               Just MetaDWDerivedType { metaDerivedTypeTag = DW_TAG_typedef
                                 , metaDerivedTypeParent = parent
                                 }) acc =
   toStructType (t, parent) acc
-toStructType (t@(TypeStruct (Just _) _ _), Just a) (tms, ts) = ((t, a) : tms, ts)
+toStructType (t@(TypeStruct (Right _) _ _), Just a) (tms, ts) = ((t, a) : tms, ts)
 toStructType (TypePointer inner _,
               Just MetaDWDerivedType { metaDerivedTypeTag = DW_TAG_pointer_type
                                 , metaDerivedTypeParent = parent
@@ -164,7 +164,7 @@ sanitizeStructName :: String -> String
 sanitizeStructName = structBaseName
 
 metadataStructTypeToCType :: (Type, Metadata) -> CType
-metadataStructTypeToCType (TypeStruct (Just name) members _,
+metadataStructTypeToCType (TypeStruct (Right name) members _,
                            MetaDWCompositeType { metaCompositeTypeMembers =
                                                     Just (MetadataList _ cmembers)
                                                }) =
@@ -178,7 +178,7 @@ metadataStructTypeToCType (TypeStruct (Just name) members _,
       return (T.unpack memberName, realType)
     trNameAndType _ = Nothing
 -- If there were no members in the metadata, this is an opaque type
-metadataStructTypeToCType (TypeStruct (Just name) _ _, _) =
+metadataStructTypeToCType (TypeStruct (Right name) _ _, _) =
   CStruct (sanitizeStructName name) []
 metadataStructTypeToCType t =
   $failure ("Unexpected non-struct metadata: " ++ show t)
@@ -198,10 +198,10 @@ structMemberToCType t = case t of
   TypePointer t' _ -> do
     tt <- structMemberToCType t'
     return $! CPointer tt
-  TypeStruct (Just n) _ _ ->
+  TypeStruct (Right n) _ _ ->
     let name' = sanitizeStructName n
     in return $! CStruct name' []
-  TypeStruct Nothing ts _ -> do
+  TypeStruct (Left _) ts _ -> do
     tts <- mapM structMemberToCType ts
     return $! CAnonStruct tts
   TypeVoid -> return CVoid

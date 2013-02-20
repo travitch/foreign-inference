@@ -105,8 +105,8 @@ import Foreign.Inference.Analysis.Return
 -- import Text.Printf
 -- import Debug.Trace
 
--- debug' :: c -> String -> c
--- debug' = flip trace
+-- debug :: c -> String -> c
+-- debug = flip trace
 
 type SummaryType = HashMap Argument [Witness]
 

@@ -91,7 +91,7 @@ test-suite ArrayTests
   type: exitcode-stdio-1.0
   main-is: ArrayTests.hs
   build-depends: llvm-analysis >= 0.2.0,
-                 llvm-data-interop >= 0.1.1,
+                 llvm-data-interop >= 0.2.0,
                  foreign-inference >= 0.2.0,
                  base == 4.*,
                  filepath, HUnit, containers
@@ -102,7 +102,7 @@ test-suite NullableTests
   type: exitcode-stdio-1.0
   main-is: NullableTests.hs
   build-depends: llvm-analysis >= 0.2.0,
-                 llvm-data-interop >= 0.1.1,
+                 llvm-data-interop >= 0.2.0,
                  foreign-inference >= 0.2.0,
                  base == 4.*,
                  filepath, HUnit, containers
@@ -113,7 +113,7 @@ test-suite RefCountTests
   type: exitcode-stdio-1.0
   main-is: RefTests.hs
   build-depends: llvm-analysis >= 0.2.0,
-                 llvm-data-interop >= 0.1.1,
+                 llvm-data-interop >= 0.2.0,
                  foreign-inference >= 0.2.0,
                  base == 4.*,
                  filepath, HUnit, containers
@@ -124,7 +124,7 @@ test-suite FinalizerTests
   type: exitcode-stdio-1.0
   main-is: FinalizerTests.hs
   build-depends: llvm-analysis >= 0.2.0,
-                 llvm-data-interop >= 0.1.1,
+                 llvm-data-interop >= 0.2.0,
                  foreign-inference >= 0.2.0,
                  base == 4.*,
                  filepath, HUnit, containers
@@ -136,7 +136,7 @@ test-suite AllocatorTests
   type: exitcode-stdio-1.0
   main-is: AllocatorTests.hs
   build-depends: llvm-analysis >= 0.2.0,
-                 llvm-data-interop >= 0.1.1,
+                 llvm-data-interop >= 0.2.0,
                  foreign-inference >= 0.2.0,
                  base == 4.*,
                  filepath, HUnit, containers
@@ -148,7 +148,7 @@ test-suite OutputTests
   type: exitcode-stdio-1.0
   main-is: OutputTests.hs
   build-depends: llvm-analysis >= 0.2.0,
-                 llvm-data-interop >= 0.1.1,
+                 llvm-data-interop >= 0.2.0,
                  foreign-inference >= 0.2.0,
                  base == 4.*,
                  filepath, HUnit, containers
@@ -160,7 +160,7 @@ test-suite EscapeTests
   main-is: EscapeTests.hs
   hs-source-dirs: tests
   build-depends: llvm-analysis >= 0.2.0,
-                 llvm-data-interop >= 0.1.1,
+                 llvm-data-interop >= 0.2.0,
                  foreign-inference >= 0.2.0,
                  base == 4.*,
                  mtl >= 2,
@@ -173,7 +173,7 @@ test-suite InstructionEscapeTests
   main-is: InstructionEscapeTests.hs
   hs-source-dirs: tests
   build-depends: llvm-analysis >= 0.2.0,
-                 llvm-data-interop >= 0.1.1,
+                 llvm-data-interop >= 0.2.0,
                  foreign-inference >= 0.2.0,
                  mtl > 2,
                  base == 4.*,
@@ -186,7 +186,7 @@ test-suite IndirectCallTests
   main-is: IndirectCallTests.hs
   hs-source-dirs: tests
   build-depends: llvm-analysis >= 0.2.0,
-                 llvm-data-interop >= 0.1.1,
+                 llvm-data-interop >= 0.2.0,
                  foreign-inference >= 0.2.0,
                  base == 4.*,
                  containers, HUnit, filepath
@@ -199,7 +199,7 @@ test-suite ErrorHandlingTests
   hs-source-dirs: tests
   ghc-options: -Wall
   build-depends: llvm-analysis >= 0.2.0,
-                 llvm-data-interop >= 0.1.1,
+                 llvm-data-interop >= 0.2.0,
                  foreign-inference >= 0.2.0,
                  base == 4.*,
                  containers, HUnit, filepath
@@ -211,7 +211,7 @@ test-suite TransferTests
   hs-source-dirs: tests
   ghc-options: -Wall
   build-depends: llvm-analysis >= 0.2.0,
-                 llvm-data-interop >= 0.1.1,
+                 llvm-data-interop >= 0.2.0,
                  foreign-inference >= 0.2.0,
                  base == 4.*,
                  containers, HUnit, filepath
@@ -223,7 +223,7 @@ test-suite SAPTests
   hs-source-dirs: tests
   ghc-options: -Wall
   build-depends: llvm-analysis >= 0.2.0,
-                 llvm-data-interop >= 0.1.1,
+                 llvm-data-interop >= 0.2.0,
                  foreign-inference >= 0.2.0,
                  base == 4.*,
                  containers, HUnit, filepath
@@ -235,7 +235,7 @@ test-suite SAPArgumentTests
   hs-source-dirs: tests
   ghc-options: -Wall
   build-depends: llvm-analysis >= 0.2.0,
-                 llvm-data-interop >= 0.1.1,
+                 llvm-data-interop >= 0.2.0,
                  foreign-inference >= 0.2.0,
                  base == 4.*,
                  containers, HUnit, filepath
@@ -247,7 +247,7 @@ test-suite SAPFinalizeTests
   hs-source-dirs: tests
   ghc-options: -Wall
   build-depends: llvm-analysis >= 0.2.0,
-                 llvm-data-interop >= 0.1.1,
+                 llvm-data-interop >= 0.2.0,
                  foreign-inference >= 0.2.0,
                  base == 4.*,
                  containers, HUnit, filepath

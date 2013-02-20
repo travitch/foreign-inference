@@ -16,6 +16,7 @@ import qualified Data.HashSet as HS
 import qualified Data.Set as S
 import Data.Maybe ( catMaybes, fromMaybe, mapMaybe )
 import Data.Monoid
+import Data.Text ( Text )
 import qualified Data.Text as T
 import Debug.Trace.LocationTH
 
@@ -160,8 +161,8 @@ toStructType (t@TypeStruct {}, Nothing) (tms, ts) =
   (tms, HS.insert t ts)
 toStructType _ acc = acc
 
-sanitizeStructName :: String -> String
-sanitizeStructName = structBaseName
+sanitizeStructName :: Text -> String
+sanitizeStructName = structBaseName . T.unpack
 
 metadataStructTypeToCType :: (Type, Metadata) -> CType
 metadataStructTypeToCType (TypeStruct (Right name) members _,

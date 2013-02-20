@@ -30,12 +30,12 @@ module Foreign.Inference.Analysis.IndirectCallResolver (
   indirectCallTargets
   ) where
 
-import Data.Map ( Map )
-import qualified Data.Map as M
+import Data.HashMap.Strict ( HashMap )
+import qualified Data.HashMap.Strict as HM
+import Data.HashSet ( HashSet )
+import qualified Data.HashSet as HS
 import Data.Maybe ( fromMaybe )
 import Data.Monoid
-import Data.Set ( Set )
-import qualified Data.Set as S
 
 import LLVM.Analysis
 import LLVM.Analysis.ClassHierarchy
@@ -56,7 +56,7 @@ instance PointsToAnalysis IndirectCallSummary where
 data IndirectCallSummary =
   ICS { summaryTargets :: Andersen
       , resolverCHA :: CHA
-      , globalInits :: Map (Type, Int) (Set Value)
+      , globalInits :: HashMap (Type, Int) (HashSet Value)
       }
 
 -- If i is a Load of a global with an initializer (or a GEP of a
@@ -77,8 +77,8 @@ indirectCallInitializers ics v =
                                                               ]
                                      })} -> fromMaybe (lookupInst li) $ do
       let baseTy = valueType base
-      globInits <- M.lookup (baseTy, ix) (globalInits ics)
-      return $ S.toList globInits ++ lookupInst li
+      globInits <- HM.lookup (baseTy, ix) (globalInits ics)
+      return $ HS.toList globInits ++ lookupInst li
     -- Here, walk the initializer if it isn't a simple integer
     -- constant We discard the first index because while the global
     -- variable is a pointer type, the initializer is not (because all
@@ -157,13 +157,13 @@ identifyIndirectCallTargets m =
     gis = foldr extractGlobalFieldInits mempty (moduleGlobalVariables m)
 
 -- FIXME: One day push this hack down into the andersen analysis.
-extractGlobalFieldInits :: GlobalVariable -> Map (Type, Int) (Set Value) -> Map (Type, Int) (Set Value)
+extractGlobalFieldInits :: GlobalVariable -> HashMap (Type, Int) (HashSet Value) -> HashMap (Type, Int) (HashSet Value)
 extractGlobalFieldInits gv acc = fromMaybe acc $ do
   ConstantC ConstantStruct { constantStructValues = vs } <- globalVariableInitializer gv
   return $ foldr (addFieldInit (valueType gv)) acc (zip [0..] vs)
   where
     addFieldInit t (ix, v) =
-      M.insertWith S.union (t, ix) (S.singleton v)
+      HM.insertWith HS.union (t, ix) (HS.singleton v)
 
 -- Find all initializers of function types to global fields.  Make a map
 -- of (struct type, field no) -> {initializers}

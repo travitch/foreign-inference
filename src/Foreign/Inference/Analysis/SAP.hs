@@ -25,6 +25,9 @@ import Control.Arrow ( (&&&) )
 import Control.DeepSeq
 import Control.DeepSeq.Generics ( genericRnf )
 import Control.Failure
+import Data.Hashable
+import Data.HashSet ( HashSet )
+import qualified Data.HashSet as HS
 import Control.Lens ( Lens', makeLenses, (%~), (.~), (^.), set, view, lens )
 import Control.Monad ( foldM )
 import qualified Data.Foldable as F
@@ -73,25 +76,38 @@ data ReturnContainerPath = ReturnContainerPath AbstractAccessPath !Int
 instance NFData WritePath where
   rnf = genericRnf
 
+instance Hashable WritePath where
+  hashWithSalt s (WritePath i p) = s `hashWithSalt` i `hashWithSalt` p
+
 instance NFData FinalizePath where
   rnf = genericRnf
+
+instance Hashable FinalizePath where
+  hashWithSalt s (FinalizePath p) = s `hashWithSalt` p
 
 instance NFData ReturnPath where
   rnf = genericRnf
 
+instance Hashable ReturnPath where
+  hashWithSalt s (ReturnPath i p) = s `hashWithSalt` i `hashWithSalt` p
+
 instance NFData ReturnContainerPath where
   rnf = genericRnf
 
+instance Hashable ReturnContainerPath where
+  hashWithSalt s (ReturnContainerPath p i) =
+    s `hashWithSalt` p `hashWithSalt` i
+
 data SAPSummary =
-  SAPSummary { _sapReturns :: Map Function (Set ReturnPath)
+  SAPSummary { _sapReturns :: Map Function (HashSet ReturnPath)
                -- ^ The return paths for each function
-             , _sapArguments :: Map Argument (Set WritePath)
+             , _sapArguments :: Map Argument (HashSet WritePath)
                -- ^ Maps each Argument to the access paths it is
                -- stored into.
-             , _sapFinalize :: Map Argument (Set FinalizePath)
+             , _sapFinalize :: Map Argument (HashSet FinalizePath)
                -- ^ Maps each Argument to the access paths based on it
                -- that are finalized.
-             , _sapReturnContainer :: Map Function (Set ReturnContainerPath)
+             , _sapReturnContainer :: Map Function (HashSet ReturnContainerPath)
              , _sapDiagnostics :: Diagnostics
              }
   deriving (Generic)
@@ -101,7 +117,7 @@ $(makeLenses ''SAPSummary)
 finalizedPaths :: Argument -> SAPSummary -> Maybe [AbstractAccessPath]
 finalizedPaths a s = do
   fps <- M.lookup a (s ^. sapFinalize)
-  return $ map (\(FinalizePath p) -> p) $ S.toList fps
+  return $ map (\(FinalizePath p) -> p) $ HS.toList fps
 
 -- | Get the paths that function @f@ returns from its argument @a@
 returnedPaths :: Function -> Argument -> SAPSummary -> Maybe [AbstractAccessPath]
@@ -112,12 +128,12 @@ returnedPaths f a s = do
         case ix == aix of
           True -> return p
           False -> Nothing
-  return $ mapMaybe unwrap (S.toList rps)
+  return $ mapMaybe unwrap (HS.toList rps)
 
 writePaths :: Argument -> SAPSummary -> Maybe [(Argument, AbstractAccessPath)]
 writePaths a s = do
   wps <- M.lookup a (s ^. sapArguments)
-  return $ mapMaybe unwrap (S.toList wps)
+  return $ mapMaybe unwrap (HS.toList wps)
   where
     unwrap (WritePath ix p) = do
       arg <- args `at` ix
@@ -128,7 +144,7 @@ writePaths a s = do
 returnedContainerPaths :: Function -> SAPSummary -> Maybe [(Argument, AbstractAccessPath)]
 returnedContainerPaths f s = do
   rps <- M.lookup f (s ^. sapReturnContainer)
-  return $ mapMaybe unwrap (S.toList rps)
+  return $ mapMaybe unwrap (HS.toList rps)
   where
     args = functionParameters f
     unwrap (ReturnContainerPath p ix) = do
@@ -143,9 +159,9 @@ instance Monoid SAPSummary where
   mempty = SAPSummary mempty mempty mempty mempty mempty
   mappend (SAPSummary r1 a1 f1 c1 d1) (SAPSummary r2 a2 f2 c2 d2) =
     SAPSummary { _sapReturns = M.union r1 r2
-               , _sapArguments = M.unionWith S.union a1 a2
-               , _sapFinalize = M.unionWith S.union f1 f2
-               , _sapReturnContainer = M.unionWith S.union c1 c2
+               , _sapArguments = M.unionWith HS.union a1 a2
+               , _sapFinalize = M.unionWith HS.union f1 f2
+               , _sapReturnContainer = M.unionWith HS.union c1 c2
                , _sapDiagnostics = d1 `mappend` d2
                }
 
@@ -165,8 +181,8 @@ instance SummarizeModule SAPSummary where
         externalizeFinalize (FinalizePath p) =
           (show (abstractAccessPathBaseType p), abstractAccessPathComponents p)
         toAnnot con elts = [(con elts, [])]
-        fs' = maybe [] (toAnnot PAFinalizeField . map externalizeFinalize . S.toList) (M.lookup a fs)
-        as' = maybe [] (toAnnot PASAPWrite . map externalizeWrite . S.toList) (M.lookup a as)
+        fs' = maybe [] (toAnnot PAFinalizeField . map externalizeFinalize . HS.toList) (M.lookup a fs)
+        as' = maybe [] (toAnnot PASAPWrite . map externalizeWrite . HS.toList) (M.lookup a as)
     in fs' ++ as'
 
   summarizeFunction f (SAPSummary rs _ _ _ _) =
@@ -174,7 +190,7 @@ instance SummarizeModule SAPSummary where
       fr <- M.lookup f rs
       let toExternal (ReturnPath ix p) =
             (ix, show (abstractAccessPathBaseType p), abstractAccessPathComponents p)
-      return [(FASAPReturn $ map toExternal $ S.toList fr, [])]
+      return [(FASAPReturn $ map toExternal $ HS.toList fr, [])]
 
 identifySAPs :: forall compositeSummary funcLike pta .
                 (FuncLike funcLike, HasFunction funcLike, PointsToAnalysis pta)
@@ -276,8 +292,8 @@ storedReturnValueTransfer s i callee actuals =
         -- @callee@ is a formal Argument of this function (the caller)
         thisFormal <- fromValue actual
         p' <- absDest `appendAccessPath` p
-        let wp = S.singleton $ WritePath (argumentIndex destArg) p'
-        return $ (sapArguments %~ M.insertWith S.union thisFormal wp) summ
+        let wp = HS.singleton $ WritePath (argumentIndex destArg) p'
+        return $ (sapArguments %~ M.insertWith HS.union thisFormal wp) summ
 
 -- | If we are calling a function that, as a side-effect, stores one
 -- of its arguments into a field of another, we need to stitch
@@ -367,7 +383,7 @@ callTransfer finSumm actuals callee s (argIx, actual) = do
           let absPath = abstractAccessPath cap
           sp <- simplifyAbstractAccessPath absPath
           let fp = FinalizePath sp
-          return $ (sapFinalize %~ M.insertWith S.union baseArg (S.singleton fp)) s -- `debug` show fp
+          return $ (sapFinalize %~ M.insertWith HS.union baseArg (HS.singleton fp)) s -- `debug` show fp
   where
     toFinalizedPath riActuals (ReturnPath ix p) fsumm =
       fromMaybe fsumm $ do
@@ -383,7 +399,7 @@ callTransfer finSumm actuals callee s (argIx, actual) = do
           Left mappedArg' -> do
             sp <- simplifyAbstractAccessPath p
             let fp = FinalizePath sp
-            return $ (sapFinalize %~ M.insertWith S.union mappedArg' (S.singleton fp)) fsumm -- `debug` show fp
+            return $ (sapFinalize %~ M.insertWith HS.union mappedArg' (HS.singleton fp)) fsumm -- `debug` show fp
           -- This case is more complicated:
           --
           -- > foo = funcReturningPath(a->baz);
@@ -393,20 +409,20 @@ callTransfer finSumm actuals callee s (argIx, actual) = do
             p' <- abstractAccessPath mappedPath `appendAccessPath` p
             sp <- simplifyAbstractAccessPath p'
             let fp = FinalizePath sp
-            return $ (sapFinalize %~ M.insertWith S.union argBase (S.singleton fp)) fsumm -- `debug` show fp
+            return $ (sapFinalize %~ M.insertWith HS.union argBase (HS.singleton fp)) fsumm -- `debug` show fp
     -- Extend finalized paths
     finalizeTransfer baseArg curPath (FinalizePath p) argSumm =
       fromMaybe argSumm $ do
         p' <- curPath `appendAccessPath` p
         sp <- simplifyAbstractAccessPath p'
         let fp = FinalizePath sp
-        return $ M.insertWith S.union baseArg (S.singleton fp) argSumm -- `debug` show fp
+        return $ M.insertWith HS.union baseArg (HS.singleton fp) argSumm -- `debug` show fp
 
     -- In this case, an argument is being passed directly to a callee
     -- that finalizes some argument of the field.  We just need to
     -- propagate the inferred annotation.
     augmentTransferFinalize formal fp@(FinalizePath _) argSumm =
-      M.insertWith S.union formal (S.singleton fp) argSumm
+      M.insertWith HS.union formal (HS.singleton fp) argSumm
 
     -- Called once per summary for this argument.  This is handling
     -- when an argument is stored into some access path of another
@@ -429,7 +445,7 @@ callTransfer finSumm actuals callee s (argIx, actual) = do
             sp <- simplifyAbstractAccessPath p
             let dstArg' = argumentIndex argActual
                 wp = WritePath dstArg' sp
-            return $ M.insertWith S.union formal (S.singleton wp) argSumm
+            return $ M.insertWith HS.union formal (HS.singleton wp) argSumm
           _ -> do
             -- In this case, the actual argument is some field or
             -- array access.  That is @t->s@
@@ -443,7 +459,7 @@ callTransfer finSumm actuals callee s (argIx, actual) = do
             sp <- simplifyAbstractAccessPath p'
             let dstArg' = argumentIndex baseArg
                 wp = WritePath dstArg' sp
-            return $ M.insertWith S.union formal (S.singleton wp) argSumm
+            return $ M.insertWith HS.union formal (HS.singleton wp) argSumm
 
 -- | If this StoreInst represents the store of an Argument into a
 -- field of another argument, record that in the sapArguments summary.
@@ -466,11 +482,11 @@ storeTransfer ptrelSumm s i storedArg = do
   return $ fromMaybe s' $ do
     sp <- accessPath i
     rcp <- accessPathBaseReturnContainerPath f storedArg sp
-    return $ (sapReturnContainer %~ M.insertWith S.union f (S.singleton rcp)) s'
+    return $ (sapReturnContainer %~ M.insertWith HS.union f (HS.singleton rcp)) s'
   where
     f = argumentFunction storedArg
     addStore summ res' =
-      (sapArguments %~ M.insertWith S.union storedArg (S.fromList res')) summ
+      (sapArguments %~ M.insertWith HS.union storedArg (HS.fromList res')) summ
     toWritePath p acc = fromMaybe acc $ do
       base <- accessPathBaseArgument p
       let absPath = abstractAccessPath p
@@ -521,8 +537,8 @@ transitiveReturnTransfer :: Function
 transitiveReturnTransfer f s@(SAPSummary rs _ _ _ _) callee args =
   return $ fromMaybe s $ do
     rpaths <- M.lookup callee rs
-    let trpaths = mapMaybe extendRPath $ S.toList rpaths
-        rs' = foldr (M.insertWith S.union f) rs trpaths
+    let trpaths = mapMaybe extendRPath $ HS.toList rpaths
+        rs' = foldr (M.insertWith HS.union f) rs trpaths
     return $ (sapReturns .~ rs') s
   where
     extendRPath (ReturnPath ix p) = do
@@ -534,7 +550,7 @@ transitiveReturnTransfer f s@(SAPSummary rs _ _ _ _) callee args =
           tix = argumentIndex formal
       tp <- absPath `appendAccessPath` p
       sp <- simplifyAbstractAccessPath tp
-      return $ S.singleton (ReturnPath tix sp)
+      return $ HS.singleton (ReturnPath tix sp)
 
 -- FIXME: This could actually probably work on external functions,
 -- too, if we are careful in representing access paths
@@ -553,8 +569,8 @@ returnValueTransfer f s i = return $ fromMaybe s $ do
   let absPath = abstractAccessPath p
   sp <- simplifyAbstractAccessPath absPath
   let addArg aid =
-        let v = S.singleton $ ReturnPath aid sp
-        in (sapReturns %~ M.insertWith S.union f v) s
+        let v = HS.singleton $ ReturnPath aid sp
+        in (sapReturns %~ M.insertWith HS.union f v) s
   a <- accessPathBaseArgument p
   return $ addArg (argumentIndex a)
 
@@ -643,7 +659,7 @@ sapReturnResultToTestFormat =
   where
     toTestFormat (f, s) =
       (identifierAsString (functionName f),
-       S.map fromRetPath s)
+       S.fromList (map fromRetPath (HS.toList s)))
     fromRetPath (ReturnPath ix p) =
       (ix, show (abstractAccessPathBaseType p),
        abstractAccessPathComponents p)
@@ -656,7 +672,7 @@ sapArgumentResultToTestFormat =
       let f = argumentFunction a
           p1 = (identifierAsString (functionName f),
                 identifierAsString (argumentName a))
-      in (p1, S.map fromPath s)
+      in (p1, S.fromList (map fromPath (HS.toList s)))
     fromPath (WritePath ix p) =
       (ix, show (abstractAccessPathBaseType p),
        abstractAccessPathComponents p)
@@ -669,7 +685,7 @@ sapFinalizeResultToTestFormat =
       let f = argumentFunction a
           p1 = (identifierAsString (functionName f),
                 identifierAsString (argumentName a))
-      in (p1, S.map fromPath s)
+      in (p1, S.fromList (map fromPath (HS.toList s)))
     fromPath (FinalizePath p) =
       (show (abstractAccessPathBaseType p),
        abstractAccessPathComponents p)

@@ -180,7 +180,6 @@ finalizerAnalysis funcLike s@(FinalizerSummary summ _) = do
   return $! (finalizerSummary .~ newInfo `HM.union` summ) s
   where
     f = getFunction funcLike
-    nps = getNullSummary funcLike
 
 finalizerEdgeTransfer :: FinalizerInfo
                          -> Instruction

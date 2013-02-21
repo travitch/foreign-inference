@@ -253,24 +253,40 @@ returnsTransitiveError funcLike summ bb = do
   where
     f = getFunction funcLike
     recordTransitiveError i priors s callee = do
+      let w = Witness i "transitive error"
       fsumm <- lookupFunctionSummaryList (ErrorSummary s mempty) callee
       return $ fromMaybe s $ do
         FAReportsErrors errActs eret <- F.find isErrRetAnnot fsumm
         rvs <- intReturnsToList eret
-        let formula = case null priors of
-              True -> const true
-              False -> \(x :: SInt32) -> bOr (map (.==x) rvs) &&& bAll ($ x) priors
-        case isSat formula of
-          False -> Nothing
-          True -> do
-            let w = Witness i "transitive error"
-                d = ErrorDescriptor errActs eret [w]
-            return $ HM.insertWith S.union f (S.singleton d) s
+        -- See Note [Transitive Returns with Conditions]
+        case null priors of
+          True ->
+            let d = ErrorDescriptor errActs eret [w]
+            in return $ HM.insertWith S.union f (S.singleton d) s
+          False ->
+            let rvs' = foldr (addUncaughtErrors priors) mempty rvs
+                d = ErrorDescriptor errActs (ReturnConstantInt rvs') [w]
+            in return $ HM.insertWith S.union f (S.singleton d) s
 
-intReturnsToList :: ErrorReturn -> Maybe [SInt32]
+
+-- | Check an error code @rc@ against all relevant conditions that are
+-- active at the current program point.  If @rc@ has not been handled
+-- by a different branch, add it to the list of error codes that could
+-- be returned here.
+--
+-- Effectively, this filters out codes that are handled by other
+-- branches and cannot be returned here.
+addUncaughtErrors :: [SInt32 -> SBool] -> Int -> Set Int -> Set Int
+addUncaughtErrors priors rc acc
+  | isSat formula = S.insert rc acc
+  | otherwise = acc
+  where
+    formula = \(x :: SInt32) -> x .== fromIntegral rc &&& bAll ($x) priors
+
+intReturnsToList :: ErrorReturn -> Maybe [Int]
 intReturnsToList er =
   case er of
-    ReturnConstantInt is -> return $ map fromIntegral $ S.toList is
+    ReturnConstantInt is -> return $ S.toList is
     _ -> Nothing
 
 -- | Try to generalize (learn new error codes) based on known error
@@ -707,3 +723,53 @@ ignoreCasts v =
     GlobalAliasC GlobalAlias { globalAliasTarget = t } -> ignoreCasts t
     ConstantC ConstantValue { constantInstruction = BitcastInst { castedValue = cv } } -> ignoreCasts cv
     _ -> valueContent v
+
+
+{- Note [Transitive Returns with Conditions]
+
+This note affects transitive error returns:
+
+> rc = errorReturningFunction();
+> ...
+> return rc;
+
+In the most basic scenario (if there are no conditions affecting the
+return), the transitive return case is simple: the caller just returns
+all of the same return codes as the callee.
+
+If the return statement is guarded by conditions, though, this is not
+so simple:
+
+> rc = errorReturningFunction();
+> if(rc == WARN) return FATAL;
+> return rc;
+
+Here, the function hosting this code cannot (at this call site) return
+WARN as an error code because that is intercepted earlier and
+converted to FATAL.  Thus, passing all of the return codes of
+errorReturningFunction() to the caller is too much of an
+overapproximation, and an avoidable one.
+
+To deal with this, we check EACH return code from
+errorReturningFunction() against the conditions in scope at this
+return statement.  Assume the callee can return WARN and FATAL.
+
+ * rc == FATAL && rc /= WARN
+
+   This is satisfiable (assuming FATAL and WARN have different integer
+   values, which they would in any real setting).  Thus, this caller can
+   return FATAL.
+
+ * rc == WARN && rc /= WARN
+
+   This is unsatisfiable no matter how you look at it, so this return
+   statement *cannot* return WARN.
+
+The function 'addUncaughtErrors' is in charge of generating the
+relevant formulas (based on the results of the general function that
+collects all of the "in scope" conditions).
+
+See test case error-handling/filters-error-codes-with-branch.c for a
+full example of this issue.
+
+-}

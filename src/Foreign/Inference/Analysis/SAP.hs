@@ -175,6 +175,9 @@ type PTCache = Map Argument [AccessPath]
 type Analysis = AnalysisMonad () PTCache
 
 instance SummarizeModule SAPSummary where
+  summarizeArgument _ _ = []
+  summarizeFunction _ _ = []
+  {-
   summarizeArgument a (SAPSummary _ as fs _ _) =
     let externalizeWrite (WritePath ix p) =
           (ix, show (abstractAccessPathBaseType p), abstractAccessPathComponents p)
@@ -191,7 +194,7 @@ instance SummarizeModule SAPSummary where
       let toExternal (ReturnPath ix p) =
             (ix, show (abstractAccessPathBaseType p), abstractAccessPathComponents p)
       return [(FASAPReturn $ map toExternal $ HS.toList fr, [])]
-
+-}
 identifySAPs :: forall compositeSummary funcLike pta .
                 (FuncLike funcLike, HasFunction funcLike, PointsToAnalysis pta)
                 => DependencySummary

@@ -1,5 +1,5 @@
 {-# LANGUAGE ViewPatterns, RankNTypes, ScopedTypeVariables #-}
-{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DeriveGeneric, PatternGuards #-}
 -- | This analysis attempts to automatically identify error-handling
 -- code in libraries.
 --
@@ -60,9 +60,9 @@ import Foreign.Inference.Interface
 import Foreign.Inference.Analysis.IndirectCallResolver
 
 -- import Text.Printf
-import Debug.Trace
-debug :: a -> String -> a
-debug = flip trace
+{-import Debug.Trace-}
+{-debug :: a -> String -> a-}
+{-debug = flip trace-}
 
 -- | An ErrorDescriptor describes a site in the program handling an
 -- error (along with a witness).
@@ -245,8 +245,7 @@ returnsTransitiveError funcLike summ bb = do
           -- The last argument to relevantInducedFacts here is a dummy
           -- that we don't care about; relevantInducedFacts just uses
           -- the one argument that is a CallInst.
-          let exitInst = basicBlockTerminatorInstruction bb
-              priorFacts = relevantInducedFacts funcLike exitInst (toValue i) callee
+          let priorFacts = relevantInducedFacts funcLike bb i
               callees = callTargets ics callee
           liftM Just $ foldM (recordTransitiveError i priorFacts) summ callees
         _ -> return Nothing
@@ -281,7 +280,7 @@ addUncaughtErrors priors rc acc
   | isSat formula = S.insert rc acc
   | otherwise = acc
   where
-    formula = \(x :: SInt32) -> x .== fromIntegral rc &&& bAll ($x) priors
+    formula (x :: SInt32) = x .== fromIntegral rc &&& bAll ($x) priors
 
 intReturnsToList :: ErrorReturn -> Maybe [Int]
 intReturnsToList er =
@@ -305,8 +304,7 @@ matchActionAndGeneralizeReturn funcLike s bb =
   -- descriptor and then add the return value to the errCodes set.
   runMaybeT $ do
     let f = getFunction funcLike
-        brets = getBlockReturns funcLike
-    edesc <- branchToErrorDescriptor f brets bb
+    edesc <- branchToErrorDescriptor funcLike bb
     st <- lift $ analysisGet
     let fs = errorFunctions st
     FunctionCall ecall _ <- liftMaybe $ F.find (isErrorFuncCall fs) (errorActions edesc)
@@ -330,8 +328,7 @@ matchReturnAndGeneralizeAction :: (HasFunction funcLike, HasBlockReturns funcLik
 matchReturnAndGeneralizeAction funcLike s bb =
   runMaybeT $ do
     let f = getFunction funcLike
-        brets = getBlockReturns funcLike
-    edesc <- branchToErrorDescriptor f brets bb
+    edesc <- branchToErrorDescriptor funcLike bb
     st <- lift $ analysisGet
     let ecodes = errorCodes st
     case errorReturns edesc of
@@ -353,38 +350,72 @@ singleFunctionErrorAction acts =
     [FunctionCall fname _] -> return fname
     _ -> fail "Not a singleton function call action"
 
--- | If the function handles an error from a callee that we already
--- know about, this will tell us what this caller does in response.
---
--- FIXME: This doesn't currently handle the case of fread/ferror.
--- This is because the ferror call can come second and the code to
--- choose whether or not to test for a known error sees that the
--- return value for the fread is not one of the arguments being
--- compared (only ferror is).
---
--- This could be fixed if we don't treat that condition specially and
--- *always* use all conditions that are in scope.
+constantVal :: Value -> Maybe Int
+constantVal v =
+    case v of
+      ConstantC ConstantInt { constantIntValue = (fromIntegral -> iv) } ->
+        return iv
+      _ -> fail "Not a constant int"
+
+-- | In this case, the basic block is handling a known error and turning it
+-- into an integer return code (possibly while performing some other
+-- relevant error-reporting actions).
 handlesKnownError :: (HasFunction funcLike, HasBlockReturns funcLike,
                       HasCFG funcLike, HasCDG funcLike)
-                     => funcLike
-                     -> SummaryType
-                     -> BasicBlock
-                     -> Analysis (Maybe SummaryType)
-handlesKnownError funcLike s bb =
-  case basicBlockTerminatorInstruction bb of
-    bi@BranchInst { branchCondition = (valueContent' ->
-      InstructionC ci@ICmpInst { cmpPredicate = p
-                               , cmpV1 = v1
-                               , cmpV2 = v2
-                               })
-               , branchTrueTarget = tt
-               , branchFalseTarget = ft
-               } -> runMaybeT $ do
-      let f = getFunction funcLike
-          inducedFacts = relevantInducedFacts funcLike ci v1 v2
-          brets = getBlockReturns funcLike
---      return () `debug` (show (functionName f) ++ " @ " ++ show ci)
-      errDesc <- extractErrorHandlingCode f brets inducedFacts s p v1 v2 tt ft
+                  => funcLike
+                  -> SummaryType
+                  -> BasicBlock
+                  -> Analysis (Maybe SummaryType)
+handlesKnownError funcLike s bb
+  | Just rv <- blockReturn brs bb
+  , Just _ <- constantVal rv = do
+    -- Collect all control dependencies.  For each one, if the condition
+    -- is testing the value of a funtion that we know returns errors,
+    -- generate the formula that lets us know an error is being handled.
+    -- Collect the relevant facts for this block and see if they are
+    -- consistent (sat &&&) with that test fact.  If so, we are in an error
+    -- handling block returning this error code.
+    let termInst = basicBlockTerminatorInstruction bb
+        cdeps = controlDependencies cdg termInst
+    foldM (checkForKnownErrorReturn funcLike s bb) Nothing cdeps
+  | otherwise = return Nothing
+  where
+    brs = getBlockReturns funcLike
+    cdg = getCDG funcLike
+
+-- | For a given conditional branch (which is a control dependency of
+-- a block returning the constant @iv@), determine whether or not the
+-- condition is checking the return value of a function we know returns
+-- error codes.  If it is, construct the formula that determines whether or
+-- not we are on an error handling branch.
+--
+-- If we are, update the summary with this return value (@iv@) and any
+-- error-reporting actions we see in this block.  TODO: We might be able to
+-- make an argument that we should look back up multiple blocks from here
+-- to the conditional check....
+--
+-- Note that we take the first (nearest) checked error we find.
+checkForKnownErrorReturn :: (HasFunction funcLike, HasCFG funcLike,
+                             HasCDG funcLike, HasBlockReturns funcLike)
+                          => funcLike
+                          -> SummaryType -- ^ The summary as of 'handlesKnownError'
+                          -> BasicBlock -- ^ The block returning the int value
+                          -> Maybe SummaryType
+                          -> Instruction
+                          -> Analysis (Maybe SummaryType)
+checkForKnownErrorReturn _ _ _ acc@(Just _) _ = return acc
+checkForKnownErrorReturn funcLike s bb Nothing brInst = runMaybeT $ do
+  (target, isErrHandlingFormula) <- targetOfErrorCheckBy s brInst
+  let ifacts = relevantInducedFacts funcLike bb target
+      formula (x :: SInt32) = isErrHandlingFormula x &&& bAll ($x) ifacts
+  case isSat formula of
+    -- This block is not handling an error
+    False -> fail "Not handling an error"
+    -- This block is handling an error and returning a constant, so figure
+    -- out what error handling actions it is taking and modify the summary.
+    True -> do
+      errDesc <- branchToErrorDescriptor funcLike bb
+
       let acts = errorActions errDesc
       -- Only add a function to the errorFunctions set if the error
       -- action consists of *only* a single function call.  This is a
@@ -397,11 +428,40 @@ handlesKnownError funcLike s bb =
           Just (FunctionCall fname _) ->
             analysisPut st { errorFunctions = S.insert fname (errorFunctions st) }
           _ -> return ()
-      let w1 = Witness ci "check error return"
-          w2 = Witness bi "return error code"
+      let w1 = Witness target "check error return"
+          w2 = Witness brInst "return error code"
           d = errDesc { errorWitnesses = [w1, w2] }
       return $! HM.insertWith S.union f (S.singleton d) s
-    _ -> return Nothing
+  where
+    f = getFunction funcLike
+
+-- | Given a branch instruction, if the branch is checking the return value of
+-- a function call, return the function call instruction and a formula that
+-- describes when an error is being checked.
+--
+-- FIXME: This could handle switches based on return values
+targetOfErrorCheckBy :: SummaryType -> Instruction
+                     -> MaybeT Analysis (Instruction, SInt32 -> SBool)
+targetOfErrorCheckBy s i = do
+  ics <- lift $ analysisEnvironment indirectCallSummary
+  case i of
+    BranchInst { branchCondition = c } ->
+      case valueContent' c of
+        InstructionC ICmpInst { cmpV1 = (ignoreCasts ->
+          InstructionC ci@CallInst { callFunction = callee })} -> do
+          let callees = callTargets ics callee
+          rvs <- errorReturnValues s callees
+          let formula (x :: SInt32) = bAny (.==x) (map fromIntegral rvs)
+          return (ci, formula)
+        InstructionC ICmpInst { cmpV2 = (ignoreCasts ->
+          InstructionC ci@CallInst { callFunction = callee })} -> do
+          let callees = callTargets ics callee
+          rvs <- errorReturnValues s callees
+          let formula (x :: SInt32) = bAny (.==x) (map fromIntegral rvs)
+          return (ci, formula)
+        _ -> fail "Not a cmp inst or not comparing a function return"
+    _ -> fail "Not a conditional branch"
+
 
 -- | Produce a formula representing all of the facts we must hold up
 -- to this point.  The argument of the formula is the variable
@@ -448,23 +508,17 @@ handlesKnownError funcLike s bb =
 relevantInducedFacts :: (HasFunction funcLike, HasBlockReturns funcLike,
                          HasCFG funcLike, HasCDG funcLike)
                         => funcLike
+                        -> BasicBlock
                         -> Instruction
-                        -> Value
-                        -> Value
                         -> [SInt32 -> SBool]
-relevantInducedFacts funcLike i v1 v2 =
-  let Just bb = instructionBasicBlock i
-  in case (ignoreCasts v1, ignoreCasts v2) of
-    (InstructionC CallInst {}, _) ->
-      buildRelevantFacts v1 bb []
-    (_, InstructionC CallInst {}) ->
-      buildRelevantFacts v2 bb []
-    _ -> []
+relevantInducedFacts funcLike bb0 target =
+  buildRelevantFacts bb0 []
   where
     cfg = getCFG funcLike
     cdg = getCDG funcLike
+    ti = basicBlockTerminatorInstruction bb0
     -- These are all conditional branch instructions
-    cdeps = S.fromList $ controlDependencies cdg i
+    cdeps = S.fromList $ controlDependencies cdg ti
     -- | Given that we are currently at @bb@, figure out how we got
     -- here (and what condition must hold for that to be the case).
     -- Do this by walking back in the CFG along unconditional edges
@@ -473,26 +527,27 @@ relevantInducedFacts funcLike i v1 v2 =
     --
     -- If we ever reach a point where we have two predecessors, give
     -- up since we don't know any more facts for sure.
-    buildRelevantFacts target bb acc
+    buildRelevantFacts bb acc
       | S.null cdeps = acc
       | otherwise = fromMaybe acc $ do
         singlePred <- singlePredecessor cfg bb
         let br = basicBlockTerminatorInstruction singlePred
         case br of
           UnconditionalBranchInst {} ->
-            return $ buildRelevantFacts target singlePred acc
+            return $ buildRelevantFacts singlePred acc
           bi@BranchInst { branchTrueTarget = tt
-                     , branchCondition = (valueContent' ->
+                        , branchCondition = (valueContent' ->
             InstructionC ICmpInst { cmpPredicate = p
                                   , cmpV1 = val1
                                   , cmpV2 = val2
                                   })}
             | not (S.member bi cdeps) -> Nothing
-            | ignoreCasts val1 == target || ignoreCasts val2 == target ->
+            | ignoreCasts val1 == toValue target ||
+              ignoreCasts val2 == toValue target ->
               let doNeg = if bb == tt then id else bnot
                   fact' = augmentFact acc val1 val2 p doNeg
-              in return $ buildRelevantFacts target singlePred fact'
-            | otherwise -> return $ buildRelevantFacts target singlePred acc
+              in return $ buildRelevantFacts singlePred fact'
+            | otherwise -> return $ buildRelevantFacts singlePred acc
           _ -> Nothing
 
 augmentFact :: [SInt32 -> SBool] -> Value -> Value -> CmpPredicate
@@ -506,68 +561,6 @@ augmentFact facts val1 val2 p doNeg = fromMaybe facts $ do
       return $ (\(x :: SInt32) -> doNeg (x `rel` iv)) : facts
     _ -> return facts
 
-data CmpOperand = FuncallOperand Value -- the callee (external func or func)
-                | ConstIntOperand Int
-                | Neither
-
-callFuncOrConst :: Value -> CmpOperand
-callFuncOrConst v =
-  case ignoreCasts v of
-    ConstantC ConstantInt { constantIntValue = iv } ->
-      ConstIntOperand (fromIntegral iv)
-    InstructionC CallInst { callFunction = callee } ->
-      FuncallOperand callee
-    _ -> Neither
-
-extractErrorHandlingCode :: Function -> BlockReturns
-                            -> [SInt32 -> SBool]
-                            -> SummaryType
-                            -> CmpPredicate -> Value -> Value
-                            -> BasicBlock -> BasicBlock
-                            -> MaybeT Analysis ErrorDescriptor
-extractErrorHandlingCode f brets inducedFacts s p v1 v2 tt ft = do
-  rel <- liftMaybe $ cmpPredicateToRelation p
-  (trueFormula, falseFormula) <- cmpToFormula inducedFacts s rel v1 v2
-  case isSat trueFormula of
-    True -> branchToErrorDescriptor f brets tt -- `debug` "-->Taking first branch"
-    False -> case isSat falseFormula of
-      True -> branchToErrorDescriptor f brets ft -- `debug` "-->Taking second branch"
-      False -> fail "Error not checked"
-
-cmpToFormula :: [SInt32 -> SBool]
-                -> SummaryType
-                -> (SInt32 -> SInt32 -> SBool, Bool)
-                -> Value
-                -> Value
-                -> MaybeT Analysis (SInt32 -> SBool, SInt32 -> SBool)
-cmpToFormula inducedFacts s (rel, isIneqCmp) v1 v2 = do
-  ics <- lift $ analysisEnvironment indirectCallSummary
-  st <- lift analysisGet
-  let v1' = callFuncOrConst v1
-      v2' = callFuncOrConst v2
-      ecs = errorCodes st
-  case (v1', v2') of
-    (FuncallOperand callee, ConstIntOperand i)
-      | S.member i ecs && isIneqCmp -> fail "Ignore inequality against error codes"
-      | otherwise -> do
-        let callees = callTargets ics callee
-        rv <- errorReturnValue s callees
-        let i' = fromIntegral i
-            rv' = fromIntegral rv
-            trueFormula = \(x :: SInt32) -> (x .== rv') &&& (x `rel` i') &&& bAll ($ x) inducedFacts
-            falseFormula = \(x :: SInt32) -> (x .== rv') &&& bnot (x `rel` i') &&& bAll ($ x) inducedFacts
-        return (trueFormula, falseFormula)
-    (ConstIntOperand i, FuncallOperand callee)
-      | S.member i ecs && isIneqCmp -> fail "Ignore inequality against error codes"
-      | otherwise -> do
-        let callees = callTargets ics callee
-        rv <- errorReturnValue s callees
-        let i' = fromIntegral i
-            rv' = fromIntegral rv
-            trueFormula = \(x :: SInt32) -> (x .== rv') &&& (i' `rel` x) &&& bAll ($ x) inducedFacts
-            falseFormula = \(x :: SInt32) -> (x .== rv') &&& bnot (i' `rel` x) &&& bAll ($ x) inducedFacts
-        return (trueFormula, falseFormula)
-    _ -> fail "cmpToFormula"
 
 cmpPredicateToRelation :: CmpPredicate -> Maybe (SInt32 -> SInt32 -> SBool, Bool)
 cmpPredicateToRelation p =
@@ -589,40 +582,41 @@ isSat f = unsafePerformIO $ do
   Just sr <- isSatisfiable Nothing f
   return sr
 
-errorReturnValue :: SummaryType -> [Value] -> MaybeT Analysis Int
-errorReturnValue _ [] = fail "No call targets"
-errorReturnValue s [callee] = do
+errorReturnValues :: SummaryType -> [Value] -> MaybeT Analysis [Int]
+errorReturnValues _ [] = fail "No call targets"
+errorReturnValues s [callee] = do
   fsumm <- lift $ lookupFunctionSummaryList (ErrorSummary s mempty) callee
-  liftMaybe $ errRetVal fsumm
-errorReturnValue s (callee:rest) = do
+  liftMaybe $ errRetVals fsumm
+errorReturnValues s (callee:rest) = do
   fsumm <- lift $ lookupFunctionSummaryList (ErrorSummary s mempty) callee
-  rv <- liftMaybe $ errRetVal fsumm
+  rvs <- liftMaybe $ errRetVals fsumm
   -- This lets us emit a warning if some callees return errors while
   -- others do not
-  mapM_ (checkOtherErrorReturns rv) rest
-  return rv
+  mapM_ (checkOtherErrorReturns rvs) rest
+  return rvs
   where
-    checkOtherErrorReturns rv c = do
+    checkOtherErrorReturns rvs c = do
       fsumm <- lift $ lookupFunctionSummaryList (ErrorSummary s mempty) c
-      rv' <- liftMaybe $ errRetVal fsumm
-      when (rv' /= rv) $ emitWarning Nothing "ErrorAnalysis" ("Mismatched error return codes for indirect call " ++ show (valueName callee))
+      rvs' <- liftMaybe $ errRetVals fsumm
+      let inter = S.intersection (S.fromList rvs') (S.fromList rvs)
+      when (S.null inter) $ emitWarning Nothing "ErrorAnalysis" ("Mismatched error return codes for indirect call " ++ show (valueName callee))
 
 -- FIXME: Whatever is calling this needs to be modified to be able to
 -- check *multiple* error codes.  It is kind of doing the right thing
 -- now just because sorted order basically works here
-errRetVal :: [FuncAnnotation] -> Maybe Int
-errRetVal [] = Nothing
-errRetVal (FAReportsErrors _ ract : _) = do
+errRetVals :: [FuncAnnotation] -> Maybe [Int]
+errRetVals [] = Nothing
+errRetVals (FAReportsErrors _ ract : _) = do
   case ract of
     ReturnConstantInt is ->
       case F.toList is of
         [] -> Nothing
-        i:_ -> return i
+        lis -> return lis
     ReturnConstantPtr is ->
       case F.toList is of
         [] -> Nothing
-        i:_ -> return i
-errRetVal (_:rest) = errRetVal rest
+        lis -> return lis
+errRetVals (_:rest) = errRetVals rest
 
 
 callTargets :: IndirectCallSummary -> Value -> [Value]
@@ -638,10 +632,11 @@ isErrRetAnnot _ = False
 
 -- FIXME This needs to get all of the blocks that are in this branch
 -- (successors of bb and control dependent on the branch).
-branchToErrorDescriptor :: Function -> BlockReturns -> BasicBlock
-                           -> MaybeT Analysis ErrorDescriptor
-branchToErrorDescriptor f brs bb = do
-  -- Always a one element list here
+branchToErrorDescriptor :: (HasFunction funcLike, HasBlockReturns funcLike,
+                            HasCFG funcLike, HasCDG funcLike)
+                          => funcLike -> BasicBlock
+                          -> MaybeT Analysis ErrorDescriptor
+branchToErrorDescriptor funcLike bb = do
   singleRetVal <- liftMaybe $ blockReturn brs bb
   constantRc <- liftMaybe $ retValToConstantInt singleRetVal
   let rcon = if functionReturnsPointer f
@@ -649,7 +644,10 @@ branchToErrorDescriptor f brs bb = do
              else ReturnConstantInt
       ract = rcon (S.singleton constantRc)
       (acts, _) = foldr instToAction ([], mempty) (basicBlockInstructions bb)
-  return $! ErrorDescriptor (S.fromList acts) ract [] -- `debug` show constantRcs
+  return $! ErrorDescriptor (S.fromList acts) ract []
+  where
+    f = getFunction funcLike
+    brs = getBlockReturns funcLike
 
 retValToConstantInt :: Value -> Maybe Int
 retValToConstantInt v =

@@ -234,20 +234,19 @@ returnsTransitiveError :: (HasFunction funcLike, HasBlockReturns funcLike,
                           -> SummaryType
                           -> BasicBlock
                           -> Analysis (Maybe SummaryType)
-returnsTransitiveError funcLike summ bb = do
-  let brs = getBlockReturns funcLike
-  ics <- analysisEnvironment indirectCallSummary
-  case blockReturn brs bb of
-    Nothing -> return Nothing
-    Just rv ->
-      case ignoreCasts rv of
-        InstructionC i@CallInst { callFunction = callee } -> do
-          let priorFacts = relevantInducedFacts funcLike bb i
-              callees = callTargets ics callee
-          liftM Just $ foldM (recordTransitiveError i priorFacts) summ callees
-        _ -> return Nothing
+returnsTransitiveError funcLike summ bb
+  | Just rv <- blockReturn brs bb = do
+    ics <- analysisEnvironment indirectCallSummary
+    case ignoreCasts rv of
+      InstructionC i@CallInst { callFunction = callee } -> do
+        let priorFacts = relevantInducedFacts funcLike bb i
+            callees = callTargets ics callee
+        liftM Just $ foldM (recordTransitiveError i priorFacts) summ callees
+      _ -> return Nothing
+  | otherwise = return Nothing
   where
     f = getFunction funcLike
+    brs = getBlockReturns funcLike
     recordTransitiveError i priors s callee = do
       let w = Witness i "transitive error"
       fsumm <- lookupFunctionSummaryList (ErrorSummary s mempty) callee

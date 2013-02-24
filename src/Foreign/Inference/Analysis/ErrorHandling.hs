@@ -242,9 +242,6 @@ returnsTransitiveError funcLike summ bb = do
     Just rv ->
       case ignoreCasts rv of
         InstructionC i@CallInst { callFunction = callee } -> do
-          -- The last argument to relevantInducedFacts here is a dummy
-          -- that we don't care about; relevantInducedFacts just uses
-          -- the one argument that is a CallInst.
           let priorFacts = relevantInducedFacts funcLike bb i
               callees = callTargets ics callee
           liftM Just $ foldM (recordTransitiveError i priorFacts) summ callees

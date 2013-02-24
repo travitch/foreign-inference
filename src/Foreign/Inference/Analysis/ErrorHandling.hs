@@ -539,7 +539,7 @@ relevantInducedFacts funcLike bb0 target =
 augmentFact :: [SInt32 -> SBool] -> Value -> Value -> CmpPredicate
                -> (SBool -> SBool) -> [SInt32 -> SBool]
 augmentFact facts val1 val2 p doNeg = fromMaybe facts $ do
-  (rel, _) <- cmpPredicateToRelation p
+  rel <- cmpPredicateToRelation p
   case (valueContent' val1, valueContent' val2) of
     (ConstantC ConstantInt { constantIntValue = (fromIntegral -> iv) }, _) ->
       return $ (\(x :: SInt32) -> doNeg (iv `rel` x)) : facts
@@ -548,19 +548,19 @@ augmentFact facts val1 val2 p doNeg = fromMaybe facts $ do
     _ -> return facts
 
 
-cmpPredicateToRelation :: CmpPredicate -> Maybe (SInt32 -> SInt32 -> SBool, Bool)
+cmpPredicateToRelation :: CmpPredicate -> Maybe (SInt32 -> SInt32 -> SBool)
 cmpPredicateToRelation p =
   case p of
-    ICmpEq -> return ((.==), False)
-    ICmpNe -> return ((./=), False)
-    ICmpUgt -> return ((.>), True)
-    ICmpUge -> return ((.>=), False)
-    ICmpUlt -> return ((.<), True)
-    ICmpUle -> return ((.<=), False)
-    ICmpSgt -> return ((.>), True)
-    ICmpSge -> return ((.>=), False)
-    ICmpSlt -> return ((.<), True)
-    ICmpSle -> return ((.<=), False)
+    ICmpEq -> return (.==)
+    ICmpNe -> return (./=)
+    ICmpUgt -> return (.>)
+    ICmpUge -> return (.>=)
+    ICmpUlt -> return (.<)
+    ICmpUle -> return (.<=)
+    ICmpSgt -> return (.>)
+    ICmpSge -> return (.>=)
+    ICmpSlt -> return (.<)
+    ICmpSle -> return (.<=)
     _ -> fail "cmpPredicateToRelation is a floating point comparison"
 
 isSat :: (SInt32 -> SBool) -> Bool

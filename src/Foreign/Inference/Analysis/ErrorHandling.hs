@@ -436,22 +436,23 @@ targetOfErrorCheckBy :: SummaryType -> Instruction
 targetOfErrorCheckBy s i = do
   ics <- lift $ analysisEnvironment indirectCallSummary
   case i of
-    BranchInst { branchCondition = c } ->
-      case valueContent' c of
-        InstructionC ICmpInst { cmpV1 = (ignoreCasts ->
-          InstructionC ci@CallInst { callFunction = callee })} -> do
-          let callees = callTargets ics callee
-          rvs <- errorReturnValues s callees
-          let formula (x :: SInt32) = bAny (.==x) (map fromIntegral rvs)
-          return (ci, formula)
-        InstructionC ICmpInst { cmpV2 = (ignoreCasts ->
-          InstructionC ci@CallInst { callFunction = callee })} -> do
-          let callees = callTargets ics callee
-          rvs <- errorReturnValues s callees
-          let formula (x :: SInt32) = bAny (.==x) (map fromIntegral rvs)
-          return (ci, formula)
-        _ -> fail "Not a cmp inst or not comparing a function return"
+    BranchInst { branchCondition = (valueContent' ->
+      InstructionC ICmpInst { cmpV1 = v1, cmpV2 = v2 })} -> do
+        (ci, callee) <- firstCallInst [v1, v2]
+        let callees = callTargets ics callee
+        rvs <- errorReturnValues s callees
+        let formula (x :: SInt32) = bAny (.==x) (map fromIntegral rvs)
+        return (ci, formula)
     _ -> fail "Not a conditional branch"
+
+-- | Return the first call instruction and its callee
+firstCallInst :: [Value] -> MaybeT Analysis (Instruction, Value)
+firstCallInst [] = fail "No call inst"
+firstCallInst (v:vs) =
+  case fromValue (ignoreCasts v) of
+    Nothing -> firstCallInst vs
+    Just i@CallInst { callFunction = callee } -> return (i, callee)
+    _ -> firstCallInst vs
 
 
 -- | Produce a formula representing all of the facts we must hold up

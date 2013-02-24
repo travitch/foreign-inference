@@ -346,13 +346,6 @@ singleFunctionErrorAction acts =
     [FunctionCall fname _] -> return fname
     _ -> fail "Not a singleton function call action"
 
-constantVal :: Value -> Maybe Int
-constantVal v =
-    case v of
-      ConstantC ConstantInt { constantIntValue = (fromIntegral -> iv) } ->
-        return iv
-      _ -> fail "Not a constant int"
-
 -- | In this case, the basic block is handling a known error and turning it
 -- into an integer return code (possibly while performing some other
 -- relevant error-reporting actions).
@@ -365,7 +358,7 @@ handlesKnownError :: (HasFunction funcLike, HasBlockReturns funcLike,
 handlesKnownError funcLike s bb -- See Note [Known Error Conditions]
   | Just rv <- blockReturn brs bb
   , Just _ <- singlePredecessor cfg bb
-  , Just _ <- constantVal rv = do
+  , Just _ <- retValToConstantInt rv = do
     -- Collect all control dependencies.  For each one, if the condition
     -- is testing the value of a funtion that we know returns errors,
     -- generate the formula that lets us know an error is being handled.
@@ -648,11 +641,9 @@ branchToErrorDescriptor funcLike bb = do
     brs = getBlockReturns funcLike
 
 retValToConstantInt :: Value -> Maybe Int
-retValToConstantInt v =
-  case valueContent' v of
-    ConstantC ConstantInt { constantIntValue = (fromIntegral -> iv) } ->
-      return iv
-    _ -> Nothing
+retValToConstantInt v = do
+  ConstantInt { constantIntValue = (fromIntegral -> iv) } <- fromValue v
+  return iv
 
 functionReturnsPointer :: Function -> Bool
 functionReturnsPointer f =

@@ -785,4 +785,7 @@ collects all of the "in scope" conditions).
 See test case error-handling/filters-error-codes-with-branch.c for a
 full example of this issue.
 
+The special handling of the @null priors@ case is not really necessary,
+but it saves a potentially large number of pointless theorem prover calls.
+
 -}

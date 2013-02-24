@@ -137,7 +137,17 @@
             }
         }, 
         {
-            "foreignFunctionAnnotations": [], 
+            "foreignFunctionAnnotations": [
+                {
+                    "FAReportsErrors": [
+                        [], 
+                        {
+                            "ReturnConstantInt": [
+                                1
+                            ]
+                        }
+                    ]
+                }], 
             "foreignFunctionLinkage": {
                 "LinkDefault": []
             }, 
@@ -463,18 +473,7 @@
             }
         }, 
         {
-            "foreignFunctionAnnotations": [
-                {
-                    "FAReportsErrors": [
-                        [], 
-                        {
-                            "ReturnConstantInt": [
-                                0
-                            ]
-                        }
-                    ]
-                }
-            ], 
+            "foreignFunctionAnnotations": [], 
             "foreignFunctionLinkage": {
                 "LinkDefault": []
             }, 
@@ -768,18 +767,7 @@
             }
         }, 
         {
-            "foreignFunctionAnnotations": [
-                {
-                    "FAReportsErrors": [
-                        [], 
-                        {
-                            "ReturnConstantInt": [
-                                0
-                            ]
-                        }
-                    ]
-                }
-            ], 
+            "foreignFunctionAnnotations": [], 
             "foreignFunctionLinkage": {
                 "LinkDefault": []
             }, 

@@ -1,2 +1,1 @@
-fromList [ ("target", (fromList [ "reportError" ], ReturnConstantInt (fromList [-22])))
-         ]
+fromList []

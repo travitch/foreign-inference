@@ -366,8 +366,9 @@ handlesKnownError :: (HasFunction funcLike, HasBlockReturns funcLike,
                   -> SummaryType
                   -> BasicBlock
                   -> Analysis (Maybe SummaryType)
-handlesKnownError funcLike s bb
+handlesKnownError funcLike s bb -- See Note [Known Error Conditions]
   | Just rv <- blockReturn brs bb
+  , Just _ <- singlePredecessor cfg bb
   , Just _ <- constantVal rv = do
     -- Collect all control dependencies.  For each one, if the condition
     -- is testing the value of a funtion that we know returns errors,
@@ -382,6 +383,7 @@ handlesKnownError funcLike s bb
   where
     brs = getBlockReturns funcLike
     cdg = getCDG funcLike
+    cfg = getCFG funcLike
 
 -- | For a given conditional branch (which is a control dependency of
 -- a block returning the constant @iv@), determine whether or not the
@@ -722,6 +724,23 @@ ignoreCasts v =
     ConstantC ConstantValue { constantInstruction = BitcastInst { castedValue = cv } } -> ignoreCasts cv
     _ -> valueContent v
 
+{- Note [Known Error Conditions]
+
+We look for code handling known error conditions starting from basic blocks
+that return a constant int value (condition 1 and 3).  Furthermore, the block
+must have only a single predecessor in the CFG.  If it does not, we cannot know
+which branch control flow came from and thus we don't know which conditions
+*must* hold at the beginning of this block.  If we don't know the active
+conditions, then we can't tell if an error is really being checked for or not
+(and we'll probably just be checking a tautology for satisfiability, which
+isn't useful).
+
+In theory I believe this could make us miss error handling paths where some
+optimization pass combines a few identical blocks.  However, that should
+probably not be especially common.  It is better to miss some error codes than
+to incorrectly report suprious error codes.
+
+-}
 
 {- Note [Transitive Returns with Conditions]
 

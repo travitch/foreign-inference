@@ -13033,6 +13033,16 @@
             "foreignFunctionAnnotations": [
                 {
                     "FAVarArg": []
+                },
+                {
+                    "FAReportsErrors": [
+                        [], 
+                        {
+                            "ReturnConstantInt": [
+                                -1
+                            ]
+                        }
+                    ]
                 }
             ], 
             "foreignFunctionLinkage": {

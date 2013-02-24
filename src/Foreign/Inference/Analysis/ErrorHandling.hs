@@ -359,12 +359,6 @@ handlesKnownError funcLike s bb -- See Note [Known Error Conditions]
   | Just rv <- blockReturn brs bb
   , Just _ <- singlePredecessor cfg bb
   , Just _ <- retValToConstantInt rv = do
-    -- Collect all control dependencies.  For each one, if the condition
-    -- is testing the value of a funtion that we know returns errors,
-    -- generate the formula that lets us know an error is being handled.
-    -- Collect the relevant facts for this block and see if they are
-    -- consistent (sat &&&) with that test fact.  If so, we are in an error
-    -- handling block returning this error code.
     let termInst = basicBlockTerminatorInstruction bb
         cdeps = controlDependencies cdg termInst
     foldM (checkForKnownErrorReturn funcLike s bb) Nothing cdeps

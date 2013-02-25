@@ -180,7 +180,7 @@ unifyReturnCodes = F.foldr1 unifyReturns . fmap errorReturns
 
 errorAnalysis :: (HasFunction funcLike, HasBlockReturns funcLike,
                   HasCFG funcLike, HasCDG funcLike)
-                 => SummaryType -> funcLike -> Analysis SummaryType
+              => SummaryType -> funcLike -> Analysis SummaryType
 errorAnalysis summ funcLike =
   foldM (errorsForBlock funcLike) summ (functionBody f)
   where
@@ -189,10 +189,10 @@ errorAnalysis summ funcLike =
 -- | Find the error handling code in this block
 errorsForBlock :: (HasFunction funcLike, HasBlockReturns funcLike,
                    HasCFG funcLike, HasCDG funcLike)
-                  => funcLike
-                  -> SummaryType
-                  -> BasicBlock
-                  -> Analysis SummaryType
+               => funcLike
+               -> SummaryType
+               -> BasicBlock
+               -> Analysis SummaryType
 errorsForBlock funcLike s bb = do
   takeFirst s [ matchActionAndGeneralizeReturn funcLike s bb
               , matchReturnAndGeneralizeAction funcLike s bb
@@ -230,10 +230,10 @@ errorsForBlock funcLike s bb = do
 -- details.
 returnsTransitiveError :: (HasFunction funcLike, HasBlockReturns funcLike,
                            HasCFG funcLike, HasCDG funcLike)
-                          => funcLike
-                          -> SummaryType
-                          -> BasicBlock
-                          -> Analysis (Maybe SummaryType)
+                       => funcLike
+                       -> SummaryType
+                       -> BasicBlock
+                       -> Analysis (Maybe SummaryType)
 returnsTransitiveError funcLike summ bb
   | Just rv <- blockReturn brs bb = do
     ics <- analysisEnvironment indirectCallSummary
@@ -290,10 +290,10 @@ intReturnsToList er =
 -- error code.
 matchActionAndGeneralizeReturn :: (HasFunction funcLike, HasBlockReturns funcLike,
                                    HasCFG funcLike, HasCDG funcLike)
-                                  => funcLike
-                                  -> SummaryType
-                                  -> BasicBlock
-                                  -> Analysis (Maybe SummaryType)
+                               => funcLike
+                               -> SummaryType
+                               -> BasicBlock
+                               -> Analysis (Maybe SummaryType)
 matchActionAndGeneralizeReturn funcLike s bb =
   -- If this basic block calls any functions in the errFuncs set, then
   -- use branchToErrorDescriptor f bb to compute a new error
@@ -317,10 +317,10 @@ matchActionAndGeneralizeReturn funcLike s bb =
 
 matchReturnAndGeneralizeAction :: (HasFunction funcLike, HasBlockReturns funcLike,
                                    HasCFG funcLike, HasCDG funcLike)
-                                  => funcLike
-                                  -> SummaryType
-                                  -> BasicBlock
-                                  -> Analysis (Maybe SummaryType)
+                               => funcLike
+                               -> SummaryType
+                               -> BasicBlock
+                               -> Analysis (Maybe SummaryType)
 matchReturnAndGeneralizeAction funcLike s bb =
   runMaybeT $ do
     let f = getFunction funcLike
@@ -382,12 +382,14 @@ handlesKnownError funcLike s bb -- See Note [Known Error Conditions]
 -- Note that we take the first (nearest) checked error we find.
 checkForKnownErrorReturn :: (HasFunction funcLike, HasCFG funcLike,
                              HasCDG funcLike, HasBlockReturns funcLike)
-                          => funcLike
-                          -> SummaryType -- ^ The summary as of 'handlesKnownError'
-                          -> BasicBlock -- ^ The block returning the int value
-                          -> Maybe SummaryType
-                          -> Instruction
-                          -> Analysis (Maybe SummaryType)
+                         => funcLike
+                         -> SummaryType
+                         -- ^ The summary from 'handlesKnownError'
+                         -> BasicBlock
+                         -- ^ The block returning the Int value
+                         -> Maybe SummaryType
+                         -> Instruction
+                         -> Analysis (Maybe SummaryType)
 checkForKnownErrorReturn _ _ _ acc@(Just _) _ = return acc
 checkForKnownErrorReturn funcLike s bb Nothing brInst = runMaybeT $ do
   (target, isErrHandlingFormula) <- targetOfErrorCheckBy s brInst
@@ -493,10 +495,10 @@ firstCallInst (v:vs) =
 -- condition isn't checking an error).
 relevantInducedFacts :: (HasFunction funcLike, HasBlockReturns funcLike,
                          HasCFG funcLike, HasCDG funcLike)
-                        => funcLike
-                        -> BasicBlock
-                        -> Instruction
-                        -> [SInt32 -> SBool]
+                     => funcLike
+                     -> BasicBlock
+                     -> Instruction
+                     -> [SInt32 -> SBool]
 relevantInducedFacts funcLike bb0 target =
   buildRelevantFacts bb0 []
   where
@@ -537,7 +539,7 @@ relevantInducedFacts funcLike bb0 target =
           _ -> Nothing
 
 augmentFact :: [SInt32 -> SBool] -> Value -> Value -> CmpPredicate
-               -> (SBool -> SBool) -> [SInt32 -> SBool]
+            -> (SBool -> SBool) -> [SInt32 -> SBool]
 augmentFact facts val1 val2 p doNeg = fromMaybe facts $ do
   rel <- cmpPredicateToRelation p
   case (valueContent' val1, valueContent' val2) of
@@ -587,9 +589,6 @@ errorReturnValues s (callee:rest) = do
       let inter = S.intersection (S.fromList rvs') (S.fromList rvs)
       when (S.null inter) $ emitWarning Nothing "ErrorAnalysis" ("Mismatched error return codes for indirect call " ++ show (valueName callee))
 
--- FIXME: Whatever is calling this needs to be modified to be able to
--- check *multiple* error codes.  It is kind of doing the right thing
--- now just because sorted order basically works here
 errRetVals :: [FuncAnnotation] -> Maybe [Int]
 errRetVals [] = Nothing
 errRetVals (FAReportsErrors _ ract : _) = do
@@ -603,7 +602,6 @@ errRetVals (FAReportsErrors _ ract : _) = do
         [] -> Nothing
         lis -> return lis
 errRetVals (_:rest) = errRetVals rest
-
 
 callTargets :: IndirectCallSummary -> Value -> [Value]
 callTargets ics callee =
@@ -620,8 +618,8 @@ isErrRetAnnot _ = False
 -- (successors of bb and control dependent on the branch).
 branchToErrorDescriptor :: (HasFunction funcLike, HasBlockReturns funcLike,
                             HasCFG funcLike, HasCDG funcLike)
-                          => funcLike -> BasicBlock
-                          -> MaybeT Analysis ErrorDescriptor
+                        => funcLike -> BasicBlock
+                        -> MaybeT Analysis ErrorDescriptor
 branchToErrorDescriptor funcLike bb = do
   singleRetVal <- liftMaybe $ blockReturn brs bb
   constantRc <- liftMaybe $ retValToConstantInt singleRetVal

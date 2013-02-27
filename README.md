@@ -18,34 +18,17 @@ The analysis currently automatically identifies:
 Many details of the analysis can be found in the
 [PLDI 2009 paper](http://pages.cs.wisc.edu/~travitch/pldi-2009/).
 
-# Code Generation
-
-A python ctypes code generator is included: IIGen.  This produces
-a single Python file with:
-
- * Struct type definitions to enable field access
- * Enumeration definitions of symbolic constants
- * A function stub for every function in the library, callable from
-   Python
-
-The generated bindings have special treatment for certain C idioms.
-Output parameters are fully managed by the bindings and are returned
-as multiple return values (wrapped in tuples).  Array parameters can
-accept Python lists.  Values returned by allocators are automatically
-finalized using `__del__` methods.  Null checks are inserted for
-parameters that will cause a crash if they are NULL.
-
-The transformations performed on the code are described in the
-docstrings of each function.
+This library contains only the analysis libraries.  Tools built on top of the
+analysis are available in the [iiglue](https://github.com/travitch/iiglue)
+repository.
 
 # Dependencies / Building
 
-The analysis and code generator are written in Haskell.  Currently, it
-requires GHC >= 7.2 (only tested with 7.4.1).  It also depends on LLVM
-3.0 and llvm-config must be in your PATH.  The build system is
-currently set up to use the LLVM shared libraries (instead of the
-static libraries).  The whole-program LLVM compiler wrapper depends on
-Python.
+The analysis and code generator are written in Haskell.  Currently, it requires
+GHC >= 7.2 (only tested with 7.4 and 7.6).  It also depends on LLVM 3.0-3.2 and
+`llvm-config` must be in your PATH.  The build system is currently set up to
+use the LLVM shared libraries (instead of the static libraries).  The
+whole-program LLVM compiler wrapper depends on Python.
 
 A few dependencies are not on [Hackage](http://hackage.haskell.org/packages/hackage.html):
 
@@ -54,14 +37,16 @@ A few dependencies are not on [Hackage](http://hackage.haskell.org/packages/hack
  * llvm-analysis
  * archive-inspection
  * hbgl
- * a forked version of language-python
+ * ifscs
+ * itanium-abi
 
 These are currently only available from my github account.
 
 Installation would look something like:
 
     REPOSITORIES="hbgl-experimental
-    language-python
+    ifscs
+    itanium-abi
     archive-inspection
     llvm-base-types
     llvm-data-interop

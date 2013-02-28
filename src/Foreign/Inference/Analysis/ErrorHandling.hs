@@ -59,10 +59,10 @@ import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
 import Foreign.Inference.Analysis.IndirectCallResolver
 
-import Text.Printf
-import Debug.Trace
-debug :: a -> String -> a
-debug = flip trace
+{-import Text.Printf-}
+{-import Debug.Trace-}
+{-debug :: a -> String -> a-}
+{-debug = flip trace-}
 
 -- | An ErrorDescriptor describes a site in the program handling an
 -- error (along with a witness).
@@ -473,9 +473,6 @@ checkForKnownErrorReturn funcLike s bb Nothing brInst = runMaybeT $ do
             -- return codes?  usb still fails
             Just existing ->
               return $! HM.insert f (removeImprobableErrors d existing) s
-              {-return $! HM.insert f (S.delete d existing) s `debug` ("Success Model for " ++-}
-                {-show (functionName f) ++ " triggered by descriptor " ++ show d ++-}
-                  {-" against " ++ show existing)-}
   where
     f = getFunction funcLike
 

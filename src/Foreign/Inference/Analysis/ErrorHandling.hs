@@ -199,16 +199,18 @@ errorsForBlock :: (HasFunction funcLike, HasBlockReturns funcLike,
 errorsForBlock funcLike s bb = do
   takeFirst s [ reportsSuccess funcLike s bb
               , handlesKnownError funcLike s bb
-              , returnsTransitiveError funcLike s bb
               , matchActionAndGeneralizeReturn funcLike s bb
               , matchReturnAndGeneralizeAction funcLike s bb
+              , returnsTransitiveError funcLike s bb
               ]
   where
-    takeFirst :: (Monad m) => a -> [m (Maybe a)] -> m a
+    takeFirst :: (Monad m) => a -> [m (Either a a)] -> m a
     takeFirst def [] = return def
-    takeFirst def (act:rest) = do
+    takeFirst _ (act:rest) = do
       res <- act
-      maybe (takeFirst def rest) return res
+      case res of
+        Left def' -> takeFirst def' rest
+        Right res' -> return res'
 
 -- | If the function transitively returns errors, record them in the
 -- error summary.  Errors are only transitive if they are unhandled in
@@ -237,7 +239,7 @@ returnsTransitiveError :: (HasFunction funcLike, HasBlockReturns funcLike,
                        => funcLike
                        -> SummaryType
                        -> BasicBlock
-                       -> Analysis (Maybe SummaryType)
+                       -> Analysis (Either SummaryType SummaryType)
 returnsTransitiveError funcLike summ bb
   | Just rv <- blockReturn brs bb = do
     ics <- analysisEnvironment indirectCallSummary
@@ -245,9 +247,9 @@ returnsTransitiveError funcLike summ bb
       InstructionC i@CallInst { callFunction = callee } -> do
         let priorFacts = relevantInducedFacts funcLike bb i
             callees = callTargets ics callee
-        liftM Just $ foldM (recordTransitiveError i priorFacts) summ callees
-      _ -> return Nothing
-  | otherwise = return Nothing
+        liftM Right $ foldM (recordTransitiveError i priorFacts) summ callees
+      _ -> return (Left summ)
+  | otherwise = return (Left summ)
   where
     f = getFunction funcLike
     brs = getBlockReturns funcLike
@@ -303,13 +305,12 @@ matchActionAndGeneralizeReturn :: (HasFunction funcLike, HasBlockReturns funcLik
                                => funcLike
                                -> SummaryType
                                -> BasicBlock
-                               -> Analysis (Maybe SummaryType)
-matchActionAndGeneralizeReturn funcLike s bb =
+                               -> Analysis (Either SummaryType SummaryType)
+matchActionAndGeneralizeReturn funcLike s bb = do
   -- If this basic block calls any functions in the errFuncs set, then use
   -- branchToErrorDescriptor f bb to compute a new error
   -- descriptor and then add the return value to the errCodes set.
-  runMaybeT $ do
-    let f = getFunction funcLike
+  res <- runMaybeT $ do
     edesc <- branchToErrorDescriptor funcLike bb
     st <- lift $ analysisGet
     let fs = errorFunctions st
@@ -321,16 +322,23 @@ matchActionAndGeneralizeReturn funcLike s bb =
             w = Witness ti ("Called " ++ ecall)
             d = edesc { errorWitnesses = [w] }
             -- Only learn new error codes if they are not 1/0
-            is' = S.filter (\c -> c > 1 || c < 0) is
-        addDesc <- addGeneralizedFailReturn funcLike is'
---        lift $ analysisPut st { errorCodes = errorCodes st `S.union` is' }
-        case addDesc of
-          True -> return $! HM.insertWith S.union f (S.singleton d) s
-          False ->
-            case HM.lookup f s of
-              Nothing -> return s
-              Just existingSummaries ->
-                return $ HM.insert f (S.delete d existingSummaries) s
+            --
+            -- UPDATE: this hack is probably obsolete now that we are learning
+            -- "success" codes.
+            --
+            -- FIXME: Maybe we should consult the success model and try not to
+            -- generalize from any of those error codes?
+  --          is' = S.filter (\c -> c > 1 || c < 0) is
+        return (d, is)
+  case res of
+    Nothing -> return $ Left s
+    Just (d, is) -> do
+      addDesc <- addGeneralizedFailReturn funcLike is
+      case addDesc of
+        True -> return $ Right $! HM.insertWith S.union f (S.singleton d) s
+        False -> return $ Left $! HM.adjust (removeImprobableErrors d) f s
+  where
+    f = getFunction funcLike
 
 -- | Add error codes we have generalized based on an error reporting function.
 -- There is an additional check: if we are about to add a value we know is
@@ -342,32 +350,32 @@ matchActionAndGeneralizeReturn funcLike s bb =
 addGeneralizedFailReturn :: (HasFunction funcLike)
                          => funcLike
                          -> Set Int
-                         -> MaybeT Analysis Bool
+                         -> Analysis Bool
 addGeneralizedFailReturn funcLike is = do
-  st <- lift $ analysisGet
+  st <- analysisGet
   let sucMod = successModel st
       ecodes' = errorCodes st `S.union` is
   case HM.lookup f sucMod of
     Nothing -> do
-      lift $ analysisPut $ st { errorCodes = ecodes' }
+      analysisPut $ st { errorCodes = ecodes' }
       return True
     Just fsmod -> do
-      lift $ analysisPut $ st { errorCodes = ecodes' `S.difference` fsmod }
+      analysisPut $ st { errorCodes = ecodes' `S.difference` fsmod }
       -- If there are no successes in ecodes', then we can safely generalize.
       -- Otherwise, this was a bogus generalization.
       return $! S.null (fsmod `S.intersection` ecodes')
   where
     f = getFunction funcLike
 
+-- | Match a known error return and try to find new actions based on that.
 matchReturnAndGeneralizeAction :: (HasFunction funcLike, HasBlockReturns funcLike,
                                    HasCFG funcLike, HasCDG funcLike)
                                => funcLike
                                -> SummaryType
                                -> BasicBlock
-                               -> Analysis (Maybe SummaryType)
-matchReturnAndGeneralizeAction funcLike s bb =
-  runMaybeT $ do
-    let f = getFunction funcLike
+                               -> Analysis (Either SummaryType SummaryType)
+matchReturnAndGeneralizeAction funcLike s bb = do
+  res <- runMaybeT $ do
     edesc <- branchToErrorDescriptor funcLike bb
     st <- lift $ analysisGet
     let ecodes = errorCodes st
@@ -380,11 +388,17 @@ matchReturnAndGeneralizeAction funcLike s bb =
           let ti = basicBlockTerminatorInstruction bb
               w = Witness ti ("Returned " ++ show is)
               d = edesc { errorWitnesses = [w] }
-          singleFunc <- liftMaybe $ singleFunctionErrorAction (errorActions edesc)
+          singleFunc <- singleFunctionErrorAction (errorActions edesc)
           lift $ analysisPut st { errorFunctions = S.insert singleFunc (errorFunctions st) }
-          return $! HM.insertWith S.union f (S.singleton d) s
+          return d
+  case res of
+    Nothing -> return $ Left s
+    Just d ->
+      return $ Right $! HM.insertWith S.union f (S.singleton d) s
+  where
+    f = getFunction funcLike
 
-singleFunctionErrorAction :: Set ErrorAction -> Maybe String
+singleFunctionErrorAction :: Set ErrorAction -> MaybeT Analysis String
 singleFunctionErrorAction acts =
   case filter isFuncallAct (S.toList acts) of
     [FunctionCall fname _] -> return fname
@@ -399,15 +413,15 @@ handlesKnownError :: (HasFunction funcLike, HasBlockReturns funcLike,
                   => funcLike
                   -> SummaryType
                   -> BasicBlock
-                  -> Analysis (Maybe SummaryType)
+                  -> Analysis (Either SummaryType SummaryType)
 handlesKnownError funcLike s bb -- See Note [Known Error Conditions]
   | Just rv <- blockReturn brs bb
   , Just _ <- singlePredecessor cfg bb
   , Just _ <- retValToConstantInt rv = do
     let termInst = basicBlockTerminatorInstruction bb
         cdeps = controlDependencies cdg termInst
-    foldM (checkForKnownErrorReturn funcLike s bb) Nothing cdeps
-  | otherwise = return Nothing
+    foldM (checkForKnownErrorReturn funcLike bb) (Left s) cdeps
+  | otherwise = return $! Left s
   where
     brs = getBlockReturns funcLike
     cdg = getCDG funcLike
@@ -428,51 +442,39 @@ handlesKnownError funcLike s bb -- See Note [Known Error Conditions]
 checkForKnownErrorReturn :: (HasFunction funcLike, HasCFG funcLike,
                              HasCDG funcLike, HasBlockReturns funcLike)
                          => funcLike
-                         -> SummaryType
-                         -- ^ The summary from 'handlesKnownError'
                          -> BasicBlock
                          -- ^ The block returning the Int value
-                         -> Maybe SummaryType
+                         -> Either SummaryType SummaryType
                          -> Instruction
-                         -> Analysis (Maybe SummaryType)
-checkForKnownErrorReturn _ _ _ acc@(Just _) _ = return acc
-checkForKnownErrorReturn funcLike s bb Nothing brInst = runMaybeT $ do
-  (target, isErrHandlingFormula) <- targetOfErrorCheckBy s brInst
-  let ifacts = relevantInducedFacts funcLike bb target
-      formula (x :: SInt32) = isErrHandlingFormula x &&& bAll ($x) ifacts
-  case isSat formula of
-    -- This block is not handling an error
-    False -> fail "Not handling an error"
-    -- This block is handling an error and returning a constant, so figure
-    -- out what error handling actions it is taking and modify the summary.
-    True -> do
-      errDesc <- branchToErrorDescriptor funcLike bb
-
-      let acts = errorActions errDesc
-      -- Only add a function to the errorFunctions set if the error
-      -- action consists of *only* a single function call.  This is a
-      -- heuristic to filter out actions that contain cleanup code
-      -- that we would like to ignore (e.g., fclose, which is not an
-      -- error reporting function).
-      when (S.size acts == 1) $ do
-        st <- analysisGet
-        case F.find isFuncallAct acts of
-          Just (FunctionCall fname _) ->
-            analysisPut st { errorFunctions = S.insert fname (errorFunctions st) }
-          _ -> return ()
-      let w1 = Witness target "check error return"
-          w2 = Witness brInst "return error code"
-          d = errDesc { errorWitnesses = [w1, w2] }
+                         -> Analysis (Either SummaryType SummaryType)
+checkForKnownErrorReturn _ _ acc@(Right _) _ = return acc
+checkForKnownErrorReturn funcLike bb (Left s) brInst = do
+  res <- runMaybeT $ do
+    (target, isErrHandlingFormula) <- targetOfErrorCheckBy s brInst
+    let ifacts = relevantInducedFacts funcLike bb target
+        formula (x :: SInt32) = isErrHandlingFormula x &&& bAll ($x) ifacts
+    case isSat formula of
+      -- This block is not handling an error
+      False -> fail "Not handling an error"
+      -- This block is handling an error and returning a constant, so figure
+      -- out what error handling actions it is taking and modify the summary.
+      True -> do
+        errDesc <- branchToErrorDescriptor funcLike bb
+        let w1 = Witness target "check error return"
+            w2 = Witness brInst "return error code"
+            d = errDesc { errorWitnesses = [w1, w2] }
+        return d
+  case res of
+    Nothing -> return (Left s)
+    Just d -> do
       fitsSuccessModel <- checkFitsSuccessModelFor f d
       case fitsSuccessModel of
-        False -> return $! HM.insertWith S.union f (S.singleton d) s
+        False -> do
+          learnErrorCodes d
+          learnErrorActions d
+          return $ Right $! HM.insertWith S.union f (S.singleton d) s
         True ->
-          case HM.lookup f s of
-            Nothing -> return s
-            -- FIXME Maybe go through all of existing and delete the offending
-            -- return codes?  usb still fails
-            Just existing ->
-              return $! HM.insert f (removeImprobableErrors d existing) s
+          return $ Left $! HM.adjust (removeImprobableErrors d) f s
   where
     f = getFunction funcLike
 
@@ -490,15 +492,30 @@ removeImprobableErrors (ErrorDescriptor _ (ReturnConstantInt dis) _) s =
     f d acc = S.insert d acc
 removeImprobableErrors _ s = s
 
--- FIXME There is a bit of a problem here - when we remove something from the
--- summary because it was actually a success value, we short-circuit the
--- generalizer (which would only fire if we returned Nothing).  Need to have
--- a better way to run this.  Perhaps do a CPS conversion and then we have
--- control over what gets called next?
+-- | Only learn new error actions if the descriptor only includes a single
+-- error action
+learnErrorActions :: ErrorDescriptor -> Analysis ()
+learnErrorActions (ErrorDescriptor acts (ReturnConstantInt _) _)
+  | S.size acts /= 1 = return ()
+  | otherwise = do
+    st <- analysisGet
+    case F.find isFuncallAct acts of
+      Just (FunctionCall fname _) ->
+        analysisPut st { errorFunctions = S.insert fname (errorFunctions st) }
+      _ -> return ()
+learnErrorActions _ = return ()
 
-checkFitsSuccessModelFor :: Function -> ErrorDescriptor -> MaybeT Analysis Bool
+-- | Union in new error codes.  Note, call this carefully for now because
+-- it does not filter out success codes.
+learnErrorCodes :: ErrorDescriptor -> Analysis ()
+learnErrorCodes (ErrorDescriptor _ (ReturnConstantInt is) _) = do
+  st <- analysisGet
+  analysisPut st { errorCodes = errorCodes st `S.union` is }
+learnErrorCodes _ = return ()
+
+checkFitsSuccessModelFor :: Function -> ErrorDescriptor -> Analysis Bool
 checkFitsSuccessModelFor f (ErrorDescriptor _ (ReturnConstantInt is) _) = do
-  st <- lift $ analysisGet
+  st <- analysisGet
   case HM.lookup f (successModel st) of
     Nothing -> return False
     Just m -> return $ not $ S.null (is `S.intersection` m)
@@ -523,19 +540,16 @@ targetOfErrorCheckBy s i = do
         return (ci, formula)
     _ -> fail "Not a conditional branch"
 
--- FIXME reorder so this is first, then come the concrete cases, and finally
--- the generalizations.  This needs to come early so that generalizations do
--- not scoop it
 reportsSuccess :: (HasFunction funcLike, HasBlockReturns funcLike,
                    HasCFG funcLike, HasCDG funcLike)
                => funcLike
                -> SummaryType
                -> BasicBlock
-               -> Analysis (Maybe SummaryType)
+               -> Analysis (Either SummaryType SummaryType)
 reportsSuccess funcLike s bb
   | Just spred <- singlePredecessor cfg bb
-  , Just rv <- blockReturnsSameIntOnPaths rets =
-    runMaybeT $ do
+  , Just rv <- blockReturnsSameIntOnPaths rets = do
+    res <- runMaybeT $ do
       let brInst = basicBlockTerminatorInstruction spred
       (target, isErrHandlingFormula) <- targetOfErrorCheckBy s brInst
       let ifacts = relevantInducedFacts funcLike bb target
@@ -551,15 +565,13 @@ reportsSuccess funcLike s bb
               model' = HM.insertWith S.union f (S.singleton rv) model
           lift $ analysisPut st { successModel = model' }
           return s
-  | otherwise = return Nothing
+    return $ maybe (Left s) Right res
+  | otherwise = return (Left s)
   where
     f = getFunction funcLike
     brs = getBlockReturns funcLike
     cfg = getCFG funcLike
---    cdg = getCDG funcLike
     rets = blockReturns brs bb
---    termInst = basicBlockTerminatorInstruction bb
---    cdeps = controlDependencies cdg termInst
 
 blockReturnsSameIntOnPaths :: [Value] -> Maybe Int
 blockReturnsSameIntOnPaths [] = Nothing
@@ -740,8 +752,6 @@ isErrRetAnnot :: FuncAnnotation -> Bool
 isErrRetAnnot (FAReportsErrors _ _) = True
 isErrRetAnnot _ = False
 
--- FIXME This needs to get all of the blocks that are in this branch
--- (successors of bb and control dependent on the branch).
 branchToErrorDescriptor :: (HasFunction funcLike, HasBlockReturns funcLike,
                             HasCFG funcLike, HasCDG funcLike)
                         => funcLike -> BasicBlock

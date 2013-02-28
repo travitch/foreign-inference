@@ -540,6 +540,21 @@ targetOfErrorCheckBy s i = do
         return (ci, formula)
     _ -> fail "Not a conditional branch"
 
+-- | The other analyses identify error handling code.  This one instead looks
+-- for code that we can prove is /not/ handling an error.  If we are on a
+-- branch that we know is not handling an error AND it always returns the same
+-- constant integer value (on all paths), we will treat that value as a
+-- /success code/.
+--
+-- We can use that value to prevent strange code from calling a function that
+-- returns an error and checking for the result (but doing nothing about it).
+-- In those cases, the fallthrough could make it look like the function
+-- "handled" the error by returning "success".
+--
+-- Basically, we use positive information to isolate bad behavior.
+--
+-- See tests/error-handling/reused-error-reporter.c for an example where this
+-- is critical.
 reportsSuccess :: (HasFunction funcLike, HasBlockReturns funcLike,
                    HasCFG funcLike, HasCDG funcLike)
                => funcLike

@@ -59,10 +59,10 @@ import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
 import Foreign.Inference.Analysis.IndirectCallResolver
 
-{-import Text.Printf-}
-{-import Debug.Trace-}
-{-debug :: a -> String -> a-}
-{-debug = flip trace-}
+import Text.Printf
+import Debug.Trace
+debug :: a -> String -> a
+debug = flip trace
 
 -- | An ErrorDescriptor describes a site in the program handling an
 -- error (along with a witness).
@@ -469,9 +469,29 @@ checkForKnownErrorReturn funcLike s bb Nothing brInst = runMaybeT $ do
         True ->
           case HM.lookup f s of
             Nothing -> return s
-            Just existing -> return $! HM.insert f (S.delete d existing) s
+            -- FIXME Maybe go through all of existing and delete the offending
+            -- return codes?  usb still fails
+            Just existing ->
+              return $! HM.insert f (removeImprobableErrors d existing) s
+              {-return $! HM.insert f (S.delete d existing) s `debug` ("Success Model for " ++-}
+                {-show (functionName f) ++ " triggered by descriptor " ++ show d ++-}
+                  {-" against " ++ show existing)-}
   where
     f = getFunction funcLike
+
+removeImprobableErrors :: ErrorDescriptor -> Set ErrorDescriptor -> Set ErrorDescriptor
+removeImprobableErrors (ErrorDescriptor _ (ReturnConstantInt dis) _) s =
+  S.foldr f mempty s
+  where
+    f d@(ErrorDescriptor acts (ReturnConstantInt is) ws) acc
+      | S.null (S.intersection is dis) = S.insert d acc -- no overlap
+      | is == dis = acc -- identical, just remove
+      | otherwise = -- Some overlap, need to remove offending codes
+        let consts' = S.difference is dis
+            desc = ErrorDescriptor acts (ReturnConstantInt consts') ws
+        in S.insert desc acc
+    f d acc = S.insert d acc
+removeImprobableErrors _ s = s
 
 -- FIXME There is a bit of a problem here - when we remove something from the
 -- summary because it was actually a success value, we short-circuit the

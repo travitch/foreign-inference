@@ -1,0 +1,3 @@
+fromList [ ("ioctlWrapper", (fromList [], ReturnConstantInt (fromList [-5, -20, -99, -100])))
+         , ("errorCodesWithZero", (fromList [], ReturnConstantInt (fromList [0])))
+         ]

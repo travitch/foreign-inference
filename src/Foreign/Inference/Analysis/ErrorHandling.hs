@@ -307,13 +307,12 @@ matchActionAndGeneralizeReturn :: (HasFunction funcLike, HasBlockReturns funcLik
                                -> BasicBlock
                                -> Analysis (Either SummaryType SummaryType)
 matchActionAndGeneralizeReturn funcLike s bb = do
+  fs <- learnedErrorFunctions
   -- If this basic block calls any functions in the errFuncs set, then use
   -- branchToErrorDescriptor f bb to compute a new error
   -- descriptor and then add the return value to the errCodes set.
   res <- runMaybeT $ do
     edesc <- branchToErrorDescriptor funcLike bb
-    st <- lift $ analysisGet
-    let fs = errorFunctions st
     FunctionCall ecall _ <- liftMaybe $ F.find (isErrorFuncCall fs) (errorActions edesc)
     case errorReturns edesc of
       ReturnConstantPtr _ -> fail "Ptr return"
@@ -375,10 +374,9 @@ matchReturnAndGeneralizeAction :: (HasFunction funcLike, HasBlockReturns funcLik
                                -> BasicBlock
                                -> Analysis (Either SummaryType SummaryType)
 matchReturnAndGeneralizeAction funcLike s bb = do
+  ecodes <- learnedErrorCodes
   res <- runMaybeT $ do
     edesc <- branchToErrorDescriptor funcLike bb
-    st <- lift $ analysisGet
-    let ecodes = errorCodes st
     case errorReturns edesc of
       ReturnConstantPtr _ -> fail "Ptr return"
       ReturnConstantInt is
@@ -389,8 +387,9 @@ matchReturnAndGeneralizeAction funcLike s bb = do
               w = Witness ti ("Returned " ++ show is)
               d = edesc { errorWitnesses = [w] }
           singleFunc <- singleFunctionErrorAction (errorActions edesc)
-          lift $ analysisPut st { errorFunctions = S.insert singleFunc (errorFunctions st) }
-          return d
+          learnErrorFunction singleFunc
+          return d -- FIXME learn from d (the decomposition of the descriptor
+                   -- can be pushed down
   case res of
     Nothing -> return $ Left s
     Just d ->
@@ -404,6 +403,20 @@ singleFunctionErrorAction acts =
     [FunctionCall fname _] -> return fname
     _ -> fail "Not a singleton function call action"
 
+learnErrorFunction :: String -> MaybeT Analysis ()
+learnErrorFunction funcName = do
+  st <- lift analysisGet
+  let fs' = S.insert funcName (errorFunctions st)
+  lift $ analysisPut st { errorFunctions = fs' }
+
+-- | Return all of the error codes we have already learned.
+--
+-- NOTE: This is one place where we could filter out known "success codes".
+learnedErrorCodes :: Analysis (Set Int)
+learnedErrorCodes = liftM errorCodes analysisGet
+
+learnedErrorFunctions :: Analysis (Set String)
+learnedErrorFunctions = liftM errorFunctions analysisGet
 
 -- | In this case, the basic block is handling a known error and turning it
 -- into an integer return code (possibly while performing some other
@@ -575,7 +588,7 @@ reportsSuccess funcLike s bb
         -- error.  We also know that the value @rv@ is /always/ returned from
         -- this point, so we will conclude that @rv@ is a success code.
         False -> do
-          st <- lift $ analysisGet
+          st <- lift analysisGet
           let model = successModel st
               model' = HM.insertWith S.union f (S.singleton rv) model
           lift $ analysisPut st { successModel = model' }

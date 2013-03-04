@@ -281,7 +281,7 @@ addErrorDescriptor f s d =
 -- branches and cannot be returned here.
 addUncaughtErrors :: [SInt32 -> SBool] -> Int -> Set Int -> Set Int
 addUncaughtErrors priors rc acc
-  | isSat formula = S.insert rc acc
+  | not (null priors) && isSat formula = S.insert rc acc
   | otherwise = acc
   where
     formula (x :: SInt32) = x .== fromIntegral rc &&& bAll ($x) priors
@@ -442,6 +442,10 @@ handlesKnownError funcLike s bb -- See Note [Known Error Conditions]
     cdg = getCDG funcLike
     cfg = getCFG funcLike
 
+-- FIXME: Right now there is a single-predecessor restriction.  We could
+-- lift this restriction IF we do the check for ALL predecessors and if all
+-- agree that this is an error.  This is still simple to state.
+
 -- | For a given conditional branch (which is a control dependency of
 -- a block returning the constant @iv@), determine whether or not the
 -- condition is checking the return value of a function we know returns
@@ -468,7 +472,7 @@ checkForKnownErrorReturn funcLike bb (Left s) brInst = do
     (target, isErrHandlingFormula) <- targetOfErrorCheckBy s brInst
     let ifacts = relevantInducedFacts funcLike bb target
         formula (x :: SInt32) = isErrHandlingFormula x &&& bAll ($x) ifacts
-    case isSat formula of
+    case not (null ifacts) && isSat formula of
       -- This block is not handling an error
       False -> fail "Not handling an error"
       -- This block is handling an error and returning a constant, so figure
@@ -584,7 +588,7 @@ reportsSuccess funcLike s bb
       (target, isErrHandlingFormula) <- targetOfErrorCheckBy s brInst
       let ifacts = relevantInducedFacts funcLike bb target
           formula (x :: SInt32) = isErrHandlingFormula x &&& bAll ($x) ifacts
-      case isSat formula of
+      case not (null ifacts) && isSat formula of
         True -> fail "Not a success branch"
         -- In this block, some call that can return errors did /not/ return an
         -- error.  We also know that the value @rv@ is /always/ returned from

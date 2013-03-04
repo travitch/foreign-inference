@@ -256,19 +256,21 @@ returnsTransitiveError funcLike summ bb
     recordTransitiveError i priors s callee = do
       let w = Witness i "transitive error"
       fsumm <- lookupFunctionSummaryList (ErrorSummary s mempty) callee
-      return $ fromMaybe s $ do
+      maybe (return s) (addErrorDescriptor f s) $ do
         FAReportsErrors errActs eret <- F.find isErrRetAnnot fsumm
         rvs <- intReturnsToList eret
         -- See Note [Transitive Returns with Conditions]
         case null priors of
-          True ->
-            let d = ErrorDescriptor errActs eret [w]
-            in return $ HM.insertWith S.union f (S.singleton d) s
-          False ->
+          True -> return $! ErrorDescriptor errActs eret [w]
+          False -> do
             let rvs' = foldr (addUncaughtErrors priors) mempty rvs
-                d = ErrorDescriptor errActs (ReturnConstantInt rvs') [w]
-            in return $ HM.insertWith S.union f (S.singleton d) s
+            return $! ErrorDescriptor errActs (ReturnConstantInt rvs') [w]
 
+
+addErrorDescriptor :: Function -> SummaryType -> ErrorDescriptor
+                   -> Analysis SummaryType
+addErrorDescriptor f s d =
+  return $ HM.insertWith S.union f (S.singleton d) s `debug` show d
 
 -- | Check an error code @rc@ against all relevant conditions that are
 -- active at the current program point.  If @rc@ has not been handled
@@ -334,8 +336,8 @@ matchActionAndGeneralizeReturn funcLike s bb = do
     Just (d, is) -> do
       addDesc <- addGeneralizedFailReturn funcLike is
       case addDesc of
-        True -> return $ Right $! HM.insertWith S.union f (S.singleton d) s
-        False -> return $ Left $! HM.adjust (removeImprobableErrors d) f s
+        True -> liftM Right $ addErrorDescriptor f s d
+        False -> liftM Left $ removeImprobableErrors f s d
   where
     f = getFunction funcLike
 
@@ -392,8 +394,8 @@ matchReturnAndGeneralizeAction funcLike s bb = do
                    -- can be pushed down
   case res of
     Nothing -> return $ Left s
-    Just d ->
-      return $ Right $! HM.insertWith S.union f (S.singleton d) s
+    Just d -> liftM Right $ addErrorDescriptor f s d
+--      return $ Right $! HM.insertWith S.union f (S.singleton d) s
   where
     f = getFunction funcLike
 
@@ -485,25 +487,25 @@ checkForKnownErrorReturn funcLike bb (Left s) brInst = do
         False -> do
           learnErrorCodes d
           learnErrorActions d
-          return $ Right $! HM.insertWith S.union f (S.singleton d) s
-        True ->
-          return $ Left $! HM.adjust (removeImprobableErrors d) f s
+          liftM Right $ addErrorDescriptor f s d
+        True -> liftM Left $ removeImprobableErrors f s d
   where
     f = getFunction funcLike
 
-removeImprobableErrors :: ErrorDescriptor -> Set ErrorDescriptor -> Set ErrorDescriptor
-removeImprobableErrors (ErrorDescriptor _ (ReturnConstantInt dis) _) s =
-  S.foldr f mempty s
+removeImprobableErrors :: Function -> SummaryType -> ErrorDescriptor
+                       -> Analysis SummaryType
+removeImprobableErrors f s (ErrorDescriptor _ (ReturnConstantInt dis) _) =
+  return $ HM.adjust (S.foldr go mempty) f s
   where
-    f d@(ErrorDescriptor acts (ReturnConstantInt is) ws) acc
+    go d@(ErrorDescriptor acts (ReturnConstantInt is) ws) acc
       | S.null (S.intersection is dis) = S.insert d acc -- no overlap
       | is == dis = acc -- identical, just remove
       | otherwise = -- Some overlap, need to remove offending codes
         let consts' = S.difference is dis
             desc = ErrorDescriptor acts (ReturnConstantInt consts') ws
         in S.insert desc acc
-    f d acc = S.insert d acc
-removeImprobableErrors _ s = s
+    go d acc = S.insert d acc
+removeImprobableErrors _ s _ = return s
 
 -- | Only learn new error actions if the descriptor only includes a single
 -- error action

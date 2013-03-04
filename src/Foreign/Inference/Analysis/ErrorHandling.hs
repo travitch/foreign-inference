@@ -270,7 +270,7 @@ returnsTransitiveError funcLike summ bb
 addErrorDescriptor :: Function -> SummaryType -> ErrorDescriptor
                    -> Analysis SummaryType
 addErrorDescriptor f s d =
-  return $ HM.insertWith S.union f (S.singleton d) s `debug` show d
+  return $ HM.insertWith S.union f (S.singleton d) s
 
 -- | Check an error code @rc@ against all relevant conditions that are
 -- active at the current program point.  If @rc@ has not been handled

@@ -729,14 +729,18 @@ augmentFact mf val1 val2 p doNeg = do
       case mf of
         Nothing -> return $ \(x :: SInt32) -> doNeg (x `rel` iv)
         Just f -> return $ \(x :: SInt32) -> doNeg (x `rel` iv) &&& f x
+    (ConstantC ConstantPointerNull {}, _) ->
+      case mf of
+        Nothing -> return $ \(x :: SInt32) -> doNeg (0 `rel` x)
+        Just f -> return $ \(x :: SInt32) -> doNeg (0 `rel` x) &&& f x
+    (_, ConstantC ConstantPointerNull {}) ->
+      case mf of
+        Nothing -> return $ \(x :: SInt32) -> doNeg (x `rel` 0)
+        Just f -> return $ \(x :: SInt32) -> doNeg (x `rel` 0) &&& f x
     -- Not a comparison against a constant int, so we didn't learn anything.
     -- This is different from failure - we still had whatever information we
     -- had from before.
     _ -> mf
-
--- FIXME Handle nullptr cases here.
-
-
 
 cmpPredicateToRelation :: CmpPredicate -> Maybe (SInt32 -> SInt32 -> SBool)
 cmpPredicateToRelation p =

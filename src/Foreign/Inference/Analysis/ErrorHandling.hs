@@ -42,7 +42,7 @@ import Data.IntMap ( IntMap )
 import qualified Data.IntMap as IM
 import Data.List.NonEmpty ( NonEmpty(..) )
 import qualified Data.List.NonEmpty as NEL
-import Data.Maybe ( fromMaybe )
+import Data.Maybe ( fromMaybe, mapMaybe )
 import Data.Monoid
 import Data.SBV
 import Data.Set ( Set )
@@ -260,10 +260,10 @@ returnsTransitiveError funcLike summ bb
         FAReportsErrors errActs eret <- F.find isErrRetAnnot fsumm
         rvs <- intReturnsToList eret
         -- See Note [Transitive Returns with Conditions]
-        case null priors of
-          True -> return $! ErrorDescriptor errActs eret [w]
-          False -> do
-            let rvs' = foldr (addUncaughtErrors priors) mempty rvs
+        case priors of
+          Nothing -> return $! ErrorDescriptor errActs eret [w]
+          Just priors' -> do
+            let rvs' = foldr (addUncaughtErrors priors') mempty rvs
             return $! ErrorDescriptor errActs (ReturnConstantInt rvs') [w]
 
 
@@ -279,12 +279,12 @@ addErrorDescriptor f s d =
 --
 -- Effectively, this filters out codes that are handled by other
 -- branches and cannot be returned here.
-addUncaughtErrors :: [SInt32 -> SBool] -> Int -> Set Int -> Set Int
+addUncaughtErrors :: (SInt32 -> SBool) -> Int -> Set Int -> Set Int
 addUncaughtErrors priors rc acc
-  | not (null priors) && isSat formula = S.insert rc acc
+  | isSat formula = S.insert rc acc
   | otherwise = acc
   where
-    formula (x :: SInt32) = x .== fromIntegral rc &&& bAll ($x) priors
+    formula (x :: SInt32) = x .== fromIntegral rc &&& priors x
 
 intReturnsToList :: ErrorReturn -> Maybe [Int]
 intReturnsToList er =
@@ -395,7 +395,6 @@ matchReturnAndGeneralizeAction funcLike s bb = do
   case res of
     Nothing -> return $ Left s
     Just d -> liftM Right $ addErrorDescriptor f s d
---      return $ Right $! HM.insertWith S.union f (S.singleton d) s
   where
     f = getFunction funcLike
 
@@ -431,20 +430,13 @@ handlesKnownError :: (HasFunction funcLike, HasBlockReturns funcLike,
                   -> Analysis (Either SummaryType SummaryType)
 handlesKnownError funcLike s bb -- See Note [Known Error Conditions]
   | Just rv <- blockReturn brs bb
-  , Just _ <- singlePredecessor cfg bb
   , Just _ <- retValToConstantInt rv = do
     let termInst = basicBlockTerminatorInstruction bb
-        cdeps = controlDependencies cdg termInst
+        cdeps = controlDependencies funcLike termInst
     foldM (checkForKnownErrorReturn funcLike bb) (Left s) cdeps
   | otherwise = return $! Left s
   where
     brs = getBlockReturns funcLike
-    cdg = getCDG funcLike
-    cfg = getCFG funcLike
-
--- FIXME: Right now there is a single-predecessor restriction.  We could
--- lift this restriction IF we do the check for ALL predecessors and if all
--- agree that this is an error.  This is still simple to state.
 
 -- | For a given conditional branch (which is a control dependency of
 -- a block returning the constant @iv@), determine whether or not the
@@ -471,8 +463,9 @@ checkForKnownErrorReturn funcLike bb (Left s) brInst = do
   res <- runMaybeT $ do
     (target, isErrHandlingFormula) <- targetOfErrorCheckBy s brInst
     let ifacts = relevantInducedFacts funcLike bb target
-        formula (x :: SInt32) = isErrHandlingFormula x &&& bAll ($x) ifacts
-    case not (null ifacts) && isSat formula of
+    ifacts' <- liftMaybe ifacts
+    let formula (x :: SInt32) = isErrHandlingFormula x &&& ifacts' x
+    case isSat formula of
       -- This block is not handling an error
       False -> fail "Not handling an error"
       -- This block is handling an error and returning a constant, so figure
@@ -587,8 +580,9 @@ reportsSuccess funcLike s bb
       let brInst = basicBlockTerminatorInstruction spred
       (target, isErrHandlingFormula) <- targetOfErrorCheckBy s brInst
       let ifacts = relevantInducedFacts funcLike bb target
-          formula (x :: SInt32) = isErrHandlingFormula x &&& bAll ($x) ifacts
-      case not (null ifacts) && isSat formula of
+      ifacts' <- liftMaybe ifacts
+      let formula (x :: SInt32) = isErrHandlingFormula x &&& ifacts' x
+      case isSat formula of
         True -> fail "Not a success branch"
         -- In this block, some call that can return errors did /not/ return an
         -- error.  We also know that the value @rv@ is /always/ returned from
@@ -625,8 +619,7 @@ firstCallInst (v:vs) =
 
 -- | Produce a formula representing all of the facts we must hold up
 -- to this point.  The argument of the formula is the variable
--- representing the return value of the function we are interested in
--- (and is one of the two values passed in).
+-- representing the return value of the function we are interested in.
 --
 -- This is necessary to correctly handle conditions that are checked
 -- in multiple parts (or just compound conditions).  Note that the
@@ -670,56 +663,79 @@ relevantInducedFacts :: (HasFunction funcLike, HasBlockReturns funcLike,
                      => funcLike
                      -> BasicBlock
                      -> Instruction
-                     -> [SInt32 -> SBool]
-relevantInducedFacts funcLike bb0 target =
-  buildRelevantFacts bb0 []
+                     -> Maybe (SInt32 -> SBool)
+relevantInducedFacts funcLike bb0 target
+  | S.null cdeps = Nothing
+  | otherwise = buildRelevantFacts bb0 mempty Nothing
   where
-    cfg = getCFG funcLike
-    cdg = getCDG funcLike
-    ti = basicBlockTerminatorInstruction bb0
-    -- These are all conditional branch instructions
-    cdeps = S.fromList $ controlDependencies cdg ti
-    -- | Given that we are currently at @bb@, figure out how we got
-    -- here (and what condition must hold for that to be the case).
-    -- Do this by walking back in the CFG along unconditional edges
-    -- and stopping when we hit a block terminated by a branch in
-    -- @cdeps@ (a control-dependent branch).
-    --
-    -- If we ever reach a point where we have two predecessors, give
-    -- up since we don't know any more facts for sure.
-    buildRelevantFacts bb acc
-      | S.null cdeps = acc
-      | otherwise = fromMaybe acc $ do
-        singlePred <- singlePredecessor cfg bb
-        let br = basicBlockTerminatorInstruction singlePred
-        case br of
-          UnconditionalBranchInst {} ->
-            return $ buildRelevantFacts singlePred acc
-          bi@BranchInst { branchTrueTarget = tt
-                        , branchCondition = (valueContent' ->
-            InstructionC ICmpInst { cmpPredicate = p
-                                  , cmpV1 = val1
-                                  , cmpV2 = val2
-                                  })}
-            | not (S.member bi cdeps) -> Nothing
-            | ignoreCasts val1 == toValue target ||
-              ignoreCasts val2 == toValue target ->
+    ti0 = basicBlockTerminatorInstruction bb0
+    cdeps = S.fromList $ controlDependencies funcLike ti0
+    buildRelevantFacts bb visited f
+      | S.member bb visited = f
+      | otherwise =
+        let preds = basicBlockPredecessors funcLike bb
+            visited' = S.insert bb visited
+        in case preds of
+          -- No predecessors, we are done
+          [] -> f
+          -- If we have a single predecessor, we can take a bit of a shortcut
+          -- and avoid the extra 'bAny' wrapper
+          [singlePred] -> factBuilder bb visited' f singlePred
+          -- Otherwise, traverse "upward" in the CFG.  Each path backward
+          -- is a disjunct (see 'bAny').  We are checking if ANY path to this
+          -- point is handling an error.  We are not currently checking if that
+          -- path is feasible...
+          _ ->
+            case mapMaybe (factBuilder bb visited' f) preds of
+              [] -> Nothing
+              fs' -> Just $ \(x :: SInt32) -> bAny ($x) fs'
+    factBuilder bb visited f singlePred =
+      case basicBlockTerminatorInstruction singlePred of
+        UnconditionalBranchInst {} ->
+          buildRelevantFacts singlePred visited f
+        bi@BranchInst { branchTrueTarget = tt
+                      , branchCondition = (valueContent' ->
+          InstructionC ICmpInst { cmpPredicate = p
+                                , cmpV1 = val1
+                                , cmpV2 = val2
+                                })}
+          -- If the branch is not a control dependency, I suspect that
+          -- there shouldn't be be any more control dependencies in the
+          -- backward search.  However, I don't have a proof right now
+          -- and searching farther back isn't going to break anything.
+          | not (S.member bi cdeps) -> buildRelevantFacts singlePred visited f
+          | ignoreCasts val1 == toValue target ||
+            ignoreCasts val2 == toValue target ->
               let doNeg = if bb == tt then id else bnot
-                  fact' = augmentFact acc val1 val2 p doNeg
-              in return $ buildRelevantFacts singlePred fact'
-            | otherwise -> return $ buildRelevantFacts singlePred acc
-          _ -> Nothing
+                  fact' = augmentFact f val1 val2 p doNeg
+              in buildRelevantFacts singlePred visited fact'
+          | otherwise -> buildRelevantFacts singlePred visited f
+        _ -> f
 
-augmentFact :: [SInt32 -> SBool] -> Value -> Value -> CmpPredicate
-            -> (SBool -> SBool) -> [SInt32 -> SBool]
-augmentFact facts val1 val2 p doNeg = fromMaybe facts $ do
+-- | Given a formula that holds up to the current location @mf@, augment
+-- it by conjoining the new fact we are introducing (if any).  The new
+-- fact is derived from the relationship ('CmpPredicate') between the two
+-- 'Value' arguments.
+augmentFact :: Maybe (SInt32 -> SBool) -> Value -> Value -> CmpPredicate
+            -> (SBool -> SBool) -> Maybe (SInt32 -> SBool)
+augmentFact mf val1 val2 p doNeg = do
   rel <- cmpPredicateToRelation p
   case (valueContent' val1, valueContent' val2) of
     (ConstantC ConstantInt { constantIntValue = (fromIntegral -> iv) }, _) ->
-      return $ (\(x :: SInt32) -> doNeg (iv `rel` x)) : facts
+      case mf of
+        Nothing -> return $ \(x :: SInt32) -> doNeg (iv `rel` x)
+        Just f -> return $ \(x :: SInt32) -> doNeg (iv `rel` x) &&& f x
     (_, ConstantC ConstantInt { constantIntValue = (fromIntegral -> iv)}) ->
-      return $ (\(x :: SInt32) -> doNeg (x `rel` iv)) : facts
-    _ -> return facts
+      case mf of
+        Nothing -> return $ \(x :: SInt32) -> doNeg (x `rel` iv)
+        Just f -> return $ \(x :: SInt32) -> doNeg (x `rel` iv) &&& f x
+    -- Not a comparison against a constant int, so we didn't learn anything.
+    -- This is different from failure - we still had whatever information we
+    -- had from before.
+    _ -> mf
+
+-- FIXME Handle nullptr cases here.
+
 
 
 cmpPredicateToRelation :: CmpPredicate -> Maybe (SInt32 -> SInt32 -> SBool)
@@ -877,18 +893,15 @@ ignoreCasts v =
 {- Note [Known Error Conditions]
 
 We look for code handling known error conditions starting from basic blocks
-that return a constant int value (condition 1 and 3).  Furthermore, the block
-must have only a single predecessor in the CFG.  If it does not, we cannot know
-which branch control flow came from and thus we don't know which conditions
-*must* hold at the beginning of this block.  If we don't know the active
-conditions, then we can't tell if an error is really being checked for or not
-(and we'll probably just be checking a tautology for satisfiability, which
-isn't useful).
+that return a constant int value.  Blocks with more than one predecessor
+are handled by constructing a separate formula for each predecessor.  The
+formulas are disjuncts that are ORed together.  This composite formula is then
+checked with the "target error" formula (via AND).
 
-In theory I believe this could make us miss error handling paths where some
-optimization pass combines a few identical blocks.  However, that should
-probably not be especially common.  It is better to miss some error codes than
-to incorrectly report suprious error codes.
+This means that we are checking to see if an error MAY be checked from a given
+block, but that is actually sufficient for our purposes.  It still means that
+there is a path where an error is checked and then a constant integer is
+returned.
 
 -}
 

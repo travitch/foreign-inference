@@ -32,8 +32,7 @@ import GHC.Generics
 
 import Control.DeepSeq
 import Control.DeepSeq.Generics ( genericRnf )
-import Control.Monad ( foldM, liftM, mzero, when )
-import Control.Monad.Trans.Class
+import Control.Monad.State.Strict
 import Control.Monad.Trans.Maybe
 import qualified Data.Foldable as F
 import Data.HashMap.Strict ( HashMap )
@@ -42,7 +41,7 @@ import Data.IntMap ( IntMap )
 import qualified Data.IntMap as IM
 import Data.List.NonEmpty ( NonEmpty(..) )
 import qualified Data.List.NonEmpty as NEL
-import Data.Maybe ( fromMaybe, mapMaybe )
+import Data.Maybe ( catMaybes, fromMaybe )
 import Data.Monoid
 import Data.SBV
 import Data.Set ( Set )
@@ -53,6 +52,7 @@ import LLVM.Analysis
 import LLVM.Analysis.BlockReturnValue
 import LLVM.Analysis.CDG
 import LLVM.Analysis.CFG
+import LLVM.Analysis.Dominance
 
 import Foreign.Inference.AnalysisMonad
 import Foreign.Inference.Diagnostics
@@ -109,21 +109,23 @@ data ErrorState =
   ErrorState { errorCodes :: Set Int
              , errorFunctions :: Set String
              , successModel :: HashMap Function (Set Int)
+             , formulaCache :: HashMap (Function, BasicBlock, Instruction) (Maybe (SInt32 -> SBool))
              }
 
 instance Monoid ErrorState where
-  mempty = ErrorState mempty mempty mempty
-  mappend (ErrorState c1 f1 s1) (ErrorState c2 f2 s2) =
+  mempty = ErrorState mempty mempty mempty mempty
+  mappend (ErrorState c1 f1 s1 fc1) (ErrorState c2 f2 s2 fc2) =
     ErrorState { errorCodes = c1 `mappend` c2
                , errorFunctions = f1 `mappend` f2
                , successModel = HM.unionWith S.union s1 s2
+               , formulaCache = HM.union fc1 fc2
                }
 
 
 type Analysis = AnalysisMonad ErrorData ErrorState
 
 identifyErrorHandling :: (HasFunction funcLike, HasBlockReturns funcLike,
-                          HasCFG funcLike, HasCDG funcLike)
+                          HasCFG funcLike, HasCDG funcLike, HasDomTree funcLike)
                          => [funcLike]
                          -> DependencySummary
                          -> IndirectCallSummary
@@ -182,7 +184,7 @@ unifyReturnCodes = F.foldr1 unifyReturns . fmap errorReturns
 
 
 errorAnalysis :: (HasFunction funcLike, HasBlockReturns funcLike,
-                  HasCFG funcLike, HasCDG funcLike)
+                  HasCFG funcLike, HasCDG funcLike, HasDomTree funcLike)
               => SummaryType -> funcLike -> Analysis SummaryType
 errorAnalysis summ funcLike =
   foldM (errorsForBlock funcLike) summ (functionBody f)
@@ -191,7 +193,7 @@ errorAnalysis summ funcLike =
 
 -- | Find the error handling code in this block
 errorsForBlock :: (HasFunction funcLike, HasBlockReturns funcLike,
-                   HasCFG funcLike, HasCDG funcLike)
+                   HasCFG funcLike, HasCDG funcLike, HasDomTree funcLike)
                => funcLike
                -> SummaryType
                -> BasicBlock
@@ -235,7 +237,7 @@ errorsForBlock funcLike s bb = do
 -- must be returned.  See the 'relevantInducedFacts' function for
 -- details.
 returnsTransitiveError :: (HasFunction funcLike, HasBlockReturns funcLike,
-                           HasCFG funcLike, HasCDG funcLike)
+                           HasCFG funcLike, HasCDG funcLike, HasDomTree funcLike)
                        => funcLike
                        -> SummaryType
                        -> BasicBlock
@@ -245,8 +247,8 @@ returnsTransitiveError funcLike summ bb
     ics <- analysisEnvironment indirectCallSummary
     case ignoreCasts rv of
       InstructionC i@CallInst { callFunction = callee } -> do
-        let priorFacts = relevantInducedFacts funcLike bb i
-            callees = callTargets ics callee
+        let callees = callTargets ics callee
+        priorFacts <- relevantInducedFacts funcLike bb i
         liftM Right $ foldM (recordTransitiveError i priorFacts) summ callees
       _ -> return (Left summ)
   | otherwise = return (Left summ)
@@ -423,7 +425,7 @@ learnedErrorFunctions = liftM errorFunctions analysisGet
 -- into an integer return code (possibly while performing some other
 -- relevant error-reporting actions).
 handlesKnownError :: (HasFunction funcLike, HasBlockReturns funcLike,
-                      HasCFG funcLike, HasCDG funcLike)
+                      HasCFG funcLike, HasCDG funcLike, HasDomTree funcLike)
                   => funcLike
                   -> SummaryType
                   -> BasicBlock
@@ -450,7 +452,7 @@ handlesKnownError funcLike s bb -- See Note [Known Error Conditions]
 -- to the conditional check....
 --
 -- Note that we take the first (nearest) checked error we find.
-checkForKnownErrorReturn :: (HasFunction funcLike, HasCFG funcLike,
+checkForKnownErrorReturn :: (HasFunction funcLike, HasCFG funcLike, HasDomTree funcLike,
                              HasCDG funcLike, HasBlockReturns funcLike)
                          => funcLike
                          -> BasicBlock
@@ -462,7 +464,7 @@ checkForKnownErrorReturn _ _ acc@(Right _) _ = return acc
 checkForKnownErrorReturn funcLike bb (Left s) brInst = do
   res <- runMaybeT $ do
     (target, isErrHandlingFormula) <- targetOfErrorCheckBy s brInst
-    let ifacts = relevantInducedFacts funcLike bb target
+    ifacts <- lift $ relevantInducedFacts funcLike bb target
     ifacts' <- liftMaybe ifacts
     let formula (x :: SInt32) = isErrHandlingFormula x &&& ifacts' x
     case isSat formula of
@@ -568,7 +570,7 @@ targetOfErrorCheckBy s i = do
 -- See tests/error-handling/reused-error-reporter.c for an example where this
 -- is critical.
 reportsSuccess :: (HasFunction funcLike, HasBlockReturns funcLike,
-                   HasCFG funcLike, HasCDG funcLike)
+                   HasCFG funcLike, HasCDG funcLike, HasDomTree funcLike)
                => funcLike
                -> SummaryType
                -> BasicBlock
@@ -579,7 +581,7 @@ reportsSuccess funcLike s bb
     res <- runMaybeT $ do
       let brInst = basicBlockTerminatorInstruction spred
       (target, isErrHandlingFormula) <- targetOfErrorCheckBy s brInst
-      let ifacts = relevantInducedFacts funcLike bb target
+      ifacts <- lift $ relevantInducedFacts funcLike bb target
       ifacts' <- liftMaybe ifacts
       let formula (x :: SInt32) = isErrHandlingFormula x &&& ifacts' x
       case isSat formula of
@@ -659,88 +661,119 @@ firstCallInst (v:vs) =
 -- Both of these are unsat, which is what we want (since the second
 -- condition isn't checking an error).
 relevantInducedFacts :: (HasFunction funcLike, HasBlockReturns funcLike,
-                         HasCFG funcLike, HasCDG funcLike)
+                         HasCFG funcLike, HasCDG funcLike, HasDomTree funcLike)
                      => funcLike
                      -> BasicBlock
                      -> Instruction
-                     -> Maybe (SInt32 -> SBool)
-relevantInducedFacts funcLike bb0 target
-  | S.null cdeps = Nothing
-  | otherwise = buildRelevantFacts bb0 mempty Nothing
+                     -> Analysis (Maybe (SInt32 -> SBool))
+relevantInducedFacts funcLike bb0 target = do
+  st <- analysisGet
+  case HM.lookup (f, bb0, target) (formulaCache st) of
+    Just formula -> return formula
+    Nothing -> do
+      let formula = evalState (computeInducedFacts funcLike bb0 target) (mempty, mempty)
+      analysisPut st { formulaCache = HM.insert (f, bb0, target) formula (formulaCache st) }
+      return formula
+  where
+    f = getFunction funcLike
+
+type FormulaBuilder = State (Set Instruction, HashMap (BasicBlock, Instruction) (Maybe (SInt32 -> SBool)))
+
+computeInducedFacts :: (HasFunction funcLike, HasBlockReturns funcLike,
+                        HasCFG funcLike, HasCDG funcLike, HasDomTree funcLike)
+                    => funcLike
+                    -> BasicBlock
+                    -> Instruction
+                    -> FormulaBuilder (Maybe (SInt32 -> SBool))
+computeInducedFacts funcLike bb0 target
+  | S.null cdeps = return Nothing
+  | otherwise = buildRelevantFacts bb0
   where
     ti0 = basicBlockTerminatorInstruction bb0
     cdeps = S.fromList $ controlDependencies funcLike ti0
-    buildRelevantFacts bb visited f
-      | S.member bb visited = f
+    buildRelevantFacts bb
       | otherwise =
-        let preds = basicBlockPredecessors funcLike bb
-            visited' = S.insert bb visited
-        in case preds of
-          -- No predecessors, we are done
-          [] -> f
-          -- If we have a single predecessor, we can take a bit of a shortcut
-          -- and avoid the extra 'bAny' wrapper
-          [singlePred] -> factBuilder bb visited' f singlePred
-          -- Otherwise, traverse "upward" in the CFG.  Each path backward
-          -- is a disjunct (see 'bAny').  We are checking if ANY path to this
-          -- point is handling an error.  We are not currently checking if that
-          -- path is feasible...
-          _ ->
-            case mapMaybe (factBuilder bb visited' f) preds of
-              [] -> Nothing
-              fs' -> Just $ \(x :: SInt32) -> bAny ($x) fs'
-    factBuilder bb visited f singlePred =
-      case basicBlockTerminatorInstruction singlePred of
-        UnconditionalBranchInst {} ->
-          buildRelevantFacts singlePred visited f
-        bi@BranchInst { branchTrueTarget = tt
-                      , branchCondition = (valueContent' ->
+        let ti = basicBlockTerminatorInstruction bb
+            dirCdeps = directControlDependencies funcLike ti
+        in case dirCdeps of
+          [] -> return Nothing
+          [singleDep] -> memoBuilder bb singleDep
+          _ -> do
+            fs <- mapM (memoBuilder bb) dirCdeps
+            case catMaybes fs of
+              [] -> return Nothing
+              fs' -> return $ Just $ \(x :: SInt32) -> bAny ($x) fs'
+
+    memoBuilder :: BasicBlock -> Instruction
+                -> FormulaBuilder (Maybe (SInt32 -> SBool))
+    memoBuilder bb cdep = do
+      (visited, s) <- get
+      case HM.lookup (bb, cdep) s of
+        Just f -> return f
+        Nothing ->
+          case S.member cdep visited of
+            True -> return Nothing
+            False -> do
+              put (S.insert cdep visited, s)
+              factBuilder bb cdep
+    factBuilder :: BasicBlock -> Instruction
+                -> FormulaBuilder (Maybe (SInt32 -> SBool))
+    factBuilder bb cdep = do
+      let Just cdepBlock = instructionBasicBlock cdep
+      case cdep of
+        BranchInst { branchTrueTarget = tt
+                   , branchCondition = (valueContent' ->
           InstructionC ICmpInst { cmpPredicate = p
                                 , cmpV1 = val1
                                 , cmpV2 = val2
                                 })}
-          -- If the branch is not a control dependency, I suspect that
-          -- there shouldn't be be any more control dependencies in the
-          -- backward search.  However, I don't have a proof right now
-          -- and searching farther back isn't going to break anything.
-          | not (S.member bi cdeps) -> buildRelevantFacts singlePred visited f
-          | ignoreCasts val1 == toValue target ||
-            ignoreCasts val2 == toValue target ->
-              let doNeg = if bb == tt then id else bnot
-                  fact' = augmentFact f val1 val2 p doNeg
-              in buildRelevantFacts singlePred visited fact'
-          | otherwise -> buildRelevantFacts singlePred visited f
-        _ -> f
+            | ignoreCasts val1 == toValue target ||
+              ignoreCasts val2 == toValue target -> do
+                let doNeg = if blockDominates funcLike tt bb then id else bnot
+                    thisFact = inducedFact val1 val2 p doNeg
+                innerFact <- buildRelevantFacts cdepBlock
+                let fact' = liftedConjoin thisFact innerFact
+                (vis, st) <- get
+                put $ (vis, HM.insert (bb, cdep) fact' st)
+                return fact'
+            | otherwise -> buildRelevantFacts cdepBlock
+        _ -> return Nothing
+
+
+liftedConjoin :: Maybe (SInt32 -> SBool) -> Maybe (SInt32 -> SBool)
+              -> Maybe (SInt32 -> SBool)
+liftedConjoin Nothing Nothing = Nothing
+liftedConjoin f1@(Just _) Nothing = f1
+liftedConjoin Nothing f2@(Just _) = f2
+liftedConjoin (Just f1) (Just f2) = Just $ \(x :: SInt32) -> f1 x &&& f2 x
+
+blockDominates :: (HasDomTree t) => t -> BasicBlock -> BasicBlock -> Bool
+blockDominates f b1 b2 = dominates f i1 i2
+  where
+    i1 = basicBlockTerminatorInstruction b1
+    i2 = basicBlockTerminatorInstruction b2
 
 -- | Given a formula that holds up to the current location @mf@, augment
 -- it by conjoining the new fact we are introducing (if any).  The new
 -- fact is derived from the relationship ('CmpPredicate') between the two
 -- 'Value' arguments.
-augmentFact :: Maybe (SInt32 -> SBool) -> Value -> Value -> CmpPredicate
+inducedFact :: Value -> Value -> CmpPredicate
             -> (SBool -> SBool) -> Maybe (SInt32 -> SBool)
-augmentFact mf val1 val2 p doNeg = do
+inducedFact val1 val2 p doNeg = do
   rel <- cmpPredicateToRelation p
   case (valueContent' val1, valueContent' val2) of
     (ConstantC ConstantInt { constantIntValue = (fromIntegral -> iv) }, _) ->
-      case mf of
-        Nothing -> return $ \(x :: SInt32) -> doNeg (iv `rel` x)
-        Just f -> return $ \(x :: SInt32) -> doNeg (iv `rel` x) &&& f x
+      return $ \(x :: SInt32) -> doNeg (iv `rel` x)
     (_, ConstantC ConstantInt { constantIntValue = (fromIntegral -> iv)}) ->
-      case mf of
-        Nothing -> return $ \(x :: SInt32) -> doNeg (x `rel` iv)
-        Just f -> return $ \(x :: SInt32) -> doNeg (x `rel` iv) &&& f x
+      return $ \(x :: SInt32) -> doNeg (x `rel` iv)
     (ConstantC ConstantPointerNull {}, _) ->
-      case mf of
-        Nothing -> return $ \(x :: SInt32) -> doNeg (0 `rel` x)
-        Just f -> return $ \(x :: SInt32) -> doNeg (0 `rel` x) &&& f x
+      return $ \(x :: SInt32) -> doNeg (0 `rel` x)
     (_, ConstantC ConstantPointerNull {}) ->
-      case mf of
-        Nothing -> return $ \(x :: SInt32) -> doNeg (x `rel` 0)
-        Just f -> return $ \(x :: SInt32) -> doNeg (x `rel` 0) &&& f x
+      return $ \(x :: SInt32) -> doNeg (x `rel` 0)
     -- Not a comparison against a constant int, so we didn't learn anything.
     -- This is different from failure - we still had whatever information we
     -- had from before.
-    _ -> mf
+    _ -> fail "Cannot produce a fact here"
 
 cmpPredicateToRelation :: CmpPredicate -> Maybe (SInt32 -> SInt32 -> SBool)
 cmpPredicateToRelation p =

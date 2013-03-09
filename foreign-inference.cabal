@@ -17,10 +17,10 @@ data-files: stdlibs/*.json,
             static/jquery.snippet.js,
             static/highlight.js
 
-description: This is a smarter automatic binding generator.  It uses
-             program analysis to infer most of the annotations that would
-             normally be required for such a tool.  The analysis frontend
-             is IIGlue.  A python ctypes code generator is included: IIGen.
+description: This package implements analyses over LLVM bitcode to support
+             advanced automated library binding generation.  Frontends to
+             drive this analysis and consume its results are available in the
+             iiglue package.
 
 flag Relocate
   description: Embed static resources in the binary

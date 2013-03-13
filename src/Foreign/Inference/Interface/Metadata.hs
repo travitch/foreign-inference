@@ -258,17 +258,18 @@ functionReturnMetaUnsigned f =
     _ -> False
 
 functionReturnTypeMetadata :: Function -> Maybe Metadata
-functionReturnTypeMetadata f =
-  case functionMetadata f of
-    [] -> Nothing
-    [MetaDWSubprogram { metaSubprogramType = Just ftype }] ->
-      case ftype of
-        MetaDWCompositeType { metaCompositeTypeMembers = Just ms } ->
-          case ms of
-            MetadataList _ (rt : _) -> rt
-            _ -> Nothing
-        _ -> Nothing
-    _ -> Nothing
+functionReturnTypeMetadata f = do
+  MetaDWSubprogram { metaSubprogramType =
+    Just (MetaDWCompositeType { metaCompositeTypeMembers = Just ms }) } <- singleMetadata f
+  case ms of
+    MetadataList _ (rt : _) -> rt
+    _ -> fail "Invalid metadata"
+
+singleMetadata :: (IsValue v) => v -> Maybe Metadata
+singleMetadata v =
+  case valueMetadata v of
+    [md] -> return md
+    _ -> fail "Not a single metadata value"
 
 type TypeGraph = SparseDigraph (Type, Metadata) ()
 

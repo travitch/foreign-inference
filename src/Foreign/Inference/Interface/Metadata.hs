@@ -217,59 +217,47 @@ structMemberToCType t = case t of
 
 paramMetaUnsigned :: Argument -> Bool
 paramMetaUnsigned a =
-  case argumentMetadata a of
-    [] -> False
-    [MetaDWLocal { metaLocalType = Just mt }] ->
-      case mt of
-        MetaDWBaseType { metaBaseTypeEncoding = DW_ATE_unsigned } -> True
-        MetaDWDerivedType { metaDerivedTypeParent = Just baseType } ->
-          case baseType of
-            MetaDWBaseType { metaBaseTypeEncoding = DW_ATE_unsigned } -> True
-            _ -> False
-        _ -> False
-    _ -> False
+  fromMaybe False $ takeFirst (argumentMetadata a) $ \md -> do
+    MetaDWLocal { metaLocalType = Just lt } <- return md
+    case lt of
+      MetaDWBaseType { metaBaseTypeEncoding = DW_ATE_unsigned } -> return True
+      MetaDWDerivedType { metaDerivedTypeParent = Just baseType } ->
+        case baseType of
+          MetaDWBaseType { metaBaseTypeEncoding = DW_ATE_unsigned } -> return True
+          _ -> fail "Not unsigned"
+      _ -> fail "Not unsigned"
 
+takeFirst :: [b] -> (b -> Maybe a) -> Maybe a
+takeFirst [] _ = Nothing
+takeFirst (x:xs) f =
+  case f x of
+    Nothing -> takeFirst xs f
+    j -> j
 
 paramTypeMetadata :: Argument -> Maybe Metadata
 paramTypeMetadata a =
-  case argumentMetadata a of
-    [] -> Nothing
-    [MetaDWLocal { metaLocalType = mt }] -> mt
-    _ -> Nothing
+  takeFirst (argumentMetadata a) $ \md -> do
+    MetaDWLocal { metaLocalType = lt } <- return md
+    lt
 
 functionReturnMetaUnsigned :: Function -> Bool
 functionReturnMetaUnsigned f =
-  case functionMetadata f of
-    [] -> False
-    [MetaDWSubprogram { metaSubprogramType = Just ftype }] ->
-      case ftype of
-        MetaDWCompositeType { metaCompositeTypeMembers = Just ms } ->
-          case ms of
-            MetadataList _ (Just rt : _) ->
-              case rt of
-                MetaDWDerivedType { metaDerivedTypeParent = Just baseType } ->
-                  case baseType of
-                    MetaDWBaseType { metaBaseTypeEncoding = DW_ATE_unsigned } -> True
-                    _ -> False
-                MetaDWBaseType { metaBaseTypeEncoding = DW_ATE_unsigned } -> True
-                _ -> False
-            _ -> False
-        _ -> False
-    _ -> False
+  fromMaybe False $ takeFirst (functionMetadata f) $ \md -> do
+    MetaDWSubprogram { metaSubprogramType = ftype } <- return md
+    MetaDWCompositeType { metaCompositeTypeMembers = ms } <- ftype
+    MetadataList _ (Just rt : _) <- ms
+    case rt of
+      MetaDWDerivedType { metaDerivedTypeParent =
+        Just MetaDWBaseType { metaBaseTypeEncoding = DW_ATE_unsigned }} -> return True
+      MetaDWBaseType { metaBaseTypeEncoding = DW_ATE_unsigned } -> return True
+      _ -> fail "Not unsigned"
 
 functionReturnTypeMetadata :: Function -> Maybe Metadata
-functionReturnTypeMetadata f = do
+functionReturnTypeMetadata f = takeFirst (functionMetadata f) $ \md -> do
   MetaDWSubprogram { metaSubprogramType =
-    Just (MetaDWCompositeType { metaCompositeTypeMembers = Just ms }) } <- singleMetadata f
-  case ms of
-    MetadataList _ (rt : _) -> rt
-    _ -> fail "Invalid metadata"
-
-singleMetadata :: (IsValue v) => v -> Maybe Metadata
-singleMetadata v =
-  case valueMetadata v of
-    [md] -> return md
-    _ -> fail "Not a single metadata value"
+    Just (MetaDWCompositeType { metaCompositeTypeMembers =
+      Just (MetadataList _ (rt : _)) }) } <- return md
+  rt
 
 type TypeGraph = SparseDigraph (Type, Metadata) ()
 

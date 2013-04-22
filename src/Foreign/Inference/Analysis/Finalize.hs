@@ -163,10 +163,6 @@ finalizerAnalysis funcLike s@(FinalizerSummary summ _) = do
       fact0 = FinalizerInfo mempty mempty
       analysis = fwdDataflowEdgeAnalysis top meet finalizerTransfer finalizerEdgeTransfer
 
-  -- FIXME: This is no longer correct and will require some SMT help
-  -- to find null branches properly.  Alternative, push that down into
-  -- a sub-analysis that identifies parameters known to be NULL, which would
-  -- also be useful for the nullability analysis.
   funcInfo <- analysisLocal envMod (forwardDataflow funcLike analysis fact0)
 
   let FinalizerInfo finalized witnesses = dataflowResult funcInfo

@@ -20,6 +20,8 @@ module Foreign.Inference.Analysis.Output (
   -- * Interface
   OutputSummary,
   identifyOutput,
+  OutAnalysisConfig(..),
+  defaultOutAnalysisConfig,
 
   -- * Testing
   outputSummaryToTestFormat
@@ -31,11 +33,11 @@ import Control.Arrow ( (&&&), second )
 import Control.DeepSeq
 import Control.DeepSeq.Generics ( genericRnf )
 import Control.Lens ( Lens', makeLenses, lens, set, view, (%~), (^.) )
-import Control.Monad ( foldM )
+import Control.Monad ( foldM, guard )
 import Data.List ( find, groupBy )
 import Data.Map ( Map )
 import qualified Data.Map as M
-import Data.Maybe ( mapMaybe )
+import Data.Maybe ( fromMaybe, mapMaybe )
 import Data.Monoid
 import Data.Set ( Set )
 import qualified Data.Set as S
@@ -163,17 +165,23 @@ data OutData = OD { moduleSummary :: OutputSummary
                   , escapeSummary :: EscapeSummary
                   }
 
+defaultOutAnalysisConfig :: OutAnalysisConfig
+defaultOutAnalysisConfig = OAC False
+
+data OutAnalysisConfig = OAC { trivialBlockHack :: Bool }
+
 -- | Note that array parameters are not out parameters, so we rely on
 -- the Array analysis to let us filter those parameters out of our
 -- results.
 identifyOutput :: forall compositeSummary funcLike . (FuncLike funcLike, HasCFG funcLike, HasFunction funcLike)
-                  => DependencySummary
+                  => OutAnalysisConfig
+                  -> DependencySummary
                   -> Lens' compositeSummary OutputSummary
                   -> Lens' compositeSummary AllocatorSummary
                   -> Lens' compositeSummary EscapeSummary
                   -> ComposableAnalysis compositeSummary funcLike
-identifyOutput ds lns allocLens escapeLens =
-  composableDependencyAnalysisM runner outAnalysis lns depLens
+identifyOutput conf ds lns allocLens escapeLens =
+  composableDependencyAnalysisM runner (outAnalysis conf) lns depLens
   where
     runner a = runAnalysis a ds constData ()
     constData = OD mempty undefined undefined
@@ -223,16 +231,17 @@ meetOutInfo (OI m1 mf1) (OI m2 mf2) =
 type Analysis = AnalysisMonad OutData ()
 
 outAnalysis :: (FuncLike funcLike, HasFunction funcLike, HasCFG funcLike)
-               => (AllocatorSummary, EscapeSummary)
+               => OutAnalysisConfig
+               -> (AllocatorSummary, EscapeSummary)
                -> funcLike
                -> OutputSummary
                -> Analysis OutputSummary
-outAnalysis (allocSumm, escSumm) funcLike s = do
+outAnalysis conf (allocSumm, escSumm) funcLike s = do
   let envMod e = e { moduleSummary = s
                    , allocatorSummary = allocSumm
                    , escapeSummary = escSumm
                    }
-      analysis = dataflowAnalysis top meetOutInfo outTransfer
+      analysis = dataflowAnalysis top meetOutInfo (outTransfer conf)
   funcInfo <- analysisLocal envMod (forwardDataflow funcLike analysis top)
   let OI exitInfo fexitInfo = dataflowResult funcInfo
       exitInfo' = M.map (second S.toList) exitInfo
@@ -269,8 +278,8 @@ isAllocatedValue storeInst calledFunc callInst = do
 -- Note, we don't use valueContent' to strip bitcasts here since
 -- accesses to bitfields use lots of interesting bitcasts and give us
 -- false positives.
-outTransfer :: OutInfo -> Instruction -> Analysis OutInfo
-outTransfer info i =
+outTransfer :: OutAnalysisConfig -> OutInfo -> Instruction -> Analysis OutInfo
+outTransfer conf info i =
   case i of
     LoadInst { loadAddress = (valueContent -> ArgumentC ptr) } ->
       return $! merge outputInfo i ptr ArgIn info
@@ -325,7 +334,83 @@ outTransfer info i =
     InvokeInst { invokeFunction = f, invokeArguments = args }->
       callTransfer info i f (map fst args)
 
+    BranchInst { branchTrueTarget = tt
+               , branchFalseTarget = ft
+               , branchCondition = (valueContent ->
+      InstructionC ICmpInst { cmpV1 = v1, cmpV2 = v2
+                            , cmpPredicate = p })} ->
+        branchTransfer conf info i tt ft v1 v2 p
+
     _ -> return info
+
+-- | The transfer function for branch instructions.  This has some special
+-- handling of some interesting cases.  See Note [Pointers In Conditions]
+branchTransfer :: OutAnalysisConfig
+               -> OutInfo
+               -> Instruction
+               -> BasicBlock
+               -> BasicBlock
+               -> Value
+               -> Value
+               -> CmpPredicate
+               -> Analysis OutInfo
+branchTransfer conf info i tt ft v1 v2 p
+  | trivialBlockHack conf && trivialNotNullBlock tt ft v1 v2 p = return info
+  | otherwise =
+    let args = mapMaybe fromValue [v1, v2]
+    in return $ foldr (\x -> merge outputInfo i x ArgIn) info args
+
+trivialNotNullBlock :: BasicBlock
+                    -> BasicBlock
+                    -> Value
+                    -> Value
+                    -> CmpPredicate
+                    -> Bool
+trivialNotNullBlock tt ft v1 v2 p = fromMaybe False $ do
+  (bb, a) <- argumentAndNotNullBlock tt ft v1 v2 p
+  -- To be a trivial block, the basic block @bb@ must have no function calls
+  -- and only one store (and that must be to a).
+  let (noCalls, storeToA, nStores) = foldr (trivialTestTransfer a) (True, False, 0) (basicBlockInstructions bb)
+  guard (noCalls && storeToA && nStores == 1)
+  return True
+
+trivialTestTransfer :: Argument
+                    -> Instruction
+                    -> (Bool, Bool, Int)
+                    -> (Bool, Bool, Int)
+trivialTestTransfer a i acc@(noCalls, storeToA, nStores) =
+  case i of
+    CallInst {} -> (False, storeToA, nStores)
+    InvokeInst {} -> (False, storeToA, nStores)
+    StoreInst { storeAddress = (valueContent' -> ArgumentC sa) }
+      | sa == a -> (noCalls, True, nStores + 1)
+      | otherwise -> (noCalls, storeToA, nStores + 1)
+    _ -> acc
+
+-- | Return the input value that is not a constantpointernull, but fail
+-- if /neither/ value is a constantpointernull.
+argumentAndNotNullBlock :: BasicBlock
+                        -> BasicBlock
+                        -> Value
+                        -> Value
+                        -> CmpPredicate
+                        -> Maybe (BasicBlock, Argument)
+argumentAndNotNullBlock tt ft v1 v2 p =
+  case (valueContent' v1, valueContent' v2) of
+    (ConstantC ConstantPointerNull {}, ConstantC ConstantPointerNull {}) -> Nothing
+    (ConstantC ConstantPointerNull {}, ArgumentC a) ->
+      case p of
+        ICmpNe -> return (ft, a)
+        ICmpEq -> return (tt, a)
+        _ -> Nothing
+    (ArgumentC a, ConstantC ConstantPointerNull {}) ->
+      case p of
+        ICmpNe -> return (ft, a)
+        ICmpEq -> return (tt, a)
+        _ -> Nothing
+    _ -> Nothing
+
+
 
 isMemcpy :: Value -> Bool
 isMemcpy v =
@@ -477,3 +562,34 @@ outputSummaryToTestFormat (OutputSummary s sf _) =
         Just annot ->
           let nv = S.singleton (argName, annot)
           in M.insertWith' S.union funcName nv acc
+
+{- Note [Pointers In Conditions]
+
+Reading the value of a pointer (the address - not the value in the location
+pointed to) makes the pointer an input pointer.  This is because passing in
+a non-NULL pointer offers different behavior compared to passing in a NULL
+pointer.  Users have control over what action is taken.
+
+This poses a slight problem for some parameters that we might want to treat
+as output parameters:
+
+> void foo(int *f) {
+>   if(f) {
+>     *f = x->y->z;
+>   }
+> }
+
+According to the above algorithm, @f@ is an in/out parameter.  With the
+@trivialBlockHack@ (which defaults to off), this example is treated as an
+output paramter.  The trivial block hack says that a pointer parameter in a
+conditional is *not* an input parameter iff the successor block in which it is
+not null is /trivial/.  Here, trivial is defined as executing no side effects
+besides the assignment through @f@.
+
+With this definition, any side effects guarded by an out parameter are
+preserved and the out parameter becomes in/out.  In this restricted case,
+we allow an exception because we can safely allocate storage and lose nothing
+by automating the process.
+
+-}
+

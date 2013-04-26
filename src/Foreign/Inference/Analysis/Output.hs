@@ -419,6 +419,10 @@ isMemcpy v =
       show fname == "@llvm.memcpy.p0i8.p0i8.i32" || show fname == "@llvm.memcpy.p0i8.p0i8.i64"
     _ -> False
 
+
+-- | A broken out transfer function for calls.  This deals with traversing
+-- the list of arguments in a reasonable way to correctly handle argument
+-- aliasing.  See Note [Argument Aliasing]
 callTransfer :: OutInfo -> Instruction -> Value -> [Value] -> Analysis OutInfo
 callTransfer info i f args = do
   let indexedArgs = zip [0..] args
@@ -426,9 +430,19 @@ callTransfer info i f args = do
   case (isMemcpy f, args) of
     (True, [dest, src, bytes, _, _]) ->
       memcpyTransfer info i dest src bytes
-    _ -> foldM (checkArg modSumm) info indexedArgs
+    _ -> do
+      info' <- foldM (checkInArg modSumm) info indexedArgs
+      foldM (checkOutArg modSumm) info' indexedArgs
   where
-    checkArg ms acc (ix, arg) =
+    checkInArg ms acc (ix, arg) =
+      case valueContent' arg of
+        ArgumentC a -> do
+          attrs <- lookupArgumentSummaryList ms f ix
+          case find isAnyOut attrs of
+            Just _ -> return acc
+            Nothing -> return $ merge outputInfo i a ArgIn acc
+        _ -> return acc
+    checkOutArg ms acc (ix, arg) =
       case valueContent' arg of
         ArgumentC a -> do
           attrs <- lookupArgumentSummaryList ms f ix
@@ -443,6 +457,11 @@ callTransfer info i f args = do
                 Just _ -> return $! merge outputInfo i a ArgIn acc
                 Nothing -> return $! merge outputInfo i a ArgIn acc
         _ -> return acc
+
+isAnyOut :: ParamAnnotation -> Bool
+isAnyOut (PAOutAlloc _) = True
+isAnyOut PAOut = True
+isAnyOut _ = False
 
 isOutAllocAnnot :: ParamAnnotation -> Bool
 isOutAllocAnnot (PAOutAlloc _) = True
@@ -590,6 +609,28 @@ With this definition, any side effects guarded by an out parameter are
 preserved and the out parameter becomes in/out.  In this restricted case,
 we allow an exception because we can safely allocate storage and lose nothing
 by automating the process.
+
+-}
+
+{- Note [Argument Aliasing]
+
+Aliased arguments require delicate treatment.  Consider a call like
+
+> callee(param1, param1);
+
+where the first parameter of callee is an output parameter and the second
+is an input parameter.  If we just processed the arguments left-to-right,
+param1 would become an output parameter (since OUT `meet` IN is OUT).  However,
+that isn't quite right.  It is used as an input parameter to @callee@, so
+it should really be IN/OUT.  We want to treat all of the effects of @callee@ as
+happening simultaneously.
+
+We can do that by first checking to see if any arguments are used as input
+parameters.  Then process the argument list again to look for output
+parameters, performing the standard merge operation.  We could add another
+pre-pass for IN/OUT parameters as well.
+
+See test output/aliasedParameterOut.c
 
 -}
 

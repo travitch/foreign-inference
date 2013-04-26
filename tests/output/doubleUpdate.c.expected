@@ -1,1 +1,1 @@
-fromList [ ("@f", fromList [("%out", PAOut)]) ]
+fromList [ ("@f", fromList [("%out", PAInOut)]) ]

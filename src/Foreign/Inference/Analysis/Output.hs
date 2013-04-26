@@ -1,5 +1,6 @@
 {-# LANGUAGE RankNTypes, ScopedTypeVariables #-}
 {-# LANGUAGE ViewPatterns, DeriveGeneric, TemplateHaskell #-}
+{-# LANGUAGE PatternGuards #-}
 -- | This analysis identifies output parameters.
 --
 -- Output parameters are those pointer parameters whose target memory
@@ -33,7 +34,7 @@ import Control.Arrow ( (&&&), second )
 import Control.DeepSeq
 import Control.DeepSeq.Generics ( genericRnf )
 import Control.Lens ( Lens', makeLenses, lens, set, view, (%~), (^.) )
-import Control.Monad ( foldM, guard )
+import Control.Monad ( foldM )
 import Data.List ( find, groupBy )
 import Data.Map ( Map )
 import qualified Data.Map as M
@@ -370,9 +371,8 @@ trivialNotNullBlock tt ft v1 v2 p = fromMaybe False $ do
   (bb, a) <- argumentAndNotNullBlock tt ft v1 v2 p
   -- To be a trivial block, the basic block @bb@ must have no function calls
   -- and only one store (and that must be to a).
-  let (noCalls, storeToA, nStores) = foldr (trivialTestTransfer a) (True, False, 0) (basicBlockInstructions bb)
-  guard (noCalls && storeToA && nStores == 1)
-  return True
+  let acc@(noCalls, storeToA, nStores) = foldr (trivialTestTransfer a) (True, False, 0) (basicBlockInstructions bb)
+  return (noCalls && storeToA && nStores == 1)
 
 trivialTestTransfer :: Argument
                     -> Instruction
@@ -380,10 +380,15 @@ trivialTestTransfer :: Argument
                     -> (Bool, Bool, Int)
 trivialTestTransfer a i acc@(noCalls, storeToA, nStores) =
   case i of
-    CallInst {} -> (False, storeToA, nStores)
+    CallInst { callFunction = cf, callArguments = (map fst -> ~(dst:_)) }
+      | isMemcpy cf && stripBitcasts dst == toValue a ->
+        -- A memcpy to a is equivalent to an assignment, so we don't treat that
+        -- as a real call.
+        (noCalls, True, nStores + 1)
+      | otherwise -> (False, storeToA, nStores)
     InvokeInst {} -> (False, storeToA, nStores)
-    StoreInst { storeAddress = (valueContent' -> ArgumentC sa) }
-      | sa == a -> (noCalls, True, nStores + 1)
+    StoreInst { storeAddress = (stripBitcasts -> sa) }
+      | Just sa' <- fromValue sa, sa' == a -> (noCalls, True, nStores + 1)
       | otherwise -> (noCalls, storeToA, nStores + 1)
     _ -> acc
 
@@ -400,13 +405,13 @@ argumentAndNotNullBlock tt ft v1 v2 p =
     (ConstantC ConstantPointerNull {}, ConstantC ConstantPointerNull {}) -> Nothing
     (ConstantC ConstantPointerNull {}, ArgumentC a) ->
       case p of
-        ICmpNe -> return (ft, a)
-        ICmpEq -> return (tt, a)
+        ICmpNe -> return (tt, a)
+        ICmpEq -> return (ft, a)
         _ -> Nothing
     (ArgumentC a, ConstantC ConstantPointerNull {}) ->
       case p of
-        ICmpNe -> return (ft, a)
-        ICmpEq -> return (tt, a)
+        ICmpNe -> return (tt, a)
+        ICmpEq -> return (ft, a)
         _ -> Nothing
     _ -> Nothing
 

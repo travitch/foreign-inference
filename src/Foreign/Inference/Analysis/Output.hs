@@ -431,9 +431,18 @@ callTransfer info i f args = do
     (True, [dest, src, bytes, _, _]) ->
       memcpyTransfer info i dest src bytes
     _ -> do
-      info' <- foldM (checkInArg modSumm) info indexedArgs
-      foldM (checkOutArg modSumm) info' indexedArgs
+      info' <- foldM (checkInOutArg modSumm) info indexedArgs
+      info'' <- foldM (checkInArg modSumm) info' indexedArgs
+      foldM (checkOutArg modSumm) info'' indexedArgs
   where
+    checkInOutArg ms acc (ix, arg) =
+      case valueContent' arg of
+        ArgumentC a -> do
+          attrs <- lookupArgumentSummaryList ms f ix
+          case PAInOut `elem` attrs of
+            True -> return $! merge outputInfo i a ArgBoth acc
+            False -> return acc
+        _ -> return acc
     checkInArg ms acc (ix, arg) =
       case valueContent' arg of
         ArgumentC a -> do

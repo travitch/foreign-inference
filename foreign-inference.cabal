@@ -68,7 +68,7 @@ library
                  GenericPretty > 1,
                  transformers >= 0.2 && < 0.4,
                  file-embed >= 0.0.4.2,
-                 sbv >= 2.9,
+                 sbv >= 2.9 && < 2.10,
                  hashable, containers, filepath, text, bytestring,
                  deepseq, deepseq-generics, temporary, process,
                  ifscs, hbgl, hjsmin, graphviz, semigroups, ghc-prim,

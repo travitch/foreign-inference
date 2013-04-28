@@ -51,7 +51,7 @@ analyzeOutput ds m =
     analyses = [ identifyEscapes ds ics escapeSummary
                , identifyFinalizers ds ics finalizerSummary
                , identifyAllocators ds ics allocatorSummary escapeSummary finalizerSummary
-               , identifyOutput outCfg ds outputSummary allocatorSummary escapeSummary
+               , identifyOutput outCfg m ds outputSummary allocatorSummary escapeSummary
                ]
     analysisFunc = callGraphComposeAnalysis analyses
     res = callGraphSCCTraversal cg analysisFunc mempty

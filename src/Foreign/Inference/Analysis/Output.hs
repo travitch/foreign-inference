@@ -176,13 +176,14 @@ data OutAnalysisConfig = OAC { trivialBlockHack :: Bool }
 -- results.
 identifyOutput :: forall compositeSummary funcLike . (FuncLike funcLike, HasCFG funcLike, HasFunction funcLike)
                   => OutAnalysisConfig
+                  -> Module
                   -> DependencySummary
                   -> Lens' compositeSummary OutputSummary
                   -> Lens' compositeSummary AllocatorSummary
                   -> Lens' compositeSummary EscapeSummary
                   -> ComposableAnalysis compositeSummary funcLike
-identifyOutput conf ds lns allocLens escapeLens =
-  composableDependencyAnalysisM runner (outAnalysis conf) lns depLens
+identifyOutput conf m ds lns allocLens escapeLens =
+  composableDependencyAnalysisM runner (outAnalysis conf m) lns depLens
   where
     runner a = runAnalysis a ds constData ()
     constData = OD mempty undefined undefined
@@ -233,16 +234,17 @@ type Analysis = AnalysisMonad OutData ()
 
 outAnalysis :: (FuncLike funcLike, HasFunction funcLike, HasCFG funcLike)
                => OutAnalysisConfig
+               -> Module
                -> (AllocatorSummary, EscapeSummary)
                -> funcLike
                -> OutputSummary
                -> Analysis OutputSummary
-outAnalysis conf (allocSumm, escSumm) funcLike s = do
+outAnalysis conf m (allocSumm, escSumm) funcLike s = do
   let envMod e = e { moduleSummary = s
                    , allocatorSummary = allocSumm
                    , escapeSummary = escSumm
                    }
-      analysis = dataflowAnalysis top meetOutInfo (outTransfer conf)
+      analysis = dataflowAnalysis top meetOutInfo (outTransfer conf m)
   funcInfo <- analysisLocal envMod (forwardDataflow funcLike analysis top)
   let OI exitInfo fexitInfo = dataflowResult funcInfo
       exitInfo' = M.map (second S.toList) exitInfo
@@ -279,8 +281,8 @@ isAllocatedValue storeInst calledFunc callInst = do
 -- Note, we don't use valueContent' to strip bitcasts here since
 -- accesses to bitfields use lots of interesting bitcasts and give us
 -- false positives.
-outTransfer :: OutAnalysisConfig -> OutInfo -> Instruction -> Analysis OutInfo
-outTransfer conf info i =
+outTransfer :: OutAnalysisConfig -> Module -> OutInfo -> Instruction -> Analysis OutInfo
+outTransfer conf m info i =
   case i of
     LoadInst { loadAddress = (valueContent -> ArgumentC ptr) } ->
       return $! merge outputInfo i ptr ArgIn info
@@ -331,9 +333,9 @@ outTransfer conf info i =
       return $! merge outputFieldInfo i (ptr, fromIntegral fldNo) ArgBoth info
 
     CallInst { callFunction = f, callArguments = args } ->
-      callTransfer info i f (map fst args)
+      callTransfer m info i f (map fst args)
     InvokeInst { invokeFunction = f, invokeArguments = args }->
-      callTransfer info i f (map fst args)
+      callTransfer m info i f (map fst args)
 
     BranchInst { branchTrueTarget = tt
                , branchFalseTarget = ft
@@ -428,13 +430,13 @@ isMemcpy v =
 -- | A broken out transfer function for calls.  This deals with traversing
 -- the list of arguments in a reasonable way to correctly handle argument
 -- aliasing.  See Note [Argument Aliasing]
-callTransfer :: OutInfo -> Instruction -> Value -> [Value] -> Analysis OutInfo
-callTransfer info i f args = do
+callTransfer :: Module -> OutInfo -> Instruction -> Value -> [Value] -> Analysis OutInfo
+callTransfer m info i f args = do
   let indexedArgs = zip [0..] args
   modSumm <- analysisEnvironment moduleSummary
   case (isMemcpy f, args) of
     (True, [dest, src, bytes, _, _]) ->
-      memcpyTransfer info i dest src bytes
+      memcpyTransfer m info i dest src bytes
     _ -> do
       info' <- foldM (checkInOutArg modSumm) info indexedArgs
       info'' <- foldM (checkInArg modSumm) info' indexedArgs
@@ -481,21 +483,21 @@ isOutAllocAnnot :: ParamAnnotation -> Bool
 isOutAllocAnnot (PAOutAlloc _) = True
 isOutAllocAnnot _ = False
 
--- | FIXME: Be more robust and actually use the byte count to ensure it is a
--- full struct initialization.  In practice it probably always will be...
-memcpyTransfer :: OutInfo -> Instruction -> Value -> Value -> Value -> Analysis OutInfo
-memcpyTransfer info i dest src _ {-bytes-} =
-  case (isArgument dest, isArgument src) of
-    (Just darg, Just sarg) ->
-      return $! merge outputInfo i darg ArgOut $ merge outputInfo i sarg ArgIn info
-    (Just darg, Nothing) -> return $! merge outputInfo i darg ArgOut info
-    (Nothing, Just sarg) -> return $! merge outputInfo i sarg ArgIn info
-    _ -> return info
+memcpyTransfer :: Module -> OutInfo -> Instruction -> Value -> Value -> Value -> Analysis OutInfo
+memcpyTransfer m info i dest src (valueContent -> ConstantC ConstantInt { constantIntValue = byteCount })
+  | TypePointer destBaseTy _ <- valueType (stripBitcasts dest)
+  , Just tySize <- moduleTypeSizes m destBaseTy
+  , tySize /= fromIntegral byteCount = return info
+  | otherwise =
+    case (isArgument dest, isArgument src) of
+      (Just darg, Just sarg) ->
+        return $! merge outputInfo i darg ArgOut $ merge outputInfo i sarg ArgIn info
+      (Just darg, Nothing) -> return $! merge outputInfo i darg ArgOut info
+      (Nothing, Just sarg) -> return $! merge outputInfo i sarg ArgIn info
+      _ -> return info
   where
-    isArgument v =
-      case valueContent' v of
-        ArgumentC a -> Just a
-        _ -> Nothing
+    isArgument = fromValue . stripBitcasts
+memcpyTransfer _ info _ _ _ _ = return info
 
 merge :: (Ord k)
          => Lens' info (Map k (ArgumentDirection, Set Witness))

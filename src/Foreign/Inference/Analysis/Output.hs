@@ -483,6 +483,10 @@ isOutAllocAnnot :: ParamAnnotation -> Bool
 isOutAllocAnnot (PAOutAlloc _) = True
 isOutAllocAnnot _ = False
 
+-- | A memcpy is treated as an assignment if the number of bytes copied
+-- matches the size of the destination of the memcpy.  We strip bitcasts
+-- when checking this because the arguments to memcpy are void*, and
+-- that void types have no size.
 memcpyTransfer :: Module -> OutInfo -> Instruction -> Value -> Value -> Value -> Analysis OutInfo
 memcpyTransfer m info i dest src (valueContent -> ConstantC ConstantInt { constantIntValue = byteCount })
   | TypePointer destBaseTy _ <- valueType (stripBitcasts dest)

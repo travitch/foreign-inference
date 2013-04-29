@@ -186,7 +186,7 @@ identifyOutput conf m ds lns allocLens escapeLens =
   composableDependencyAnalysisM runner (outAnalysis conf m) lns depLens
   where
     runner a = runAnalysis a ds constData ()
-    constData = OD mempty undefined undefined
+    constData = OD mempty mempty mempty
     readerL = view allocLens &&& view escapeLens
     writerL csumm (a, e) = (set allocLens a . set escapeLens e) csumm
     depLens :: Lens' compositeSummary (AllocatorSummary, EscapeSummary)

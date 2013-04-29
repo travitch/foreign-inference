@@ -491,7 +491,10 @@ memcpyTransfer :: Module -> OutInfo -> Instruction -> Value -> Value -> Value ->
 memcpyTransfer m info i dest src (valueContent -> ConstantC ConstantInt { constantIntValue = byteCount })
   | TypePointer destBaseTy _ <- valueType (stripBitcasts dest)
   , Just tySize <- moduleTypeSizes m destBaseTy
-  , tySize /= fromIntegral byteCount = return info
+  , tySize /= fromIntegral byteCount =
+    case isArgument src of
+      Just sarg -> return $! merge outputInfo i sarg ArgIn info
+      Nothing -> return info
   | otherwise =
     case (isArgument dest, isArgument src) of
       (Just darg, Just sarg) ->

@@ -50,7 +50,12 @@ addDiagnostics res newDiags =
 -- Add a context on a here that forces a to implement an "attach
 -- diags" function so we can stuff the diagnostics into the result and
 -- just return that single value.
-runAnalysis :: (HasDiagnostics a) => AnalysisMonad env state a -> DependencySummary -> env -> state -> a
+runAnalysis :: (HasDiagnostics a)
+            => AnalysisMonad env state a
+            -> DependencySummary
+            -> env
+            -> state
+            -> a
 runAnalysis analysis ds env s = addDiagnostics res diags
   where
     (res, diags) = evalRWS (unAnalysis analysis) (Env ds env) s

@@ -1,1 +1,1 @@
-fromList [ ("@allocateIntArray", Nothing) ]
+(fromList [ ("@allocateIntArray", Nothing) ], fromList [])

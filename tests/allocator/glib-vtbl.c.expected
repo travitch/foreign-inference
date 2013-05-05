@@ -1,1 +1,2 @@
-fromList [ ("@g_malloc", Nothing) ]
+(fromList [ ("@g_malloc", Nothing) ], fromList [])
+

@@ -1,1 +1,1 @@
-fromList [ ("@arr", Nothing) ]
+(fromList [ ("@arr", Nothing) ], fromList [])

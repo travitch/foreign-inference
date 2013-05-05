@@ -1,1 +1,1 @@
-fromList [ ("@allocateInt", Nothing) ]
+(fromList [ ("@allocateInt", Nothing) ], fromList [])

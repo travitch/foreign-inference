@@ -2,6 +2,7 @@ module Main ( main ) where
 
 import Data.Map ( Map )
 import Data.Monoid
+import Data.Set ( Set )
 import System.FilePath ( (<.>) )
 import System.Environment ( getArgs, withArgs )
 import Test.HUnit ( assertEqual )
@@ -18,6 +19,7 @@ import Foreign.Inference.Analysis.Allocator
 import Foreign.Inference.Analysis.Escape
 import Foreign.Inference.Analysis.Finalize
 import Foreign.Inference.Analysis.IndirectCallResolver
+import Foreign.Inference.Analysis.Output
 import Foreign.Inference.Analysis.Util.CompositeSummary
 
 main :: IO ()
@@ -38,7 +40,9 @@ main = do
   where
     parser = parseLLVMFile defaultParserOptions
 
-analyzeAllocator :: DependencySummary -> Module -> Map String (Maybe String)
+analyzeAllocator :: DependencySummary
+                 -> Module
+                 -> (Map String (Maybe String), Map String (Set (String, ParamAnnotation)))
 analyzeAllocator ds m =
   allocatorSummaryToTestFormat (_allocatorSummary res)
   where
@@ -47,7 +51,8 @@ analyzeAllocator ds m =
     analyses :: [ComposableAnalysis AnalysisSummary FunctionMetadata]
     analyses = [ identifyEscapes ds ics escapeSummary
                , identifyFinalizers ds ics finalizerSummary
-               , identifyAllocators ds ics allocatorSummary escapeSummary finalizerSummary
+               , identifyOutput m ds outputSummary
+               , identifyAllocators ds ics allocatorSummary escapeSummary finalizerSummary outputSummary
                ]
     analysisFunc = callGraphComposeAnalysis analyses
     res = callGraphSCCTraversal cg analysisFunc mempty

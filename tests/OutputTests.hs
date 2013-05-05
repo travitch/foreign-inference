@@ -15,9 +15,6 @@ import LLVM.Parse
 
 import Foreign.Inference.Interface
 import Foreign.Inference.Preprocessing
-import Foreign.Inference.Analysis.Allocator
-import Foreign.Inference.Analysis.Escape
-import Foreign.Inference.Analysis.Finalize
 import Foreign.Inference.Analysis.Output
 import Foreign.Inference.Analysis.IndirectCallResolver
 import Foreign.Inference.Analysis.Util.CompositeSummary
@@ -47,10 +44,7 @@ analyzeOutput ds m =
     cg = callGraph m ics []
     ics = identifyIndirectCallTargets m
     analyses :: [ComposableAnalysis AnalysisSummary FunctionMetadata]
-    analyses = [ identifyEscapes ds ics escapeSummary
-               , identifyFinalizers ds ics finalizerSummary
-               , identifyAllocators ds ics allocatorSummary escapeSummary finalizerSummary
-               , identifyOutput m ds outputSummary allocatorSummary escapeSummary
+    analyses = [ identifyOutput m ds outputSummary
                ]
     analysisFunc = callGraphComposeAnalysis analyses
     res = callGraphSCCTraversal cg analysisFunc mempty

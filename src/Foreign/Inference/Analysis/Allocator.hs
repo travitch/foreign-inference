@@ -250,7 +250,7 @@ checkArgValues esumm summ (a, S.toList -> rvs)
         return $! summ & (allocatorSummary . summaryAllocatorArgs) %~ S.insert a
   where
     hasOutAlloc = any (==Nothing) rvs
-    nonNullRvs = filter (uncurry (&&) . (isNotNull &&& isNotPhi) . fst) (catMaybes rvs)
+    nonNullRvs = filter (mayBeAlloc . fst) (catMaybes rvs)
 
 -- | If the return value is always one of:
 --
@@ -279,7 +279,8 @@ checkReturnValues esumm f rvs summ
     -- okay.  Also filter out Phi nodes (since we flattened the phi
     -- node to all of the values it could represent, but that list
     -- contains the phi node itself).
-    nonNullRvs = filter (uncurry (&&) . (isNotNull &&& isNotPhi) . fst) rvs
+    nonNullRvs = filter (mayBeAlloc . fst) rvs
+
 
 -- | Return True if the given Value is the result of a call to an
 -- allocator AND does not escape.
@@ -350,6 +351,9 @@ isNotPhi v =
   case valueContent' v of
     InstructionC PhiNode {} -> False
     _ -> True
+
+mayBeAlloc :: Value -> Bool
+mayBeAlloc x = all ($ x) [isNotNull, isNotPhi]
 
 -- Testing
 

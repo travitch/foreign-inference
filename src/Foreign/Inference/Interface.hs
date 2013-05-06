@@ -57,7 +57,10 @@ module Foreign.Inference.Interface (
   userParameterAnnotations
   ) where
 
+import GHC.Conc ( getNumCapabilities )
+
 import Control.Arrow
+import Control.Concurrent.ParallelIO.Local
 import Control.DeepSeq
 import Control.Exception as E
 import Control.Monad ( liftM )
@@ -327,7 +330,9 @@ loadTransDeps summaryDirs deps loadedDeps m = do
   case unmetDeps of
     [] -> return m
     _ -> do
-      newInterfaces <- mapM (parseInterface summaryDirs) paths
+      caps <- getNumCapabilities
+      let acts = map (parseInterface summaryDirs) paths
+      newInterfaces <- withPool caps $ \p -> parallel p acts
       let newDeps = concatMap libraryDependencies newInterfaces
           newFuncs = concatMap libraryFunctions newInterfaces
           loadedDeps' = loadedDeps `S.union` S.fromList unmetDeps

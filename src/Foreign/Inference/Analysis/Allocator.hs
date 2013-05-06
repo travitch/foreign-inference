@@ -43,7 +43,7 @@ import Control.Monad ( foldM )
 import qualified Data.Foldable as F
 import Data.Map ( Map )
 import qualified Data.Map as M
-import Data.Maybe ( isJust )
+import Data.Maybe ( catMaybes, isJust )
 import Data.Monoid
 import Data.Set ( Set )
 import qualified Data.Set as S
@@ -108,8 +108,8 @@ data AllocatorData =
                 }
 
 data AllocatorInfo =
-  AI { _allocatorReturnValues :: Set (Value, Maybe Instruction)
-     , _allocatorOutValues :: Map Argument (Set (Value, Maybe Instruction))
+  AI { _allocatorReturnValues :: Set (Value, Instruction)
+     , _allocatorOutValues :: Map Argument (Set (Maybe (Value, Instruction)))
      }
      deriving (Eq, Show)
 
@@ -171,7 +171,7 @@ allocatorAnalysis (esumm, (fsumm, outSumm)) funcLike s = do
   foldM (checkArgValues esumm) s'' (M.toList argRets)
   where
     f = getFunction funcLike
-    analysis = dataflowAnalysis top meet (transfer outSumm)
+    analysis = dataflowAnalysis top meet (transfer s outSumm)
 
 top :: AllocatorInfo
 top = AI mempty mempty
@@ -184,22 +184,46 @@ meet (AI r1 a1) (AI r2 a2) =
 -- This could be improved to recognize transitive out parameter allocations.
 -- That could be tricky and would require information about users of a value,
 -- as well as an assurance that such code was executed before the store.
-transfer :: OutputSummary -> AllocatorInfo -> Instruction -> Analysis AllocatorInfo
-transfer outSumm ai i =
+transfer :: AllocatorSummary
+         -> OutputSummary
+         -> AllocatorInfo
+         -> Instruction
+         -> Analysis AllocatorInfo
+transfer s outSumm ai i =
   case i of
     RetInst { retInstValue = Just rv }
       | isPointerType (valueType rv) ->
-        let rvs = S.fromList (zip (flattenValue rv) (repeat (Just i)))
+        let rvs = S.fromList (zip (flattenValue rv) (repeat i))
         in return $! ai & allocatorReturnValues %~ S.union rvs
       | otherwise -> return ai
     StoreInst { storeAddress = (valueContent' -> ArgumentC arg)
               , storeValue = (stripBitcasts -> sv)
               }
       | isOutParam outSumm arg ->
-        let rvs = S.fromList (zip (flattenValue sv) (repeat (Just i)))
+        let rvs = S.fromList $ map Just (zip (flattenValue sv) (repeat i))
         in return $! ai & allocatorOutValues %~ M.insert arg rvs
       | otherwise -> return ai
+    CallInst { callFunction = cf, callArguments = (map fst -> args) } ->
+      foldM (argumentTransfer s cf) ai (zip [0..] args)
+    InvokeInst { invokeFunction = cf, invokeArguments = (map fst -> args) } ->
+      foldM (argumentTransfer s cf) ai (zip [0..] args)
     _ -> return ai
+
+argumentTransfer :: AllocatorSummary
+                 -> Value
+                 -> AllocatorInfo
+                 -> (Int, Value)
+                 -> Analysis AllocatorInfo
+argumentTransfer s cf ai (ix, (valueContent' -> ArgumentC a)) = do
+  summ <- lookupArgumentSummaryList s cf ix
+  case any isOutAlloc summ of
+    False -> return ai
+    True -> return $! ai & allocatorOutValues %~ M.insert a (S.singleton Nothing)
+argumentTransfer _ _ ai _ = return ai
+
+isOutAlloc :: ParamAnnotation -> Bool
+isOutAlloc (PAOutAlloc _) = True
+isOutAlloc _ = False
 
 isOutParam :: OutputSummary -> Argument -> Bool
 isOutParam s a = PAOut `elem` map fst (summarizeArgument a s)
@@ -208,12 +232,16 @@ isPointerType :: Type -> Bool
 isPointerType (TypePointer _ _) = True
 isPointerType _ = False
 
+-- | The set we are looking at has Maybes.  The 'Nothing' values indicate
+-- out-alloc parameters.  There is nothing else to check there because
+-- we know those are allocators.  We do need to make sure that we don't
+-- completely ignore them in the null check, though. 
 checkArgValues :: EscapeSummary
                -> AllocatorSummary
-               -> (Argument, Set (Value, Maybe Instruction))
+               -> (Argument, Set (Maybe (Value, Instruction)))
                -> Analysis AllocatorSummary
 checkArgValues esumm summ (a, S.toList -> rvs)
-  | null nonNullRvs = return summ
+  | null nonNullRvs && not hasOutAlloc = return summ
   | otherwise = do
     valid <- mapM (isAllocatedWithoutEscape esumm summ) nonNullRvs
     case and valid of
@@ -221,7 +249,8 @@ checkArgValues esumm summ (a, S.toList -> rvs)
       True ->
         return $! summ & (allocatorSummary . summaryAllocatorArgs) %~ S.insert a
   where
-    nonNullRvs = filter (uncurry (&&) . (isNotNull &&& isNotPhi) . fst) rvs
+    hasOutAlloc = any (==Nothing) rvs
+    nonNullRvs = filter (uncurry (&&) . (isNotNull &&& isNotPhi) . fst) (catMaybes rvs)
 
 -- | If the return value is always one of:
 --
@@ -233,7 +262,7 @@ checkArgValues esumm summ (a, S.toList -> rvs)
 -- same type, associate it with this allocator.
 checkReturnValues :: EscapeSummary
                   -> Function
-                  -> [(Value, Maybe Instruction)]
+                  -> [(Value, Instruction)]
                   -> AllocatorSummary
                   -> Analysis AllocatorSummary
 checkReturnValues esumm f rvs summ
@@ -252,14 +281,11 @@ checkReturnValues esumm f rvs summ
     -- contains the phi node itself).
     nonNullRvs = filter (uncurry (&&) . (isNotNull &&& isNotPhi) . fst) rvs
 
--- In the transitive out-alloc case, the "escape instruction" is Nothing, so
--- just change to Maybe Instruction there.
-
 -- | Return True if the given Value is the result of a call to an
 -- allocator AND does not escape.
 isAllocatedWithoutEscape :: EscapeSummary
                          -> AllocatorSummary
-                         -> (Value, Maybe Instruction)
+                         -> (Value, Instruction)
                          -> Analysis Bool
 isAllocatedWithoutEscape esumm summ (rv, escInst) = do
   allocatorInsts <- case valueContent' rv of
@@ -301,11 +327,9 @@ checkFunctionIsAllocator v summ is =
         False -> return []
         True -> return is
 
-noneEscape :: EscapeSummary -> [Instruction] -> Maybe Instruction -> Bool
+noneEscape :: EscapeSummary -> [Instruction] -> Instruction -> Bool
 noneEscape escSumm is returnSlot =
-  case returnSlot of
-    Nothing -> not (any (isJust . flip instructionEscapes escSumm) is)
-    Just rs -> not (any (isJust . flip (escapeTest rs) escSumm) is)
+  not (any (isJust . flip (escapeTest returnSlot) escSumm) is)
   where
     escapeTest rs = instructionEscapesWith (==rs)
 

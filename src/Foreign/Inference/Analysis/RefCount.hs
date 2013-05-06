@@ -33,7 +33,7 @@ import GHC.Generics ( Generic )
 import Control.Arrow
 import Control.DeepSeq
 import Control.DeepSeq.Generics ( genericRnf )
-import Control.Lens ( Lens', makeLenses, view, set, lens, (%~), (^.), (.~) )
+import Control.Lens ( Getter, Lens', makeLenses, view, to, (%~), (^.), (.~) )
 import Data.Foldable ( find )
 import Data.HashSet ( HashSet )
 import qualified Data.HashSet as HS
@@ -193,17 +193,15 @@ type Analysis = AnalysisMonad () ()
 identifyRefCounting :: forall compositeSummary funcLike . (FuncLike funcLike, HasFunction funcLike, HasCFG funcLike)
                        => DependencySummary
                        -> Lens' compositeSummary RefCountSummary
-                       -> Lens' compositeSummary FinalizerSummary
-                       -> Lens' compositeSummary ScalarEffectSummary
+                       -> Getter compositeSummary FinalizerSummary
+                       -> Getter compositeSummary ScalarEffectSummary
                        -> ComposableAnalysis compositeSummary funcLike
 identifyRefCounting ds lns depLens1 depLens2 =
   composableDependencyAnalysisM runner refCountAnalysis lns depLens
   where
     runner a = runAnalysis a ds () ()
-    readL = view depLens1 &&& view depLens2
-    writeL csum (f, s) = (set depLens1 f . set depLens2 s) csum
-    depLens :: Lens' compositeSummary (FinalizerSummary, ScalarEffectSummary)
-    depLens = lens readL writeL
+    depLens :: Getter compositeSummary (FinalizerSummary, ScalarEffectSummary)
+    depLens = to (view depLens1 &&& view depLens2)
 
 -- | Check to see if the given function is a conditional finalizer.
 -- If it is, return the call instruction that (conditionally) invokes

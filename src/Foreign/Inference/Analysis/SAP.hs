@@ -28,7 +28,7 @@ import Control.Failure
 import Data.Hashable
 import Data.HashSet ( HashSet )
 import qualified Data.HashSet as HS
-import Control.Lens ( Lens', makeLenses, (%~), (.~), (^.), set, view, lens )
+import Control.Lens ( Getter, Lens', makeLenses, (%~), (.~), (^.), to, view )
 import Control.Monad ( foldM )
 import qualified Data.Foldable as F
 import Data.Map ( Map )
@@ -200,17 +200,15 @@ identifySAPs :: forall compositeSummary funcLike pta .
                 => DependencySummary
                 -> pta
                 -> Lens' compositeSummary SAPSummary
-                -> Lens' compositeSummary SAPPTRelSummary
-                -> Lens' compositeSummary FinalizerSummary
+                -> Getter compositeSummary SAPPTRelSummary
+                -> Getter compositeSummary FinalizerSummary
                 -> ComposableAnalysis compositeSummary funcLike
 identifySAPs ds pta lns ptrelL finL =
   composableDependencyAnalysisM runner (sapAnalysis pta) lns depLens
   where
     runner a = runAnalysis a ds () mempty
-    readL = view ptrelL &&& view finL
-    writeL csum (s, f) = (set ptrelL s . set finL f) csum
-    depLens :: Lens' compositeSummary (SAPPTRelSummary, FinalizerSummary)
-    depLens = lens readL writeL
+    depLens :: Getter compositeSummary (SAPPTRelSummary, FinalizerSummary)
+    depLens = to (view ptrelL &&& view finL)
 
 -- | For non-void functions, first check the return instruction and
 -- see if it is returning some access path.  Next, just iterate over

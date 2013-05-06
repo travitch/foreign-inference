@@ -197,7 +197,7 @@ transfer outSumm ai i =
               }
       | isOutParam outSumm arg ->
         let rvs = S.fromList (zip (flattenValue sv) (repeat (Just i)))
-        in return $! ai & allocatorOutValues %~ M.insertWith S.union arg rvs
+        in return $! ai & allocatorOutValues %~ M.insert arg rvs
       | otherwise -> return ai
     _ -> return ai
 

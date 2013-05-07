@@ -66,6 +66,9 @@ import Foreign.Inference.Internal.FlattenValue
 -- import Debug.Trace
 -- debug = flip trace
 
+-- | The summary tracks the functions that return newly allocated values
+-- through their normal return value.  It also tracks the output parameters
+-- through which newly allocated values are returned.
 data SummaryType = ST { _summaryAllocatorFuncs :: Set Function
                       , _summaryAllocatorArgs :: Set Argument
                       }
@@ -107,6 +110,21 @@ data AllocatorData =
   AllocatorData { indirectCallSummary :: IndirectCallSummary
                 }
 
+-- | This is the dataflow fact.  @allocatorReturnValues@ is the set of values
+-- returned through the return instruction.  The values are flattened (and
+-- thus phi-free).  The 'Instruction' paired with each value is the return
+-- instruction that returned it.
+--
+-- @allocatorOutValues@ are the values returned through output parameters,
+-- along with the Store instruction that returned them.  The Maybe wrapper
+-- is used to accommodate transitive out allocations.  If there is a Nothing
+-- in the return value set for an 'Argument', that means that the 'Argument'
+-- was written to by a transitive output allocation.
+--
+-- These 'Instruction' tags are required for the escape analysis.  We know
+-- that the allocated value escapes through its return slot - that is the
+-- point.  The escape analysis needs to be told to ignore this known and
+-- expected escape, so we track the responsibe instruction.
 data AllocatorInfo =
   AI { _allocatorReturnValues :: Set (Value, Instruction)
      , _allocatorOutValues :: Map Argument (Set (Maybe (Value, Instruction)))
@@ -180,10 +198,15 @@ meet :: AllocatorInfo -> AllocatorInfo -> AllocatorInfo
 meet (AI r1 a1) (AI r2 a2) =
   AI (r1 `mappend` r2) (M.unionWith S.union a1 a2)
 
-
--- This could be improved to recognize transitive out parameter allocations.
--- That could be tricky and would require information about users of a value,
--- as well as an assurance that such code was executed before the store.
+-- | The transfer function for returns is cumulative since those end
+-- execution.  I haven't seen more than one return instruction in a
+-- function before, but this code handles it.
+--
+-- The transfer function for stores overwrites previous values, since the
+-- caller sees only the last value stored.  The meet operator still unions.
+--
+-- Transitive out allocations work just like Stores, except no value needs to
+-- be checked and the responsible instruction does not need to be recorded.
 transfer :: AllocatorSummary
          -> OutputSummary
          -> AllocatorInfo

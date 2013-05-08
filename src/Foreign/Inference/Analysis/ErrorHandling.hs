@@ -31,7 +31,6 @@ module Foreign.Inference.Analysis.ErrorHandling (
 
 import GHC.Generics
 
-import AI.SVM.Simple
 import Control.DeepSeq
 import Control.DeepSeq.Generics ( genericRnf )
 import Control.Lens ( makeLenses, (&), (%~), (^.) )
@@ -136,7 +135,7 @@ identifyErrorHandling :: (HasFunction funcLike, HasBlockReturns funcLike,
                          => [funcLike]
                          -> DependencySummary
                          -> IndirectCallSummary
-                         -> Maybe (SVMClassifier ErrorFuncClass)
+                         -> Maybe (FeatureVector -> ErrorFuncClass)
                          -> ErrorSummary
 identifyErrorHandling funcLikes ds ics classifier =
   runAnalysis (fixAnalysis mempty) ds roData mempty
@@ -171,20 +170,6 @@ extractBasicFacts s flike =
   where
     f = getFunction flike
 
-data BaseFact = ErrorBlock (Set Value)
-              -- ^ For a block returning an error code, record the error
-              -- descriptor and the set of functions used as arguments to
-              -- other functions.
-              | SuccessBlock
-              -- ^ Records the functions called in a block that reports
-              -- success.
-
--- For each block, record its error descriptor (if any).  Also include the
--- "ignored" values - those values used as function arguments in that block.
---
--- If a block is not present in this map, it does not report errors or
--- successes (as far as we know so far)
-type BasicFacts = Map BasicBlock BaseFact
 
 -- errorSummaryToString = unlines . map entryToString . HM.toList
 --   where

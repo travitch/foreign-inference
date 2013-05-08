@@ -1,20 +1,39 @@
 {-# LANGUAGE PatternGuards #-}
 module Foreign.Inference.Analysis.ErrorHandling.SVM (
+  BaseFact(..),
+  BasicFacts,
   ErrorFuncClass,
   FeatureVector,
   computeFeatures,
   classifyErrorFunctions,
   ) where
 
-import AI.SVM.Simple
+-- import AI.SVM.Simple
 import qualified Data.Foldable as F
 import Data.Map ( Map )
 import qualified Data.Map as M
 import Data.Monoid
+import Data.Set ( Set )
 import qualified Data.Set as S
 import Data.Vector.Unboxed ( Vector )
 import qualified Data.Vector.Unboxed as UV
 
+import LLVM.Analysis
+
+data BaseFact = ErrorBlock (Set Value)
+              -- ^ For a block returning an error code, record the error
+              -- descriptor and the set of functions used as arguments to
+              -- other functions.
+              | SuccessBlock
+              -- ^ Records the functions called in a block that reports
+              -- success.
+
+-- For each block, record its error descriptor (if any).  Also include the
+-- "ignored" values - those values used as function arguments in that block.
+--
+-- If a block is not present in this map, it does not report errors or
+-- successes (as far as we know so far)
+type BasicFacts = Map BasicBlock BaseFact
 data ErrorFuncClass = ErrorReporter
                     | OtherFunction
                     deriving (Eq, Ord, Show)
@@ -64,22 +83,29 @@ computeBlockFeatures bf m bb
     F.foldl' (calleeInContext baseFact) m (basicBlockInstructions bb)
   | otherwise = F.foldl' calleeNotError m (basicBlockInstructions bb)
 
-calleeInContext SuccessBlock m i =
+calleeInContext :: BaseFact -> Map Value Feature
+                -> Instruction -> Map Value Feature
+calleeInContext SuccessBlock m i
   | Just cv <- directCallTarget i =
     M.insertWith mappend cv succVal m
   | otherwise = m
-calleeInContext (ErrorBlock args) baseFact m i
+calleeInContext (ErrorBlock args) m i
   | Just cv <- directCallTarget i, S.member cv args =
     M.insertWith mappend cv argVal m
   | Just cv <- directCallTarget i =
     M.insertWith mappend cv errVal m
   | otherwise = m
 
+succVal :: Feature
 succVal = mempty { inSuccess = 1 }
+errVal :: Feature
 errVal = mempty { inError = 1 }
+argVal :: Feature
 argVal = mempty { argInError = 1 }
+nVal :: Feature
 nVal = mempty { notError = 1 }
 
+calleeNotError :: Map Value Feature -> Instruction -> Map Value Feature
 calleeNotError m i
   | Just cv <- directCallTarget i =
     M.insertWith mappend cv nVal m
@@ -90,12 +116,16 @@ calleeNotError m i
 directCallTarget :: Instruction -> Maybe Value
 directCallTarget v =
   case v of
-    InstructionC CallInst { callFunction = cv } ->
+    CallInst { callFunction = cv } ->
       case valueContent' cv of
         ExternalFunctionC _ -> return (stripBitcasts cv)
         FunctionC _ -> return (stripBitcasts cv)
         _ -> fail "Not a direct call"
     _ -> fail "Not a call"
+
+-- The classifier should be:
+--
+-- > classify classifier
 
 -- | Compute the features for each called value in the library (using
 -- the BasicFacts and funcLikes).  Classify each one using the classifier.
@@ -103,13 +133,16 @@ directCallTarget v =
 classifyErrorFunctions :: (HasFunction funcLike)
                        => BasicFacts
                        -> [funcLike]
-                       -> SVMClassifier ErrorFuncClass
+                       -> (FeatureVector -> ErrorFuncClass)
+--                       -> SVMClassifier ErrorFuncClass
                        -> Set Value
 classifyErrorFunctions facts funcs classifier =
   F.foldl' classifyValue mempty features
   where
     features = M.toList (computeFeatures facts funcs)
     classifyValue acc (val, featureVec) =
-      case classify classifier featureVec of
+      case classifier featureVec of
         ErrorReporter -> S.insert val acc
         OtherFunction -> acc
+
+

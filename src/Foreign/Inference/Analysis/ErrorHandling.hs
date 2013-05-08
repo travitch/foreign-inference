@@ -1,5 +1,6 @@
 {-# LANGUAGE ViewPatterns, RankNTypes, ScopedTypeVariables #-}
 {-# LANGUAGE DeriveGeneric, PatternGuards #-}
+{-# LANGUAGE TemplateHaskell #-}
 -- | This analysis attempts to automatically identify error-handling
 -- code in libraries.
 --
@@ -30,8 +31,10 @@ module Foreign.Inference.Analysis.ErrorHandling (
 
 import GHC.Generics
 
+import AI.SVM.Simple
 import Control.DeepSeq
 import Control.DeepSeq.Generics ( genericRnf )
+import Control.Lens ( makeLenses, (&), (%~), (^.) )
 import Control.Monad.State.Strict
 import Control.Monad.Trans.Maybe
 import qualified Data.Foldable as F
@@ -58,11 +61,12 @@ import Foreign.Inference.AnalysisMonad
 import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
 import Foreign.Inference.Analysis.IndirectCallResolver
+import Foreign.Inference.Analysis.ErrorHandling.SVM
 
-{-import Text.Printf-}
-{-import Debug.Trace-}
-{-debug :: a -> String -> a-}
-{-debug = flip trace-}
+-- import Text.Printf
+-- import Debug.Trace
+-- debug :: a -> String -> a
+-- debug = flip trace
 
 -- | An ErrorDescriptor describes a site in the program handling an
 -- error (along with a witness).
@@ -78,26 +82,28 @@ instance NFData ErrorDescriptor where
 
 -- | The error summary is the type exposed to callers, mapping each
 -- function to its error handling methods.
-type SummaryType = HashMap Function (Set ErrorDescriptor)
-data ErrorSummary = ErrorSummary SummaryType Diagnostics
+-- type SummaryType = HashMap Function (Set ErrorDescriptor)
+data ErrorSummary = ErrorSummary { _errorSummary :: HashMap Function (Set ErrorDescriptor)
+                                 , _errorBasicFacts :: BasicFacts
+                                 , _errorDiagnostics :: Diagnostics
+                                 }
                   deriving (Generic)
 
+$(makeLenses ''ErrorSummary)
+
 instance Eq ErrorSummary where
-  (ErrorSummary s1 _) == (ErrorSummary s2 _) = s1 == s2
+  (ErrorSummary s1 b1 _) == (ErrorSummary s2 b2 _) = s1 == s2 && b1 == b2
 
 instance Monoid ErrorSummary where
-  mempty = ErrorSummary mempty mempty
-  mappend (ErrorSummary m1 d1) (ErrorSummary m2 d2) =
-    ErrorSummary (HM.union m1 m2) (mappend d1 d2)
+  mempty = ErrorSummary mempty mempty mempty
+  mappend (ErrorSummary m1 b1 d1) (ErrorSummary m2 b2 d2) =
+    ErrorSummary (HM.union m1 m2) (mappend b1 b2) (mappend d1 d2)
 
 instance NFData ErrorSummary where
   rnf = genericRnf
 
--- This is a manual lens implementation as described in the lens
--- package.
 instance HasDiagnostics ErrorSummary where
-  diagnosticLens f (ErrorSummary s d) =
-    fmap (\d' -> ErrorSummary s d') (f d)
+  diagnosticLens = errorDiagnostics
 
 data ErrorData =
   ErrorData { indirectCallSummary :: IndirectCallSummary
@@ -124,24 +130,61 @@ instance Monoid ErrorState where
 
 type Analysis = AnalysisMonad ErrorData ErrorState
 
+
 identifyErrorHandling :: (HasFunction funcLike, HasBlockReturns funcLike,
                           HasCFG funcLike, HasCDG funcLike, HasDomTree funcLike)
                          => [funcLike]
                          -> DependencySummary
                          -> IndirectCallSummary
+                         -> Maybe (SVMClassifier ErrorFuncClass)
                          -> ErrorSummary
-identifyErrorHandling funcLikes ds ics =
-  runAnalysis analysis ds roData mempty
+identifyErrorHandling funcLikes ds ics classifier =
+  runAnalysis (fixAnalysis mempty) ds roData mempty
   where
     roData = ErrorData ics
-    analysis = do
-      res <- fixAnalysis mempty
---      return () `debug` errorSummaryToString res
-      return $ ErrorSummary res mempty
-    fixAnalysis res = do
-      res' <- foldM errorAnalysis res funcLikes
-      if res == res' then return res
-        else fixAnalysis res'
+    fixAnalysis res0 = do
+      res1 <- foldM extractBasicFacts res0 funcLikes
+
+      -- If we have a classifier, try it.  Otherwise, use a basic
+      -- heuristic.
+      let base = res1 ^. errorBaseFacts
+          dfltClass = errorFuncHeuristic base funcLikes
+          svmClass = classifyErrorFunctions base funcLikes
+      errorFuncs <- maybe dfltClass svmClass classifier
+      res2 <- foldM generalizeErrors res1 funcLikes
+
+      if res == res2 then return res0
+        else fixAnalysis res2
+
+
+errorFuncHeuristic :: (HasFunction funcLike)
+                   => BasicFacts
+                   -> [funcLike]
+                   -> Set Value
+errorFuncHeuristic = undefined
+
+extractBasicFacts :: (HasFunction funcLike, HasBlockReturns funcLike,
+                      HasCFG funcLike, HasCDG funcLike, HasDomTree funcLike)
+                  => ErrorSummary -> funcLike -> Analysis ErrorSummary
+extractBasicFacts s flike =
+  foldM (errorsForBlock flike) s (functionBody f)
+  where
+    f = getFunction flike
+
+data BaseFact = ErrorBlock (Set Value)
+              -- ^ For a block returning an error code, record the error
+              -- descriptor and the set of functions used as arguments to
+              -- other functions.
+              | SuccessBlock
+              -- ^ Records the functions called in a block that reports
+              -- success.
+
+-- For each block, record its error descriptor (if any).  Also include the
+-- "ignored" values - those values used as function arguments in that block.
+--
+-- If a block is not present in this map, it does not report errors or
+-- successes (as far as we know so far)
+type BasicFacts = Map BasicBlock BaseFact
 
 -- errorSummaryToString = unlines . map entryToString . HM.toList
 --   where
@@ -182,27 +225,52 @@ unifyReturnCodes = F.foldr1 unifyReturns . fmap errorReturns
     unifyReturns (ReturnConstantPtr _) r@(ReturnConstantInt _) = r
     unifyReturns r@(ReturnConstantInt _) (ReturnConstantPtr _) = r
 
+{-
 
+1) Find all basic error reporting code that we /know/ handles errors.
+
+2) Try to learn all at once, but also taking into account how often
+   candidate error functions are called in non-error code.
+   We could distinguish by looking at what is returned when the
+   function is called (if it is not a constant, it is probably a mark
+   against).
+
+3) Try to generalize.
+
+A problem with the current code is that we try to learn error functions
+in isolation, which makes it very difficult to distinguish between
+cleanup code and error reporting code.
+
+Cleanup code will occur (much?) more often in contexts that do not have
+a constant return value.
+
+-}
+
+{-
 errorAnalysis :: (HasFunction funcLike, HasBlockReturns funcLike,
                   HasCFG funcLike, HasCDG funcLike, HasDomTree funcLike)
               => SummaryType -> funcLike -> Analysis SummaryType
-errorAnalysis summ funcLike =
-  foldM (errorsForBlock funcLike) summ (functionBody f)
+errorAnalysis summ funcLike = do
+  summ' <- foldM (errorsForBlock funcLike) summ (functionBody f)
+  -- learnErrorFunctions summ'
+  -- generalize summ'
+  return summ'
   where
     f = getFunction funcLike
+-}
 
 -- | Find the error handling code in this block
 errorsForBlock :: (HasFunction funcLike, HasBlockReturns funcLike,
                    HasCFG funcLike, HasCDG funcLike, HasDomTree funcLike)
                => funcLike
-               -> SummaryType
+               -> ErrorSummary
                -> BasicBlock
-               -> Analysis SummaryType
+               -> Analysis ErrorSummary
 errorsForBlock funcLike s bb = do
   takeFirst s [ reportsSuccess funcLike s bb
               , handlesKnownError funcLike s bb
-              , matchActionAndGeneralizeReturn funcLike s bb
-              , matchReturnAndGeneralizeAction funcLike s bb
+              -- , matchActionAndGeneralizeReturn funcLike s bb
+              -- , matchReturnAndGeneralizeAction funcLike s bb
               , returnsTransitiveError funcLike s bb
               ]
   where
@@ -239,9 +307,9 @@ errorsForBlock funcLike s bb = do
 returnsTransitiveError :: (HasFunction funcLike, HasBlockReturns funcLike,
                            HasCFG funcLike, HasCDG funcLike, HasDomTree funcLike)
                        => funcLike
-                       -> SummaryType
+                       -> ErrorSummary
                        -> BasicBlock
-                       -> Analysis (Either SummaryType SummaryType)
+                       -> Analysis (Either ErrorSummary ErrorSummary)
 returnsTransitiveError funcLike summ bb
   | Just rv <- blockReturn brs bb = do
     ics <- analysisEnvironment indirectCallSummary
@@ -269,10 +337,10 @@ returnsTransitiveError funcLike summ bb
             return $! ErrorDescriptor errActs (ReturnConstantInt rvs') [w]
 
 
-addErrorDescriptor :: Function -> SummaryType -> ErrorDescriptor
-                   -> Analysis SummaryType
+addErrorDescriptor :: Function -> ErrorSummary -> ErrorDescriptor
+                   -> Analysis ErrorSummary
 addErrorDescriptor f s d =
-  return $ HM.insertWith S.union f (S.singleton d) s
+  return $ s & errorSummary %~ HM.insertWith S.union f (S.singleton d)
 
 -- | Check an error code @rc@ against all relevant conditions that are
 -- active at the current program point.  If @rc@ has not been handled
@@ -304,6 +372,8 @@ intReturnsToList er =
 --
 -- An explicit model of success might help here.  If we can see that we are on
 -- a success branch, don't try to generalize an error return.
+
+{-
 matchActionAndGeneralizeReturn :: (HasFunction funcLike, HasBlockReturns funcLike,
                                    HasCFG funcLike, HasCDG funcLike)
                                => funcLike
@@ -318,6 +388,8 @@ matchActionAndGeneralizeReturn funcLike s bb = do
   res <- runMaybeT $ do
     edesc <- branchToErrorDescriptor funcLike bb
     FunctionCall ecall _ <- liftMaybe $ F.find (isErrorFuncCall fs) (errorActions edesc)
+    -- FIXME: see libarchive compress_bidder_init - at least ARCHIVE_FATAL
+    -- should show up because of a call to archive_set_error
     case errorReturns edesc of
       ReturnConstantPtr _ -> fail "Ptr return"
       ReturnConstantInt is -> do
@@ -342,6 +414,7 @@ matchActionAndGeneralizeReturn funcLike s bb = do
         False -> liftM Left $ removeImprobableErrors f s d
   where
     f = getFunction funcLike
+
 
 -- | Add error codes we have generalized based on an error reporting function.
 -- There is an additional check: if we are about to add a value we know is
@@ -371,6 +444,10 @@ addGeneralizedFailReturn funcLike is = do
     f = getFunction funcLike
 
 -- | Match a known error return and try to find new actions based on that.
+--
+-- FIXME: If we see a block that is returning something we know is an error
+-- code, we may want to consider that an error return (as long as we do not
+-- have evidence that the code is a success code).
 matchReturnAndGeneralizeAction :: (HasFunction funcLike, HasBlockReturns funcLike,
                                    HasCFG funcLike, HasCDG funcLike)
                                => funcLike
@@ -399,6 +476,7 @@ matchReturnAndGeneralizeAction funcLike s bb = do
     Just d -> liftM Right $ addErrorDescriptor f s d
   where
     f = getFunction funcLike
+-}
 
 singleFunctionErrorAction :: Set ErrorAction -> MaybeT Analysis String
 singleFunctionErrorAction acts =
@@ -427,9 +505,9 @@ learnedErrorFunctions = liftM errorFunctions analysisGet
 handlesKnownError :: (HasFunction funcLike, HasBlockReturns funcLike,
                       HasCFG funcLike, HasCDG funcLike, HasDomTree funcLike)
                   => funcLike
-                  -> SummaryType
+                  -> ErrorSummary
                   -> BasicBlock
-                  -> Analysis (Either SummaryType SummaryType)
+                  -> Analysis (Either ErrorSummary ErrorSummary)
 handlesKnownError funcLike s bb -- See Note [Known Error Conditions]
   | Just rv <- blockReturn brs bb
   , Just _ <- retValToConstantInt rv = do
@@ -457,9 +535,9 @@ checkForKnownErrorReturn :: (HasFunction funcLike, HasCFG funcLike, HasDomTree f
                          => funcLike
                          -> BasicBlock
                          -- ^ The block returning the Int value
-                         -> Either SummaryType SummaryType
+                         -> Either ErrorSummary ErrorSummary
                          -> Instruction
-                         -> Analysis (Either SummaryType SummaryType)
+                         -> Analysis (Either ErrorSummary ErrorSummary)
 checkForKnownErrorReturn _ _ acc@(Right _) _ = return acc
 checkForKnownErrorReturn funcLike bb (Left s) brInst = do
   res <- runMaybeT $ do
@@ -484,8 +562,8 @@ checkForKnownErrorReturn funcLike bb (Left s) brInst = do
       fitsSuccessModel <- checkFitsSuccessModelFor f d
       case fitsSuccessModel of
         False -> do
-          learnErrorCodes d
-          learnErrorActions d
+          -- learnErrorCodes d
+          -- learnErrorActions d
           liftM Right $ addErrorDescriptor f s d
         True -> liftM Left $ removeImprobableErrors f s d
   where
@@ -572,9 +650,9 @@ targetOfErrorCheckBy s i = do
 reportsSuccess :: (HasFunction funcLike, HasBlockReturns funcLike,
                    HasCFG funcLike, HasCDG funcLike, HasDomTree funcLike)
                => funcLike
-               -> SummaryType
+               -> ErrorSummary
                -> BasicBlock
-               -> Analysis (Either SummaryType SummaryType)
+               -> Analysis (Either ErrorSummary ErrorSummary)
 reportsSuccess funcLike s bb
   | Just spred <- singlePredecessor cfg bb
   , Just rv <- blockReturnsSameIntOnPaths rets = do
@@ -842,7 +920,7 @@ isErrRetAnnot _ = False
 branchToErrorDescriptor :: (HasFunction funcLike, HasBlockReturns funcLike,
                             HasCFG funcLike, HasCDG funcLike)
                         => funcLike -> BasicBlock
-                        -> MaybeT Analysis ErrorDescriptor
+                        -> MaybeT Analysis (ErrorDescriptor, Set Value)
 branchToErrorDescriptor funcLike bb = do
   singleRetVal <- liftMaybe $ blockReturn brs bb
   constantRc <- liftMaybe $ retValToConstantInt singleRetVal
@@ -850,8 +928,8 @@ branchToErrorDescriptor funcLike bb = do
              then ReturnConstantPtr
              else ReturnConstantInt
       ract = rcon (S.singleton constantRc)
-      (acts, _) = foldr instToAction ([], mempty) (basicBlockInstructions bb)
-  return $! ErrorDescriptor (S.fromList acts) ract []
+      (acts, ignored) = foldr instToAction ([], mempty) (basicBlockInstructions bb)
+  return $! (ErrorDescriptor (S.fromList acts) ract [], ignored)
   where
     f = getFunction funcLike
     brs = getBlockReturns funcLike
@@ -867,6 +945,12 @@ functionReturnsPointer f =
     TypePointer _ _ -> True
     _ -> False
 
+-- | The set of values tracked alongside the accumulator are the values used
+-- as arguments to function calls.  Due to the right-association of foldr,
+-- this effectively works backwards and lets us ignore function calls used as
+-- arguments to other functions.
+--
+-- We will want this set to use while defining features.
 instToAction ::Instruction -> ([ErrorAction], Set Value) -> ([ErrorAction], Set Value)
 instToAction i a@(acc, ignore) =
   case i of

@@ -12,6 +12,7 @@ import GHC.Generics
 
 import Control.DeepSeq
 import Control.DeepSeq.Generics ( genericRnf )
+import Data.Binary
 import qualified Data.Foldable as F
 import Data.Map ( Map )
 import qualified Data.Map as M
@@ -44,6 +45,13 @@ type BasicFacts = Map BasicBlock BaseFact
 data ErrorFuncClass = ErrorReporter
                     | OtherFunction
                     deriving (Eq, Ord, Show)
+
+instance Binary ErrorFuncClass where
+  put ErrorReporter = put True
+  put OtherFunction = put False
+  get = do
+    b <- get
+    if b then return ErrorReporter else return OtherFunction
 
 type FeatureVector = UV.Vector Double
 

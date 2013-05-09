@@ -150,7 +150,7 @@ errorHandlingTrainingData funcLikes ds ics = r
   where
     TrainingWrapper r _ = runAnalysis a ds (ErrorData ics) mempty
     a = do
-      res1 <- foldM extractBasicFacts mempty funcLikes
+      res1 <- extractBasicFacts mempty funcLikes
       let base = res1 ^. errorBasicFacts
           res2 = M.toList $ computeFeatures base funcLikes
       return $ TrainingWrapper res2 mempty
@@ -168,21 +168,29 @@ identifyErrorHandling funcLikes ds ics classifier =
   where
     roData = ErrorData ics
     fixAnalysis res0 = do
-      res1 <- foldM extractBasicFacts res0 funcLikes
+      -- First, find known success blocks and known failure blocks
+      res1 <- extractBasicFacts res0 funcLikes
 
       -- If we have a classifier, try it.  Otherwise, use a basic
-      -- heuristic.
+      -- heuristic.  Use the classification to generalize and find
+      -- new error blocks.
       let base = res1 ^. errorBasicFacts
           dfltClass = errorFuncHeuristic base funcLikes
           svmClass = classifyErrorFunctions base funcLikes
           errorFuncs = maybe dfltClass svmClass classifier
       res2 <- foldM (generalizeErrors errorFuncs) res1 funcLikes
 
-      if res0 == res2 then return res0
-        else fixAnalysis res2
+      -- Once we know all of the error blocks we can find in this pass,
+      -- look for all of the transitive errors.  These don't give us any
+      -- information that would help in other phases.
+      res3 <- foldM (byBlock returnsTransitiveError) res2 funcLikes
+
+      if res0 == res3 then return res0
+        else fixAnalysis res3
 
 -- This just needs to take the set of values and try to find new
--- error codes by generalizing.
+-- error codes by generalizing.  Be careful to ignore blocks we
+-- already know are reporting errors or successes.
 generalizeErrors :: (HasFunction funcLike)
                  => Set Value
                  -> ErrorSummary
@@ -198,12 +206,24 @@ errorFuncHeuristic = undefined
 
 extractBasicFacts :: (HasFunction funcLike, HasBlockReturns funcLike,
                       HasCFG funcLike, HasCDG funcLike, HasDomTree funcLike)
-                  => ErrorSummary -> funcLike -> Analysis ErrorSummary
-extractBasicFacts s flike =
-  foldM (errorsForBlock flike) s (functionBody f)
-  where
-    f = getFunction flike
+                  => ErrorSummary -> [funcLike] -> Analysis ErrorSummary
+extractBasicFacts s0 funcLikes = do
+  s1 <- foldM (byBlock reportsSuccess) s0 funcLikes
+  foldM (byBlock handlesKnownError) s1 funcLikes
 
+-- | Apply an analysis function to each 'BasicBlock' in a 'Function'.
+--
+-- The main analysis functions in this module all have the same signature
+-- and are analyzed in this same way.
+byBlock :: (HasFunction funcLike)
+        => (funcLike -> ErrorSummary -> BasicBlock -> Analysis ErrorSummary)
+        -> ErrorSummary
+        -> funcLike
+        -> Analysis ErrorSummary
+byBlock analysis s funcLike =
+  foldM (analysis funcLike) s (functionBody f)
+  where
+    f = getFunction funcLike
 
 -- errorSummaryToString = unlines . map entryToString . HM.toList
 --   where
@@ -278,10 +298,9 @@ errorAnalysis summ funcLike = do
     f = getFunction funcLike
 -}
 
+{-
+
 -- | Find the error handling code in this block
---
--- FIXME: It may be best to learn about successes in a phase before
--- looking for failures since the knownError phase consults success models.
 errorsForBlock :: (HasFunction funcLike, HasBlockReturns funcLike,
                    HasCFG funcLike, HasCDG funcLike, HasDomTree funcLike)
                => funcLike
@@ -303,7 +322,7 @@ errorsForBlock funcLike s bb = do
       case res of
         Left def' -> takeFirst def' rest
         Right res' -> return res'
-
+-}
 -- | If the function transitively returns errors, record them in the
 -- error summary.  Errors are only transitive if they are unhandled in
 -- this function.  For example, consider the following code:
@@ -331,7 +350,7 @@ returnsTransitiveError :: (HasFunction funcLike, HasBlockReturns funcLike,
                        => funcLike
                        -> ErrorSummary
                        -> BasicBlock
-                       -> Analysis (Either ErrorSummary ErrorSummary)
+                       -> Analysis ErrorSummary
 returnsTransitiveError funcLike summ bb
   | Just rv <- blockReturn brs bb = do
     ics <- analysisEnvironment indirectCallSummary
@@ -339,9 +358,9 @@ returnsTransitiveError funcLike summ bb
       InstructionC i@CallInst { callFunction = callee } -> do
         let callees = callTargets ics callee
         priorFacts <- relevantInducedFacts funcLike bb i
-        liftM Right $ foldM (recordTransitiveError i priorFacts) summ callees
-      _ -> return (Left summ)
-  | otherwise = return (Left summ)
+        foldM (recordTransitiveError i priorFacts) summ callees
+      _ -> return summ
+  | otherwise = return summ
   where
     f = getFunction funcLike
     brs = getBlockReturns funcLike
@@ -529,14 +548,14 @@ handlesKnownError :: (HasFunction funcLike, HasBlockReturns funcLike,
                   => funcLike
                   -> ErrorSummary
                   -> BasicBlock
-                  -> Analysis (Either ErrorSummary ErrorSummary)
+                  -> Analysis ErrorSummary
 handlesKnownError funcLike s bb -- See Note [Known Error Conditions]
   | Just rv <- blockReturn brs bb
   , Just _ <- retValToConstantInt rv = do
     let termInst = basicBlockTerminatorInstruction bb
         cdeps = controlDependencies funcLike termInst
-    foldM (checkForKnownErrorReturn funcLike bb) (Left s) cdeps
-  | otherwise = return $! Left s
+    foldM (checkForKnownErrorReturn funcLike bb) s cdeps
+  | otherwise = return s
   where
     brs = getBlockReturns funcLike
 
@@ -557,11 +576,10 @@ checkForKnownErrorReturn :: (HasFunction funcLike, HasCFG funcLike, HasDomTree f
                          => funcLike
                          -> BasicBlock
                          -- ^ The block returning the Int value
-                         -> Either ErrorSummary ErrorSummary
+                         -> ErrorSummary
                          -> Instruction
-                         -> Analysis (Either ErrorSummary ErrorSummary)
-checkForKnownErrorReturn _ _ acc@(Right _) _ = return acc
-checkForKnownErrorReturn funcLike bb (Left s) brInst = do
+                         -> Analysis ErrorSummary
+checkForKnownErrorReturn funcLike bb s brInst = do
   res <- runMaybeT $ do
     (target, isErrHandlingFormula) <- targetOfErrorCheckBy s brInst
     ifacts <- lift $ relevantInducedFacts funcLike bb target
@@ -579,18 +597,16 @@ checkForKnownErrorReturn funcLike bb (Left s) brInst = do
             d = errDesc { errorWitnesses = [w1, w2] }
         return (d, valsUsedAsArgs)
   case res of
-    Nothing -> return (Left s)
+    Nothing -> return s
     Just (d, argVals) -> do
       fitsSuccessModel <- checkFitsSuccessModelFor f d
       case fitsSuccessModel of
         False -> do
-          -- learnErrorCodes d
-          -- learnErrorActions d
           let s' = s & errorBasicFacts %~ M.insert bb (ErrorBlock argVals)
-          liftM Right $ addErrorDescriptor f s' d
+          addErrorDescriptor f s' d
         True -> do
           let s' = s & errorBasicFacts %~ M.insert bb SuccessBlock
-          liftM Left $ removeImprobableErrors f s' d
+          removeImprobableErrors f s' d
   where
     f = getFunction funcLike
 
@@ -677,7 +693,7 @@ reportsSuccess :: (HasFunction funcLike, HasBlockReturns funcLike,
                => funcLike
                -> ErrorSummary
                -> BasicBlock
-               -> Analysis (Either ErrorSummary ErrorSummary)
+               -> Analysis ErrorSummary
 reportsSuccess funcLike s bb
   | Just spred <- singlePredecessor cfg bb
   , Just rv <- blockReturnsSameIntOnPaths rets = do
@@ -698,8 +714,8 @@ reportsSuccess funcLike s bb
               model' = HM.insertWith S.union f (S.singleton rv) model
           lift $ analysisPut st { successModel = model' }
           return s
-    return $ maybe (Left s) Right res
-  | otherwise = return (Left s)
+    return $ fromMaybe s res
+  | otherwise = return s
   where
     f = getFunction funcLike
     brs = getBlockReturns funcLike
@@ -1048,6 +1064,12 @@ This means that we are checking to see if an error MAY be checked from a given
 block, but that is actually sufficient for our purposes.  It still means that
 there is a path where an error is checked and then a constant integer is
 returned.
+
+An older version of the code stopped when it found an error being handled
+(taking the first control dependency).  Now it just inspects them all.  This
+should not really cause a problem.  It might introduce a little redundancy, but
+the results should always be the same.  The function @checkForKnownErrorReturn@
+could be modified to go back to the old behavior.
 
 -}
 

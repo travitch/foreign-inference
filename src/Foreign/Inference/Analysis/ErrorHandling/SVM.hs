@@ -6,6 +6,7 @@ module Foreign.Inference.Analysis.ErrorHandling.SVM (
   FeatureVector,
   computeFeatures,
   classifyErrorFunctions,
+  featureVectorLength
   ) where
 
 import GHC.Generics
@@ -78,6 +79,10 @@ computeFeatures bf funcs =
   where
     m = F.foldl' (computeFuncFeatures bf) mempty fs
     fs = map getFunction funcs
+
+-- probably 5-6?
+featureVectorLength :: Double
+featureVectorLength = undefined
 
 toFeatureVector :: Feature -> FeatureVector
 toFeatureVector (Feature nerr inerr insucc arg) = undefined

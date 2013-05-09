@@ -29,6 +29,7 @@ module Foreign.Inference.Analysis.ErrorHandling (
   identifyErrorHandling,
   ErrorFuncClass(..),
   FeatureVector,
+  featureVectorLength,
   errorHandlingTrainingData
   ) where
 

@@ -183,6 +183,11 @@ identifyErrorHandling funcLikes ds ics classifier =
 
 -- This just needs to take the set of values and try to find new
 -- error codes by generalizing.
+generalizeErrors :: (HasFunction funcLike)
+                 => Set Value
+                 -> ErrorSummary
+                 -> funcLike
+                 -> Analysis ErrorSummary
 generalizeErrors = undefined
 
 errorFuncHeuristic :: (HasFunction funcLike)
@@ -274,6 +279,9 @@ errorAnalysis summ funcLike = do
 -}
 
 -- | Find the error handling code in this block
+--
+-- FIXME: It may be best to learn about successes in a phase before
+-- looking for failures since the knownError phase consults success models.
 errorsForBlock :: (HasFunction funcLike, HasBlockReturns funcLike,
                    HasCFG funcLike, HasCDG funcLike, HasDomTree funcLike)
                => funcLike

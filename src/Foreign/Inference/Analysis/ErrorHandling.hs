@@ -146,15 +146,16 @@ identifyErrorHandling funcLikes ds ics classifier =
 
       -- If we have a classifier, try it.  Otherwise, use a basic
       -- heuristic.
-      let base = res1 ^. errorBaseFacts
+      let base = res1 ^. errorBasicFacts
           dfltClass = errorFuncHeuristic base funcLikes
           svmClass = classifyErrorFunctions base funcLikes
-      errorFuncs <- maybe dfltClass svmClass classifier
-      res2 <- foldM generalizeErrors res1 funcLikes
+          errorFuncs = maybe dfltClass svmClass classifier
+      res2 <- foldM (generalizeErrors errorFuncs) res1 funcLikes
 
-      if res == res2 then return res0
+      if res0 == res2 then return res0
         else fixAnalysis res2
 
+generalizeErrors = undefined
 
 errorFuncHeuristic :: (HasFunction funcLike)
                    => BasicFacts
@@ -177,7 +178,7 @@ extractBasicFacts s flike =
 
 instance SummarizeModule ErrorSummary where
   summarizeArgument _ _ = []
-  summarizeFunction f (ErrorSummary summ _) = fromMaybe [] $ do
+  summarizeFunction f (ErrorSummary summ _ _) = fromMaybe [] $ do
     fsumm <- HM.lookup f summ
     descs <- NEL.nonEmpty (F.toList fsumm)
     let retcodes = unifyReturnCodes descs
@@ -310,7 +311,7 @@ returnsTransitiveError funcLike summ bb
     brs = getBlockReturns funcLike
     recordTransitiveError i priors s callee = do
       let w = Witness i "transitive error"
-      fsumm <- lookupFunctionSummaryList (ErrorSummary s mempty) callee
+      fsumm <- lookupFunctionSummaryList s callee
       maybe (return s) (addErrorDescriptor f s) $ do
         FAReportsErrors errActs eret <- F.find isErrRetAnnot fsumm
         rvs <- intReturnsToList eret
@@ -536,7 +537,7 @@ checkForKnownErrorReturn funcLike bb (Left s) brInst = do
       -- This block is handling an error and returning a constant, so figure
       -- out what error handling actions it is taking and modify the summary.
       True -> do
-        errDesc <- branchToErrorDescriptor funcLike bb
+        (errDesc, valsUsedAsArgs) <- branchToErrorDescriptor funcLike bb
         let w1 = Witness target "check error return"
             w2 = Witness brInst "return error code"
             d = errDesc { errorWitnesses = [w1, w2] }
@@ -554,10 +555,10 @@ checkForKnownErrorReturn funcLike bb (Left s) brInst = do
   where
     f = getFunction funcLike
 
-removeImprobableErrors :: Function -> SummaryType -> ErrorDescriptor
-                       -> Analysis SummaryType
+removeImprobableErrors :: Function -> ErrorSummary -> ErrorDescriptor
+                       -> Analysis ErrorSummary
 removeImprobableErrors f s (ErrorDescriptor _ (ReturnConstantInt dis) _) =
-  return $ HM.adjust (S.foldr go mempty) f s
+  return $ s & errorSummary %~ HM.adjust (S.foldr go mempty) f
   where
     go d@(ErrorDescriptor acts (ReturnConstantInt is) ws) acc
       | S.null (S.intersection is dis) = S.insert d acc -- no overlap
@@ -603,7 +604,7 @@ checkFitsSuccessModelFor _ _ = return False
 -- describes when an error is being checked.
 --
 -- FIXME: This could handle switches based on return values
-targetOfErrorCheckBy :: SummaryType -> Instruction
+targetOfErrorCheckBy :: ErrorSummary -> Instruction
                      -> MaybeT Analysis (Instruction, SInt32 -> SBool)
 targetOfErrorCheckBy s i = do
   ics <- lift $ analysisEnvironment indirectCallSummary
@@ -765,7 +766,7 @@ computeInducedFacts funcLike bb0 target
             fs <- mapM (memoBuilder bb) dirCdeps
             case catMaybes fs of
               [] -> return Nothing
-              fs' -> return $ Just $ \(x :: SInt32) -> bAny ($x) fs'
+              fs' -> return $ Just $ \(x :: SInt32) -> bAny ($ x) fs'
 
     memoBuilder :: BasicBlock -> Instruction
                 -> FormulaBuilder (Maybe (SInt32 -> SBool))
@@ -858,13 +859,13 @@ isSat f = unsafePerformIO $ do
   Just sr <- isSatisfiable Nothing f
   return sr
 
-errorReturnValues :: SummaryType -> [Value] -> MaybeT Analysis [Int]
+errorReturnValues :: ErrorSummary -> [Value] -> MaybeT Analysis [Int]
 errorReturnValues _ [] = fail "No call targets"
 errorReturnValues s [callee] = do
-  fsumm <- lift $ lookupFunctionSummaryList (ErrorSummary s mempty) callee
+  fsumm <- lift $ lookupFunctionSummaryList s callee
   liftMaybe $ errRetVals fsumm
 errorReturnValues s (callee:rest) = do
-  fsumm <- lift $ lookupFunctionSummaryList (ErrorSummary s mempty) callee
+  fsumm <- lift $ lookupFunctionSummaryList s callee
   rvs <- liftMaybe $ errRetVals fsumm
   -- This lets us emit a warning if some callees return errors while
   -- others do not
@@ -872,7 +873,7 @@ errorReturnValues s (callee:rest) = do
   return rvs
   where
     checkOtherErrorReturns rvs c = do
-      fsumm <- lift $ lookupFunctionSummaryList (ErrorSummary s mempty) c
+      fsumm <- lift $ lookupFunctionSummaryList s c
       rvs' <- liftMaybe $ errRetVals fsumm
       let inter = S.intersection (S.fromList rvs') (S.fromList rvs)
       when (S.null inter) $ emitWarning Nothing "ErrorAnalysis" ("Mismatched error return codes for indirect call " ++ show (valueName callee))

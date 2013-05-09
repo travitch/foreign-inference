@@ -1,4 +1,4 @@
-{-# LANGUAGE PatternGuards #-}
+{-# LANGUAGE PatternGuards, DeriveGeneric #-}
 module Foreign.Inference.Analysis.ErrorHandling.SVM (
   BaseFact(..),
   BasicFacts,
@@ -8,7 +8,10 @@ module Foreign.Inference.Analysis.ErrorHandling.SVM (
   classifyErrorFunctions,
   ) where
 
--- import AI.SVM.Simple
+import GHC.Generics
+
+import Control.DeepSeq
+import Control.DeepSeq.Generics ( genericRnf )
 import qualified Data.Foldable as F
 import Data.Map ( Map )
 import qualified Data.Map as M
@@ -27,6 +30,10 @@ data BaseFact = ErrorBlock (Set Value)
               | SuccessBlock
               -- ^ Records the functions called in a block that reports
               -- success.
+              deriving (Generic, Eq, Ord)
+
+instance NFData BaseFact where
+  rnf = genericRnf
 
 -- For each block, record its error descriptor (if any).  Also include the
 -- "ignored" values - those values used as function arguments in that block.

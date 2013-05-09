@@ -569,17 +569,20 @@ checkForKnownErrorReturn funcLike bb (Left s) brInst = do
         let w1 = Witness target "check error return"
             w2 = Witness brInst "return error code"
             d = errDesc { errorWitnesses = [w1, w2] }
-        return d
+        return (d, valsUsedAsArgs)
   case res of
     Nothing -> return (Left s)
-    Just d -> do
+    Just (d, argVals) -> do
       fitsSuccessModel <- checkFitsSuccessModelFor f d
       case fitsSuccessModel of
         False -> do
           -- learnErrorCodes d
           -- learnErrorActions d
-          liftM Right $ addErrorDescriptor f s d
-        True -> liftM Left $ removeImprobableErrors f s d
+          let s' = s & errorBasicFacts %~ M.insert bb (ErrorBlock argVals)
+          liftM Right $ addErrorDescriptor f s' d
+        True -> do
+          let s' = s & errorBasicFacts %~ M.insert bb SuccessBlock
+          liftM Left $ removeImprobableErrors f s' d
   where
     f = getFunction funcLike
 

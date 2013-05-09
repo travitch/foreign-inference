@@ -2,7 +2,7 @@
 module Foreign.Inference.Analysis.ErrorHandling.SVM (
   BaseFact(..),
   BasicFacts,
-  ErrorFuncClass,
+  ErrorFuncClass(..),
   FeatureVector,
   computeFeatures,
   classifyErrorFunctions,

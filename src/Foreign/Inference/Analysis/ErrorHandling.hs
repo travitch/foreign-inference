@@ -27,6 +27,9 @@
 module Foreign.Inference.Analysis.ErrorHandling (
   ErrorSummary,
   identifyErrorHandling,
+  ErrorFuncClass(..),
+  FeatureVector,
+  errorHandlingTrainingData
   ) where
 
 import GHC.Generics
@@ -43,6 +46,7 @@ import Data.IntMap ( IntMap )
 import qualified Data.IntMap as IM
 import Data.List.NonEmpty ( NonEmpty(..) )
 import qualified Data.List.NonEmpty as NEL
+import qualified Data.Map as M
 import Data.Maybe ( catMaybes, fromMaybe )
 import Data.Monoid
 import Data.SBV
@@ -129,6 +133,27 @@ instance Monoid ErrorState where
 
 type Analysis = AnalysisMonad ErrorData ErrorState
 
+data TrainingWrapper = TrainingWrapper [(Value, FeatureVector)] Diagnostics
+instance HasDiagnostics TrainingWrapper where
+  diagnosticLens f (TrainingWrapper val d) =
+    fmap (\d' -> TrainingWrapper val d') (f d)
+
+errorHandlingTrainingData :: (HasFunction funcLike, HasBlockReturns funcLike,
+                              HasDomTree funcLike, HasCDG funcLike,
+                              HasCFG funcLike)
+                          => [funcLike]
+                          -> DependencySummary
+                          -> IndirectCallSummary
+                          -> [(Value, FeatureVector)]
+errorHandlingTrainingData funcLikes ds ics = r
+  where
+    TrainingWrapper r _ = runAnalysis a ds (ErrorData ics) mempty
+    a = do
+      res1 <- foldM extractBasicFacts mempty funcLikes
+      let base = res1 ^. errorBasicFacts
+          res2 = M.toList $ computeFeatures base funcLikes
+      return $ TrainingWrapper res2 mempty
+
 
 identifyErrorHandling :: (HasFunction funcLike, HasBlockReturns funcLike,
                           HasCFG funcLike, HasCDG funcLike, HasDomTree funcLike)
@@ -155,6 +180,8 @@ identifyErrorHandling funcLikes ds ics classifier =
       if res0 == res2 then return res0
         else fixAnalysis res2
 
+-- This just needs to take the set of values and try to find new
+-- error codes by generalizing.
 generalizeErrors = undefined
 
 errorFuncHeuristic :: (HasFunction funcLike)
@@ -464,26 +491,26 @@ matchReturnAndGeneralizeAction funcLike s bb = do
     f = getFunction funcLike
 -}
 
-singleFunctionErrorAction :: Set ErrorAction -> MaybeT Analysis String
-singleFunctionErrorAction acts =
-  case filter isFuncallAct (S.toList acts) of
-    [FunctionCall fname _] -> return fname
-    _ -> fail "Not a singleton function call action"
-
-learnErrorFunction :: String -> MaybeT Analysis ()
-learnErrorFunction funcName = do
-  st <- lift analysisGet
-  let fs' = S.insert funcName (errorFunctions st)
-  lift $ analysisPut st { errorFunctions = fs' }
+-- singleFunctionErrorAction :: Set ErrorAction -> MaybeT Analysis String
+-- singleFunctionErrorAction acts =
+--   case filter isFuncallAct (S.toList acts) of
+--     [FunctionCall fname _] -> return fname
+--     _ -> fail "Not a singleton function call action"
+-- 
+-- learnErrorFunction :: String -> MaybeT Analysis ()
+-- learnErrorFunction funcName = do
+--   st <- lift analysisGet
+--   let fs' = S.insert funcName (errorFunctions st)
+--   lift $ analysisPut st { errorFunctions = fs' }
 
 -- | Return all of the error codes we have already learned.
 --
 -- NOTE: This is one place where we could filter out known "success codes".
-learnedErrorCodes :: Analysis (Set Int)
-learnedErrorCodes = liftM errorCodes analysisGet
-
-learnedErrorFunctions :: Analysis (Set String)
-learnedErrorFunctions = liftM errorFunctions analysisGet
+-- learnedErrorCodes :: Analysis (Set Int)
+-- learnedErrorCodes = liftM errorCodes analysisGet
+-- 
+-- learnedErrorFunctions :: Analysis (Set String)
+-- learnedErrorFunctions = liftM errorFunctions analysisGet
 
 -- | In this case, the basic block is handling a known error and turning it
 -- into an integer return code (possibly while performing some other
@@ -572,24 +599,24 @@ removeImprobableErrors _ s _ = return s
 
 -- | Only learn new error actions if the descriptor only includes a single
 -- error action
-learnErrorActions :: ErrorDescriptor -> Analysis ()
-learnErrorActions (ErrorDescriptor acts (ReturnConstantInt _) _)
-  | S.size acts /= 1 = return ()
-  | otherwise = do
-    st <- analysisGet
-    case F.find isFuncallAct acts of
-      Just (FunctionCall fname _) ->
-        analysisPut st { errorFunctions = S.insert fname (errorFunctions st) }
-      _ -> return ()
-learnErrorActions _ = return ()
-
--- | Union in new error codes.  Note, call this carefully for now because
--- it does not filter out success codes.
-learnErrorCodes :: ErrorDescriptor -> Analysis ()
-learnErrorCodes (ErrorDescriptor _ (ReturnConstantInt is) _) = do
-  st <- analysisGet
-  analysisPut st { errorCodes = errorCodes st `S.union` is }
-learnErrorCodes _ = return ()
+-- learnErrorActions :: ErrorDescriptor -> Analysis ()
+-- learnErrorActions (ErrorDescriptor acts (ReturnConstantInt _) _)
+--   | S.size acts /= 1 = return ()
+--   | otherwise = do
+--     st <- analysisGet
+--     case F.find isFuncallAct acts of
+--       Just (FunctionCall fname _) ->
+--         analysisPut st { errorFunctions = S.insert fname (errorFunctions st) }
+--       _ -> return ()
+-- learnErrorActions _ = return ()
+-- 
+-- -- | Union in new error codes.  Note, call this carefully for now because
+-- -- it does not filter out success codes.
+-- learnErrorCodes :: ErrorDescriptor -> Analysis ()
+-- learnErrorCodes (ErrorDescriptor _ (ReturnConstantInt is) _) = do
+--   st <- analysisGet
+--   analysisPut st { errorCodes = errorCodes st `S.union` is }
+-- learnErrorCodes _ = return ()
 
 checkFitsSuccessModelFor :: Function -> ErrorDescriptor -> Analysis Bool
 checkFitsSuccessModelFor f (ErrorDescriptor _ (ReturnConstantInt is) _) = do
@@ -970,17 +997,17 @@ singlePredecessor cfg bb =
     [singlePred] -> return singlePred
     _ -> Nothing
 
-isFuncallAct :: ErrorAction -> Bool
-isFuncallAct a =
-  case a of
-    FunctionCall _ _ -> True
-    _ -> False
-
-isErrorFuncCall :: Set String -> ErrorAction -> Bool
-isErrorFuncCall funcSet errAct =
-  case errAct of
-    FunctionCall s _ -> S.member s funcSet
-    _ -> False
+-- isFuncallAct :: ErrorAction -> Bool
+-- isFuncallAct a =
+--   case a of
+--     FunctionCall _ _ -> True
+--     _ -> False
+-- 
+-- isErrorFuncCall :: Set String -> ErrorAction -> Bool
+-- isErrorFuncCall funcSet errAct =
+--   case errAct of
+--     FunctionCall s _ -> S.member s funcSet
+--     _ -> False
 
 liftMaybe :: Maybe a -> MaybeT Analysis a
 liftMaybe = maybe mzero return

@@ -54,7 +54,7 @@ instance Binary ErrorFuncClass where
     b <- get
     if b then return ErrorReporter else return OtherFunction
 
-type FeatureVector = UV.Vector Double
+type FeatureVector = Vector Double
 
 data Feature = Feature { notError :: Int
                        , inError :: Int
@@ -75,17 +75,23 @@ computeFeatures :: (HasFunction funcLike)
                 -> [funcLike]
                 -> Map Value FeatureVector
 computeFeatures bf funcs =
-  fmap toFeatureVector m
+  fmap (toFeatureVector nFuncs) m
   where
     m = F.foldl' (computeFuncFeatures bf) mempty fs
     fs = map getFunction funcs
+    nFuncs = M.size m
 
--- probably 5-6?
 featureVectorLength :: Double
-featureVectorLength = undefined
+featureVectorLength = 5.0
 
-toFeatureVector :: Feature -> FeatureVector
-toFeatureVector (Feature nerr inerr insucc arg) = undefined
+toFeatureVector :: Int -> Feature -> FeatureVector
+toFeatureVector nFuncs (Feature nerr inerr insucc arg) =
+  UV.fromList [ fromIntegral nerr / fromIntegral nFuncs
+              , fromIntegral inerr / fromIntegral nFuncs
+              , fromIntegral insucc / fromIntegral nFuncs
+              , fromIntegral arg / fromIntegral nFuncs
+              , fromIntegral inerr / fromIntegral nerr
+              ]
 
 computeFuncFeatures :: BasicFacts
                     -> Map Value Feature

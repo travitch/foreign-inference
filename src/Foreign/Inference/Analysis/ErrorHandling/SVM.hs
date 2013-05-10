@@ -149,10 +149,6 @@ directCallTarget v =
         _ -> fail "Not a direct call"
     _ -> fail "Not a call"
 
--- The classifier should be:
---
--- > classify classifier
-
 -- | Compute the features for each called value in the library (using
 -- the BasicFacts and funcLikes).  Classify each one using the classifier.
 -- Insert each 'ErrorReporter' into the result set.
@@ -160,7 +156,6 @@ classifyErrorFunctions :: (HasFunction funcLike)
                        => BasicFacts
                        -> [funcLike]
                        -> (FeatureVector -> ErrorFuncClass)
---                       -> SVMClassifier ErrorFuncClass
                        -> Set Value
 classifyErrorFunctions facts funcs classifier =
   F.foldl' classifyValue mempty features

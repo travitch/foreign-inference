@@ -27,6 +27,7 @@
 module Foreign.Inference.Analysis.ErrorHandling (
   ErrorSummary,
   identifyErrorHandling,
+  Classifier(..),
   ErrorFuncClass(..),
   FeatureVector,
   featureVectorLength,
@@ -155,13 +156,20 @@ errorHandlingTrainingData funcLikes ds ics = r
           res2 = M.toList $ computeFeatures base funcLikes
       return $ TrainingWrapper res2 mempty
 
+data Classifier = FeatureClassifier (FeatureVector -> ErrorFuncClass)
+                -- ^ Use a classifier over feature vectors (possibly machine
+                -- learning based) to classify error reporting functions
+                | DefaultClassifier
+                -- ^ Use a basic heuristic instead
+                | NoClassifier
+                -- ^ Do not attempt to learn error-reporting functions
 
 identifyErrorHandling :: (HasFunction funcLike, HasBlockReturns funcLike,
                           HasCFG funcLike, HasCDG funcLike, HasDomTree funcLike)
                          => [funcLike]
                          -> DependencySummary
                          -> IndirectCallSummary
-                         -> Maybe (FeatureVector -> ErrorFuncClass)
+                         -> Classifier
                          -> ErrorSummary
 identifyErrorHandling funcLikes ds ics classifier =
   runAnalysis (fixAnalysis mempty) ds roData mempty
@@ -175,9 +183,10 @@ identifyErrorHandling funcLikes ds ics classifier =
       -- heuristic.  Use the classification to generalize and find
       -- new error blocks.
       let base = res1 ^. errorBasicFacts
-          dfltClass = errorFuncHeuristic base funcLikes
-          svmClass = classifyErrorFunctions base funcLikes
-          errorFuncs = maybe dfltClass svmClass classifier
+          errorFuncs = case classifier of
+            DefaultClassifier -> errorFuncHeuristic base funcLikes
+            FeatureClassifier c -> classifyErrorFunctions base funcLikes c
+            NoClassifier -> mempty
       res2 <- foldM (generalizeErrors errorFuncs) res1 funcLikes
 
       -- Once we know all of the error blocks we can find in this pass,
@@ -188,9 +197,14 @@ identifyErrorHandling funcLikes ds ics classifier =
       if res0 == res3 then return res0
         else fixAnalysis res3
 
--- This just needs to take the set of values and try to find new
+-- | This just needs to take the set of values and try to find new
 -- error codes by generalizing.  Be careful to ignore blocks we
 -- already know are reporting errors or successes.
+--
+-- We can also generalize based on return values (returning a constant known
+-- to be an error code is highly suspicious).
+--
+-- We also want to incorporate information about what finalizers we know
 generalizeErrors :: (HasFunction funcLike, HasBlockReturns funcLike)
                  => Set Value -- ^ Functions used to report errors
                  -> ErrorSummary

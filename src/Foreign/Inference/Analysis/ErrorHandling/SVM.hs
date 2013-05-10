@@ -47,6 +47,8 @@ data ErrorFuncClass = ErrorReporter
                     | OtherFunction
                     deriving (Eq, Ord, Show)
 
+-- | This Binary instance maps the labels to Bool.  This instance
+-- is required to serialize the SVM classifier.
 instance Binary ErrorFuncClass where
   put ErrorReporter = put True
   put OtherFunction = put False

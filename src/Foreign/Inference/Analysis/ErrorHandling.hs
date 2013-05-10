@@ -48,7 +48,7 @@ import qualified Data.IntMap as IM
 import Data.List.NonEmpty ( NonEmpty(..) )
 import qualified Data.List.NonEmpty as NEL
 import qualified Data.Map as M
-import Data.Maybe ( catMaybes, fromMaybe )
+import Data.Maybe ( catMaybes, fromMaybe, mapMaybe )
 import Data.Monoid
 import Data.SBV
 import Data.Set ( Set )
@@ -191,13 +191,58 @@ identifyErrorHandling funcLikes ds ics classifier =
 -- This just needs to take the set of values and try to find new
 -- error codes by generalizing.  Be careful to ignore blocks we
 -- already know are reporting errors or successes.
-generalizeErrors :: (HasFunction funcLike)
-                 => Set Value
+generalizeErrors :: (HasFunction funcLike, HasBlockReturns funcLike)
+                 => Set Value -- ^ Functions used to report errors
                  -> ErrorSummary
                  -> funcLike
                  -> Analysis ErrorSummary
-generalizeErrors = undefined
+generalizeErrors errFuncs s funcLike = do
+  st <- analysisGet
+  let successCodes = mconcat (HM.elems (successModel st))
+      baseFacts = s ^. errorBasicFacts
+      unclassifiedBlocks = filter (isUnclassifiedBlock baseFacts) (functionBody f)
+      brs = getBlockReturns funcLike
+  return $ F.foldl' (generalizeBlock errFuncs successCodes brs) s unclassifiedBlocks
+  where
+    f = getFunction funcLike
 
+isUnclassifiedBlock :: BasicFacts -> BasicBlock -> Bool
+isUnclassifiedBlock baseFacts bb = not $ M.member bb baseFacts
+
+-- If the block has a constant return (not a success code) and calls an errFunc...
+generalizeBlock :: Set Value
+                -> Set Int
+                -> BlockReturns
+                -> ErrorSummary
+                -> BasicBlock
+                -> ErrorSummary
+generalizeBlock errFuncs succCodes brs summ bb
+  | Just rv <- blockReturn brs bb
+  , Just rc <- retValToConstantInt rv
+  , Just errDesc <- blockErrorDescriptor rc
+  , not (S.member rc succCodes) =
+    let val = S.singleton errDesc
+    in summ & errorSummary %~ HM.insertWith S.union f val
+  | otherwise = summ
+  where
+    f = basicBlockFunction bb
+    isErrFuncCall i =
+      case i of
+        CallInst { callFunction = (stripBitcasts -> cv) }
+          | S.member cv errFuncs -> fmap identifierAsString (valueName cv)
+          | otherwise -> Nothing
+        _ -> Nothing
+    blockErrorDescriptor rc =
+      let calledErrFuncs = mapMaybe isErrFuncCall (basicBlockInstructions bb)
+          acts = map (\callee -> FunctionCall callee mempty) calledErrFuncs
+          ret = ReturnConstantInt (S.singleton rc)
+      in case null calledErrFuncs of
+        True -> fail "Not an error block"
+        False -> return $ ErrorDescriptor (S.fromList acts) ret []
+
+-- | This is a basic heuristic to categorize functions as error-reporting
+-- functions or not.  This is the fallback if no SVM classifier is
+-- provided.
 errorFuncHeuristic :: (HasFunction funcLike)
                    => BasicFacts
                    -> [funcLike]

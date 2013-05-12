@@ -399,11 +399,20 @@ returnsTransitiveError funcLike summ bb
             let rvs' = foldr (addUncaughtErrors priors') mempty rvs
             return $! ErrorDescriptor errActs (ReturnConstantInt rvs') [w]
 
-
+-- | Update the error summary with the given descriptor.  If the
+-- descriptor is returning an integer error code, additionally
+-- file that code away in the errorCodes state for later generalization.
 addErrorDescriptor :: Function -> ErrorSummary -> ErrorDescriptor
                    -> Analysis ErrorSummary
-addErrorDescriptor f s d =
-  return $ s & errorSummary %~ HM.insertWith S.union f (S.singleton d)
+addErrorDescriptor f s d
+  | Just is <- intReturnsToList (errorReturns d) = do
+    st <- analysisGet
+    analysisPut st { errorCodes = S.fromList is `mappend` errorCodes st }
+    return s'
+  | otherwise = return s'
+  where
+    s' = s & errorSummary %~ HM.insertWith S.union f (S.singleton d)
+
 
 -- | Check an error code @rc@ against all relevant conditions that are
 -- active at the current program point.  If @rc@ has not been handled
@@ -457,6 +466,10 @@ handlesKnownError funcLike s bb -- See Note [Known Error Conditions]
 -- to the conditional check....
 --
 -- Note that we take the first (nearest) checked error we find.
+--
+-- As error descriptors are learned, this function records returned error
+-- codes in the analysis state.  These will be used later to attempt
+-- generalizations.
 checkForKnownErrorReturn :: (HasFunction funcLike, HasCFG funcLike, HasDomTree funcLike,
                              HasCDG funcLike, HasBlockReturns funcLike)
                          => funcLike

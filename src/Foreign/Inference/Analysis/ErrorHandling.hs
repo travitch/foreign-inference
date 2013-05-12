@@ -26,8 +26,10 @@
 --    pattern.
 module Foreign.Inference.Analysis.ErrorHandling (
   ErrorSummary,
-  identifyErrorHandling,
   Classifier(..),
+  ErrorAnalysisOptions(..),
+  defaultErrorAnalysisOptions,
+  identifyErrorHandling,
   ErrorFuncClass(..),
   FeatureVector,
   featureVectorLength,
@@ -156,6 +158,12 @@ errorHandlingTrainingData funcLikes ds ics = r
           res2 = M.toList $ computeFeatures base funcLikes
       return $ TrainingWrapper res2 mempty
 
+-- | FIXME: Provide a classifier where the user supplies a set of
+-- error-reporting functions that we can trivially use.  That would
+-- be a nice compromise that could remove a lot of guessing.  It would
+-- also be easy for library authors.
+--
+-- Also provide a regex matcher/classifier
 data Classifier = FeatureClassifier (FeatureVector -> ErrorFuncClass)
                 -- ^ Use a classifier over feature vectors (possibly machine
                 -- learning based) to classify error reporting functions
@@ -164,14 +172,25 @@ data Classifier = FeatureClassifier (FeatureVector -> ErrorFuncClass)
                 | NoClassifier
                 -- ^ Do not attempt to learn error-reporting functions
 
+data ErrorAnalysisOptions =
+  ErrorAnalysisOptions { errorClassifier :: Classifier
+                       , generalizeFromReturns :: Bool
+                       }
+
+defaultErrorAnalysisOptions :: ErrorAnalysisOptions
+defaultErrorAnalysisOptions =
+  ErrorAnalysisOptions { errorClassifier = DefaultClassifier
+                       , generalizeFromReturns = True
+                       }
+
 identifyErrorHandling :: (HasFunction funcLike, HasBlockReturns funcLike,
                           HasCFG funcLike, HasCDG funcLike, HasDomTree funcLike)
                          => [funcLike]
                          -> DependencySummary
                          -> IndirectCallSummary
-                         -> Classifier
+                         -> ErrorAnalysisOptions
                          -> ErrorSummary
-identifyErrorHandling funcLikes ds ics classifier =
+identifyErrorHandling funcLikes ds ics opts =
   runAnalysis (fixAnalysis mempty) ds roData mempty
   where
     roData = ErrorData ics
@@ -183,7 +202,7 @@ identifyErrorHandling funcLikes ds ics classifier =
       -- heuristic.  Use the classification to generalize and find
       -- new error blocks.
       let base = res1 ^. errorBasicFacts
-          errorFuncs = case classifier of
+          errorFuncs = case errorClassifier opts of
             DefaultClassifier -> errorFuncHeuristic base funcLikes
             FeatureClassifier c -> classifyErrorFunctions base funcLikes c
             NoClassifier -> mempty

@@ -201,20 +201,39 @@ identifyErrorHandling funcLikes ds ics opts =
       -- If we have a classifier, try it.  Otherwise, use a basic
       -- heuristic.  Use the classification to generalize and find
       -- new error blocks.
-      let base = res1 ^. errorBasicFacts
+      st <- analysisGet
+      let successCodes = mconcat (HM.elems (successModel st))
+          base = res1 ^. errorBasicFacts
           errorFuncs = case errorClassifier opts of
             DefaultClassifier -> errorFuncHeuristic base funcLikes
             FeatureClassifier c -> classifyErrorFunctions base funcLikes c
             NoClassifier -> mempty
-      res2 <- foldM (generalizeErrors errorFuncs) res1 funcLikes
+          ganalysis = generalizeBlockFromErrFunc errorFuncs successCodes base
+      -- Generalizing based on error functions will learn new error values.
+      res2 <- foldM (byBlock ganalysis) res1 funcLikes
+
+      -- Now try to generalize based on error values
+      res3 <- foldM (byBlock generalizeFromErrorCodes) res2 funcLikes
 
       -- Once we know all of the error blocks we can find in this pass,
       -- look for all of the transitive errors.  These don't give us any
       -- information that would help in other phases.
-      res3 <- foldM (byBlock returnsTransitiveError) res2 funcLikes
+      res4 <- foldM (byBlock returnsTransitiveError) res3 funcLikes
 
-      if res0 == res3 then return res0
-        else fixAnalysis res3
+      if res0 == res4 then return res0
+        else fixAnalysis res4
+
+-- | If a block returns an integer value in
+generalizeFromErrorCodes :: (HasFunction funcLike, HasBlockReturns funcLike)
+                         => funcLike
+                         -> ErrorSummary
+                         -> BasicBlock
+                         -> Analysis ErrorSummary
+generalizeFromErrorCodes = undefined
+
+
+isUnclassifiedBlock :: BasicFacts -> BasicBlock -> Bool
+isUnclassifiedBlock baseFacts bb = not $ M.member bb baseFacts
 
 -- | This just needs to take the set of values and try to find new
 -- error codes by generalizing.  Be careful to ignore blocks we
@@ -223,41 +242,28 @@ identifyErrorHandling funcLikes ds ics opts =
 -- We can also generalize based on return values (returning a constant known
 -- to be an error code is highly suspicious).
 --
--- We also want to incorporate information about what finalizers we know
-generalizeErrors :: (HasFunction funcLike, HasBlockReturns funcLike)
-                 => Set Value -- ^ Functions used to report errors
-                 -> ErrorSummary
-                 -> funcLike
-                 -> Analysis ErrorSummary
-generalizeErrors errFuncs s funcLike = do
-  st <- analysisGet
-  let successCodes = mconcat (HM.elems (successModel st))
-      baseFacts = s ^. errorBasicFacts
-      unclassifiedBlocks = filter (isUnclassifiedBlock baseFacts) (functionBody f)
-      brs = getBlockReturns funcLike
-  return $ F.foldl' (generalizeBlock errFuncs successCodes brs) s unclassifiedBlocks
-  where
-    f = getFunction funcLike
-
-isUnclassifiedBlock :: BasicFacts -> BasicBlock -> Bool
-isUnclassifiedBlock baseFacts bb = not $ M.member bb baseFacts
-
--- If the block has a constant return (not a success code) and calls an errFunc...
-generalizeBlock :: Set Value
-                -> Set Int
-                -> BlockReturns
-                -> ErrorSummary
-                -> BasicBlock
-                -> ErrorSummary
-generalizeBlock errFuncs succCodes brs summ bb
+-- | If the block has a constant return (not a success code) and calls an errFunc...
+--
+-- TODO: Incorporate information about finalizers.  Do not call a finalizer
+-- an error reporting function (ever)
+generalizeBlockFromErrFunc :: (HasFunction funcLike, HasBlockReturns funcLike)
+                           => Set Value
+                           -> Set Int
+                           -> BasicFacts
+                           -> funcLike
+                           -> ErrorSummary
+                           -> BasicBlock
+                           -> Analysis ErrorSummary
+generalizeBlockFromErrFunc errFuncs succCodes baseFacts funcLike summ bb
   | Just rv <- blockReturn brs bb
   , Just rc <- retValToConstantInt rv
   , Just errDesc <- blockErrorDescriptor rc
-  , not (S.member rc succCodes) =
+  , isUnclassifiedBlock baseFacts bb && not (S.member rc succCodes) =
     let val = S.singleton errDesc
-    in summ & errorSummary %~ HM.insertWith S.union f val
-  | otherwise = summ
+    in return $ summ & errorSummary %~ HM.insertWith S.union f val
+  | otherwise = return summ
   where
+    brs = getBlockReturns funcLike
     f = basicBlockFunction bb
     isErrFuncCall i =
       case i of

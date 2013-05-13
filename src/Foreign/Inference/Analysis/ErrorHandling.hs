@@ -362,28 +362,6 @@ unifyReturnCodes = F.foldr1 unifyReturns . fmap errorReturns
     unifyReturns (ReturnConstantPtr _) r@(ReturnConstantInt _) = r
     unifyReturns r@(ReturnConstantInt _) (ReturnConstantPtr _) = r
 
-{-
-
-1) Find all basic error reporting code that we /know/ handles errors.
-
-2) Try to learn all at once, but also taking into account how often
-   candidate error functions are called in non-error code.
-   We could distinguish by looking at what is returned when the
-   function is called (if it is not a constant, it is probably a mark
-   against).
-
-3) Try to generalize.
-
-A problem with the current code is that we try to learn error functions
-in isolation, which makes it very difficult to distinguish between
-cleanup code and error reporting code.
-
-Cleanup code will occur (much?) more often in contexts that do not have
-a constant return value.
-
--}
-
-
 -- | If the function transitively returns errors, record them in the
 -- error summary.  Errors are only transitive if they are unhandled in
 -- this function.  For example, consider the following code:

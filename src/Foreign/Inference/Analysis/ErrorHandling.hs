@@ -283,9 +283,10 @@ generalizeBlockFromErrFunc errFuncs succCodes baseFacts funcLike summ bb
           | S.member cv errFuncs -> fmap identifierAsString (valueName cv)
           | otherwise -> Nothing
         _ -> Nothing
+    simpleFuncallAction callee = FunctionCall callee mempty
     blockErrorDescriptor rc =
       let calledErrFuncs = mapMaybe isErrFuncCall (basicBlockInstructions bb)
-          acts = map (\callee -> FunctionCall callee mempty) calledErrFuncs
+          acts = map simpleFuncallAction calledErrFuncs
           ret = ReturnConstantInt (S.singleton rc)
       in case null calledErrFuncs of
         True -> fail "Not an error block"

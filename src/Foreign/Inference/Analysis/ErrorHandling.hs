@@ -229,7 +229,19 @@ generalizeFromErrorCodes :: (HasFunction funcLike, HasBlockReturns funcLike)
                          -> ErrorSummary
                          -> BasicBlock
                          -> Analysis ErrorSummary
-generalizeFromErrorCodes = undefined
+generalizeFromErrorCodes funcLike s bb
+  | Just rv <- blockReturn brs bb
+  , Just rc <- retValToConstantInt rv = do
+    st <- analysisGet
+    case rc `S.member` errorCodes st of
+      False -> return s
+      True -> do
+        let ed = ErrorDescriptor mempty (ReturnConstantInt (S.singleton rc)) []
+        addErrorDescriptor f s ed
+  | otherwise = return s
+  where
+    f = getFunction funcLike
+    brs = getBlockReturns funcLike
 
 
 isUnclassifiedBlock :: BasicFacts -> BasicBlock -> Bool

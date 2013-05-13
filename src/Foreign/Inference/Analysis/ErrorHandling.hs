@@ -51,12 +51,11 @@ import qualified Data.IntMap as IM
 import Data.List.NonEmpty ( NonEmpty(..) )
 import qualified Data.List.NonEmpty as NEL
 import qualified Data.Map as M
-import Data.Maybe ( catMaybes, fromMaybe, mapMaybe )
+import Data.Maybe ( fromMaybe, mapMaybe )
 import Data.Monoid
 import Data.SBV
 import Data.Set ( Set )
 import qualified Data.Set as S
-import System.IO.Unsafe ( unsafePerformIO )
 
 import LLVM.Analysis
 import LLVM.Analysis.BlockReturnValue
@@ -68,7 +67,8 @@ import Foreign.Inference.AnalysisMonad
 import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
 import Foreign.Inference.Analysis.IndirectCallResolver
-import Foreign.Inference.Analysis.ErrorHandling.SVM
+import Foreign.Inference.Analysis.ErrorHandling.Features
+import Foreign.Inference.Analysis.ErrorHandling.SMT
 
 -- import Text.Printf
 -- import Debug.Trace
@@ -112,10 +112,6 @@ instance NFData ErrorSummary where
 instance HasDiagnostics ErrorSummary where
   diagnosticLens = errorDiagnostics
 
-data ErrorData =
-  ErrorData { indirectCallSummary :: IndirectCallSummary
-            }
-
 -- | This is the data we want to bootstrap through the two
 -- generalization rules
 data ErrorState =
@@ -134,6 +130,11 @@ instance Monoid ErrorState where
                , formulaCache = HM.union fc1 fc2
                }
 
+
+
+data ErrorData =
+  ErrorData { indirectCallSummary :: IndirectCallSummary
+            }
 
 type Analysis = AnalysisMonad ErrorData ErrorState
 
@@ -570,24 +571,6 @@ checkFitsSuccessModelFor f (ErrorDescriptor _ (ReturnConstantInt is) _) = do
     Just m -> return $ not $ S.null (is `S.intersection` m)
 checkFitsSuccessModelFor _ _ = return False
 
--- | Given a branch instruction, if the branch is checking the return value of
--- a function call, return the function call instruction and a formula that
--- describes when an error is being checked.
---
--- FIXME: This could handle switches based on return values
-targetOfErrorCheckBy :: ErrorSummary -> Instruction
-                     -> MaybeT Analysis (Instruction, SInt32 -> SBool)
-targetOfErrorCheckBy s i = do
-  ics <- lift $ analysisEnvironment indirectCallSummary
-  case i of
-    BranchInst { branchCondition = (valueContent' ->
-      InstructionC ICmpInst { cmpV1 = v1, cmpV2 = v2 })} -> do
-        (ci, callee) <- firstCallInst [v1, v2]
-        let callees = callTargets ics callee
-        rvs <- errorReturnValues s callees
-        let formula (x :: SInt32) = bAny (.==x) (map fromIntegral rvs)
-        return (ci, formula)
-    _ -> fail "Not a conditional branch"
 
 -- | The other analyses identify error handling code.  This one instead looks
 -- for code that we can prove is /not/ handling an error.  If we are on a
@@ -653,182 +636,6 @@ firstCallInst (v:vs) =
     Just i@CallInst { callFunction = callee } -> return (i, callee)
     _ -> firstCallInst vs
 
-
--- | Produce a formula representing all of the facts we must hold up
--- to this point.  The argument of the formula is the variable
--- representing the return value of the function we are interested in.
---
--- This is necessary to correctly handle conditions that are checked
--- in multiple parts (or just compound conditions).  Note that the
--- approach here is not quite complete - if part of a compound
--- condition is checked far away and we can't prove that it still
--- holds, we will miss it.  It should cover the realistic cases,
--- though.
---
--- As an example, consider:
---
--- > bytesRead = read(...);
--- > if(bytesRead < 0) {
--- >   signalError(...);
--- >   return ERROR;
--- > }
--- >
--- > if(bytesRead == 0) {
--- >   return EOF;
--- > }
--- >
--- > return OK;
---
--- Checking the first clause in isolation correctly identifies
--- signalError as an error function and ERROR as an error return code.
--- However, checking the second in isolation implies that OK is an
--- error code.
---
--- The correct thing to do is to check the second condition with the
--- fact @bytesRead >= 0@ in scope, which gives the compound predicate
---
--- > bytesRead >= 0 &&& bytesRead /= 0 &&& bytesRead == -1
---
--- or
---
--- > bytesRead >= 0 &&& bytesRead == 0 &&& bytesRead == -1
---
--- Both of these are unsat, which is what we want (since the second
--- condition isn't checking an error).
-relevantInducedFacts :: (HasFunction funcLike, HasBlockReturns funcLike,
-                         HasCFG funcLike, HasCDG funcLike, HasDomTree funcLike)
-                     => funcLike
-                     -> BasicBlock
-                     -> Instruction
-                     -> Analysis (Maybe (SInt32 -> SBool))
-relevantInducedFacts funcLike bb0 target = do
-  st <- analysisGet
-  case HM.lookup (f, bb0, target) (formulaCache st) of
-    Just formula -> return formula
-    Nothing -> do
-      let formula = evalState (computeInducedFacts funcLike bb0 target) (mempty, mempty)
-      analysisPut st { formulaCache = HM.insert (f, bb0, target) formula (formulaCache st) }
-      return formula
-  where
-    f = getFunction funcLike
-
-type FormulaBuilder = State (Set Instruction, HashMap (BasicBlock, Instruction) (Maybe (SInt32 -> SBool)))
-
-computeInducedFacts :: (HasFunction funcLike, HasBlockReturns funcLike,
-                        HasCFG funcLike, HasCDG funcLike, HasDomTree funcLike)
-                    => funcLike
-                    -> BasicBlock
-                    -> Instruction
-                    -> FormulaBuilder (Maybe (SInt32 -> SBool))
-computeInducedFacts funcLike bb0 target
-  | S.null cdeps = return Nothing
-  | otherwise = buildRelevantFacts bb0
-  where
-    ti0 = basicBlockTerminatorInstruction bb0
-    cdeps = S.fromList $ controlDependencies funcLike ti0
-    buildRelevantFacts bb
-      | otherwise =
-        let ti = basicBlockTerminatorInstruction bb
-            dirCdeps = directControlDependencies funcLike ti
-        in case dirCdeps of
-          [] -> return Nothing
-          [singleDep] -> memoBuilder bb singleDep
-          _ -> do
-            fs <- mapM (memoBuilder bb) dirCdeps
-            case catMaybes fs of
-              [] -> return Nothing
-              fs' -> return $ Just $ \(x :: SInt32) -> bAny ($ x) fs'
-
-    memoBuilder :: BasicBlock -> Instruction
-                -> FormulaBuilder (Maybe (SInt32 -> SBool))
-    memoBuilder bb cdep = do
-      (visited, s) <- get
-      case HM.lookup (bb, cdep) s of
-        Just f -> return f
-        Nothing ->
-          case S.member cdep visited of
-            True -> return Nothing
-            False -> do
-              put (S.insert cdep visited, s)
-              factBuilder bb cdep
-    factBuilder :: BasicBlock -> Instruction
-                -> FormulaBuilder (Maybe (SInt32 -> SBool))
-    factBuilder bb cdep = do
-      let Just cdepBlock = instructionBasicBlock cdep
-      case cdep of
-        BranchInst { branchTrueTarget = tt
-                   , branchCondition = (valueContent' ->
-          InstructionC ICmpInst { cmpPredicate = p
-                                , cmpV1 = val1
-                                , cmpV2 = val2
-                                })}
-            | ignoreCasts val1 == toValue target ||
-              ignoreCasts val2 == toValue target -> do
-                let doNeg = if blockDominates funcLike tt bb then id else bnot
-                    thisFact = inducedFact val1 val2 p doNeg
-                innerFact <- buildRelevantFacts cdepBlock
-                let fact' = liftedConjoin thisFact innerFact
-                (vis, st) <- get
-                put $ (vis, HM.insert (bb, cdep) fact' st)
-                return fact'
-            | otherwise -> buildRelevantFacts cdepBlock
-        _ -> return Nothing
-
-
-liftedConjoin :: Maybe (SInt32 -> SBool) -> Maybe (SInt32 -> SBool)
-              -> Maybe (SInt32 -> SBool)
-liftedConjoin Nothing Nothing = Nothing
-liftedConjoin f1@(Just _) Nothing = f1
-liftedConjoin Nothing f2@(Just _) = f2
-liftedConjoin (Just f1) (Just f2) = Just $ \(x :: SInt32) -> f1 x &&& f2 x
-
-blockDominates :: (HasDomTree t) => t -> BasicBlock -> BasicBlock -> Bool
-blockDominates f b1 b2 = dominates f i1 i2
-  where
-    i1 = basicBlockTerminatorInstruction b1
-    i2 = basicBlockTerminatorInstruction b2
-
--- | Given a formula that holds up to the current location @mf@, augment
--- it by conjoining the new fact we are introducing (if any).  The new
--- fact is derived from the relationship ('CmpPredicate') between the two
--- 'Value' arguments.
-inducedFact :: Value -> Value -> CmpPredicate
-            -> (SBool -> SBool) -> Maybe (SInt32 -> SBool)
-inducedFact val1 val2 p doNeg = do
-  rel <- cmpPredicateToRelation p
-  case (valueContent' val1, valueContent' val2) of
-    (ConstantC ConstantInt { constantIntValue = (fromIntegral -> iv) }, _) ->
-      return $ \(x :: SInt32) -> doNeg (iv `rel` x)
-    (_, ConstantC ConstantInt { constantIntValue = (fromIntegral -> iv)}) ->
-      return $ \(x :: SInt32) -> doNeg (x `rel` iv)
-    (ConstantC ConstantPointerNull {}, _) ->
-      return $ \(x :: SInt32) -> doNeg (0 `rel` x)
-    (_, ConstantC ConstantPointerNull {}) ->
-      return $ \(x :: SInt32) -> doNeg (x `rel` 0)
-    -- Not a comparison against a constant int, so we didn't learn anything.
-    -- This is different from failure - we still had whatever information we
-    -- had from before.
-    _ -> fail "Cannot produce a fact here"
-
-cmpPredicateToRelation :: CmpPredicate -> Maybe (SInt32 -> SInt32 -> SBool)
-cmpPredicateToRelation p =
-  case p of
-    ICmpEq -> return (.==)
-    ICmpNe -> return (./=)
-    ICmpUgt -> return (.>)
-    ICmpUge -> return (.>=)
-    ICmpUlt -> return (.<)
-    ICmpUle -> return (.<=)
-    ICmpSgt -> return (.>)
-    ICmpSge -> return (.>=)
-    ICmpSlt -> return (.<)
-    ICmpSle -> return (.<=)
-    _ -> fail "cmpPredicateToRelation is a floating point comparison"
-
-isSat :: (SInt32 -> SBool) -> Bool
-isSat f = unsafePerformIO $ do
-  Just sr <- isSatisfiable Nothing f
-  return sr
 
 errorReturnValues :: ErrorSummary -> [Value] -> MaybeT Analysis [Int]
 errorReturnValues _ [] = fail "No call targets"
@@ -944,17 +751,82 @@ singlePredecessor cfg bb =
 liftMaybe :: Maybe a -> MaybeT Analysis a
 liftMaybe = maybe mzero return
 
-ignoreCasts :: Value -> Value
-ignoreCasts v =
-  case valueContent v of
-    InstructionC BitcastInst { castedValue = cv } -> ignoreCasts cv
-    InstructionC TruncInst { castedValue = cv } -> ignoreCasts cv
-    InstructionC ZExtInst { castedValue = cv } -> ignoreCasts cv
-    InstructionC SExtInst { castedValue = cv } -> ignoreCasts cv
-    InstructionC IntToPtrInst { castedValue = cv } -> ignoreCasts cv
-    GlobalAliasC GlobalAlias { globalAliasTarget = t } -> ignoreCasts t
-    ConstantC ConstantValue { constantInstruction = BitcastInst { castedValue = cv } } -> ignoreCasts cv
-    _ -> valueContent v
+-- | Given a branch instruction, if the branch is checking the return value of
+-- a function call, return the function call instruction and a formula that
+-- describes when an error is being checked.
+--
+-- FIXME: This could handle switches based on return values
+targetOfErrorCheckBy :: ErrorSummary -> Instruction
+                     -> MaybeT Analysis (Instruction, SInt32 -> SBool)
+targetOfErrorCheckBy s i = do
+  ics <- lift $ analysisEnvironment indirectCallSummary
+  case i of
+    BranchInst { branchCondition = (valueContent' ->
+      InstructionC ICmpInst { cmpV1 = v1, cmpV2 = v2 })} -> do
+        (ci, callee) <- firstCallInst [v1, v2]
+        let callees = callTargets ics callee
+        rvs <- errorReturnValues s callees
+        let formula (x :: SInt32) = bAny (.==x) (map fromIntegral rvs)
+        return (ci, formula)
+    _ -> fail "Not a conditional branch"
+
+-- | Produce a formula representing all of the facts we must hold up
+-- to this point.  The argument of the formula is the variable
+-- representing the return value of the function we are interested in.
+--
+-- This is necessary to correctly handle conditions that are checked
+-- in multiple parts (or just compound conditions).  Note that the
+-- approach here is not quite complete - if part of a compound
+-- condition is checked far away and we can't prove that it still
+-- holds, we will miss it.  It should cover the realistic cases,
+-- though.
+--
+-- As an example, consider:
+--
+-- > bytesRead = read(...);
+-- > if(bytesRead < 0) {
+-- >   signalError(...);
+-- >   return ERROR;
+-- > }
+-- >
+-- > if(bytesRead == 0) {
+-- >   return EOF;
+-- > }
+-- >
+-- > return OK;
+--
+-- Checking the first clause in isolation correctly identifies
+-- signalError as an error function and ERROR as an error return code.
+-- However, checking the second in isolation implies that OK is an
+-- error code.
+--
+-- The correct thing to do is to check the second condition with the
+-- fact @bytesRead >= 0@ in scope, which gives the compound predicate
+--
+-- > bytesRead >= 0 &&& bytesRead /= 0 &&& bytesRead == -1
+--
+-- or
+--
+-- > bytesRead >= 0 &&& bytesRead == 0 &&& bytesRead == -1
+--
+-- Both of these are unsat, which is what we want (since the second
+-- condition isn't checking an error).
+relevantInducedFacts :: (HasFunction funcLike, HasBlockReturns funcLike,
+                         HasCFG funcLike, HasCDG funcLike, HasDomTree funcLike)
+                     => funcLike
+                     -> BasicBlock
+                     -> Instruction
+                     -> Analysis (Maybe (SInt32 -> SBool))
+relevantInducedFacts funcLike bb0 target = do
+  st <- analysisGet
+  case HM.lookup (f, bb0, target) (formulaCache st) of
+    Just formula -> return formula
+    Nothing -> do
+      let formula = evalState (computeInducedFacts funcLike bb0 target) (mempty, mempty)
+      analysisPut st { formulaCache = HM.insert (f, bb0, target) formula (formulaCache st) }
+      return formula
+  where
+    f = getFunction funcLike
 
 {- Note [Known Error Conditions]
 

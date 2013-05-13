@@ -1,5 +1,5 @@
 {-# LANGUAGE PatternGuards, DeriveGeneric #-}
-module Foreign.Inference.Analysis.ErrorHandling.SVM (
+module Foreign.Inference.Analysis.ErrorHandling.Features (
   BaseFact(..),
   BasicFacts,
   ErrorFuncClass(..),

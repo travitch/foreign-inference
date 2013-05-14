@@ -9,6 +9,7 @@ module Foreign.Inference.Interface.Types (
   FuncAnnotation(..),
   ParamAnnotation(..),
   TypeAnnotation(..),
+  ModuleAnnotation(..),
   Linkage(..),
   ErrorAction(..),
   ErrorActionArgument(..),
@@ -121,6 +122,7 @@ data FuncAnnotation = FAAllocator String -- ^ Record the associated finalizer
                     | FACondFinalizer
                     | FASAPReturn [(Int, String, [AccessType])]
                     | FAReportsErrors (Set ErrorAction) ErrorReturn
+                    | FASuccessCodes (Set Int)
                     deriving (Show, Read, Generic, Eq, Ord)
 instance FromJSON FuncAnnotation
 instance ToJSON FuncAnnotation
@@ -134,6 +136,15 @@ instance FromJSON TypeAnnotation
 instance ToJSON TypeAnnotation
 
 instance NFData TypeAnnotation where
+  rnf = genericRnf
+
+data ModuleAnnotation = MAErrorIndicators [String]
+                      deriving (Show, Read, Generic, Eq, Ord)
+
+instance FromJSON ModuleAnnotation
+instance ToJSON ModuleAnnotation
+
+instance NFData ModuleAnnotation where
   rnf = genericRnf
 
 -- | Define linkage types so that modules with overlapping symbol
@@ -225,6 +236,7 @@ data LibraryInterface = LibraryInterface { libraryFunctions :: [ForeignFunction]
                                          , libraryDependencies :: [String]
                                          , libraryTypes :: [(CType, [TypeAnnotation])]
                                          , libraryEnums :: [CEnum]
+                                         , libraryAnnotations :: [ModuleAnnotation]
                                          }
                       deriving (Show, Generic)
 

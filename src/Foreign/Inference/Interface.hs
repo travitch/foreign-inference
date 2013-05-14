@@ -22,9 +22,9 @@ module Foreign.Inference.Interface (
   HasDependencies(..),
   -- * Types
   Witness(..),
-  DependencySummary(libraryAnnotations),
+  DependencySummary(manualAnnotations),
   LibraryInterface(..),
-  LibraryAnnotations,
+  ManualAnnotations,
   ForeignFunction(..),
   Parameter(..),
   CEnum(..),
@@ -36,6 +36,7 @@ module Foreign.Inference.Interface (
   ParamAnnotation(..),
   FuncAnnotation(..),
   TypeAnnotation(..),
+  ModuleAnnotation(..),
   StdLib(..),
   -- * Functions
   lookupArgumentSummary,
@@ -48,7 +49,7 @@ module Foreign.Inference.Interface (
   saveInterface,
   saveModule,
   readLibraryInterface,
-  addLibraryAnnotations,
+  addManualAnnotations,
   loadAnnotations,
   refCountFunctionsForField,
   isRefCountedObject,
@@ -127,7 +128,7 @@ data InterfaceException = DependencyMissing FilePath
 instance Exception InterfaceException
 
 
-type LibraryAnnotations = Map Text ([FuncAnnotation], IntMap [ParamAnnotation])
+type ManualAnnotations = Map Text ([FuncAnnotation], IntMap [ParamAnnotation])
 type DepMap = HashMap Text ForeignFunction
 
 -- | This index is a map from struct fields containing ref-counting
@@ -139,7 +140,7 @@ type RefCountSuperclassIndex = Map String (String, String)
 -- current library.
 data DependencySummary =
   DependencySummary { depSummary :: DepMap
-                    , libraryAnnotations :: LibraryAnnotations
+                    , manualAnnotations :: ManualAnnotations
                     , refCountIndex :: RefCountIndex -- ^ The access paths that denote ref counted objects
                     , refCountSuperclasses :: RefCountSuperclassIndex -- ^ Ref counted objects that can be identified via structural subtyping
                     }
@@ -193,8 +194,9 @@ indexStructuralSuperclasses = foldr indexForeignFunction mempty . M.elems
 
 -- | Take input annotations and add them to the known annotations in a
 -- dependency summary.
-addLibraryAnnotations :: DependencySummary -> LibraryAnnotations -> DependencySummary
-addLibraryAnnotations ds as = ds { libraryAnnotations = libraryAnnotations ds `mappend` as }
+addManualAnnotations :: DependencySummary -> ManualAnnotations -> DependencySummary
+addManualAnnotations ds as =
+  ds { manualAnnotations = manualAnnotations ds `mappend` as }
 
 -- | The standard library summaries that can be automatically loaded
 -- by 'loadDependencies''.
@@ -230,11 +232,14 @@ class SummarizeModule s where
   -- empty list
   summarizeType :: CType -> s -> [(TypeAnnotation, [Witness])]
   summarizeType _ _ = []
+  summarizeModule :: Module -> s -> [ModuleAnnotation]
+  summarizeModule _ _ = []
 
 instance SummarizeModule ModuleSummary where
   summarizeArgument a (ModuleSummary s) = summarizeArgument a s
   summarizeFunction f (ModuleSummary s) = summarizeFunction f s
   summarizeType t (ModuleSummary s) = summarizeType t s
+  summarizeModule m (ModuleSummary s) = summarizeModule m s
 
 -- | Persist a 'LibraryInterface' to disk in the given @summaryDir@.
 -- It uses the name specified in the 'LibraryInterface' to choose the
@@ -251,12 +256,12 @@ saveInterface summaryDir i = do
 -- then persist it as in 'saveInterface'.
 saveModule :: FilePath -> String -> [String] -> Module -> [ModuleSummary] -> DependencySummary -> IO ()
 saveModule summaryDir name deps m summaries ds = do
-  let i = moduleToLibraryInterface m name deps summaries (libraryAnnotations ds)
+  let i = moduleToLibraryInterface m name deps summaries (manualAnnotations ds)
   saveInterface summaryDir i
 
 -- | Load annotations supplied by the user.  Annotations are just a
 -- JSON encoding of the LibraryAnnotations type.
-loadAnnotations :: FilePath -> IO LibraryAnnotations
+loadAnnotations :: FilePath -> IO ManualAnnotations
 loadAnnotations p = do
   c <- LBS.readFile p
   case decode' (minify c) of
@@ -401,7 +406,7 @@ moduleToLibraryInterface :: Module   -- ^ Module to summarize
                             -> String   -- ^ Module name
                             -> [String] -- ^ Module dependencies
                             -> [ModuleSummary] -- ^ Summary information from analyses
-                            -> LibraryAnnotations
+                            -> ManualAnnotations
                             -> LibraryInterface
 moduleToLibraryInterface m name deps summaries annots =
   LibraryInterface { libraryFunctions = funcs ++ aliases
@@ -409,6 +414,7 @@ moduleToLibraryInterface m name deps summaries annots =
                    , libraryName = name
                    , libraryDependencies = deps
                    , libraryEnums = moduleInterfaceEnumerations m
+                   , libraryAnnotations = concatMap (summarizeModule m) summaries
                    }
   where
     ts = moduleInterfaceStructTypes m
@@ -417,7 +423,7 @@ moduleToLibraryInterface m name deps summaries annots =
     annotateType t = concatMap (map fst . summarizeType t) summaries
 
 
-functionAliasToExternal :: [ModuleSummary] -> LibraryAnnotations -> GlobalAlias -> Maybe ForeignFunction
+functionAliasToExternal :: [ModuleSummary] -> ManualAnnotations -> GlobalAlias -> Maybe ForeignFunction
 functionAliasToExternal summaries annots a =
   case valueContent' (globalAliasTarget a) of
     FunctionC f -> do
@@ -433,7 +439,7 @@ functionAliasToExternal summaries annots a =
 -- | Summarize a single function.  Functions with types in their
 -- signatures that have certain exotic types are not supported in
 -- interfaces.
-functionToExternal :: [ModuleSummary] -> LibraryAnnotations -> Function -> Maybe ForeignFunction
+functionToExternal :: [ModuleSummary] -> ManualAnnotations -> Function -> Maybe ForeignFunction
 functionToExternal summaries annots f =
   case vis of
     VisibilityHidden -> Nothing
@@ -457,7 +463,7 @@ functionToExternal summaries annots f =
       TypeFunction rt _ _ -> rt
       t -> t
 
-paramToExternal :: [ModuleSummary] -> LibraryAnnotations -> (Int, Argument) -> Maybe Parameter
+paramToExternal :: [ModuleSummary] -> ManualAnnotations -> (Int, Argument) -> Maybe Parameter
 paramToExternal summaries annots (ix, arg) = do
   ptype <- typeToCType (paramMetaUnsigned arg) (argumentType arg)
   return Parameter { parameterType = ptype
@@ -476,7 +482,7 @@ isVarArg ef = isVa
   where
     (TypeFunction _ _ isVa) = externalFunctionType ef
 
-userFunctionAnnotations :: LibraryAnnotations -> Function -> [FuncAnnotation]
+userFunctionAnnotations :: ManualAnnotations -> Function -> [FuncAnnotation]
 userFunctionAnnotations allAnnots f =
   case fannots of
     Nothing -> []
@@ -485,7 +491,7 @@ userFunctionAnnotations allAnnots f =
     fname = identifierContent $ functionName f
     fannots = Map.lookup fname allAnnots
 
-userParameterAnnotations :: LibraryAnnotations -> Function -> Int -> [ParamAnnotation]
+userParameterAnnotations :: ManualAnnotations -> Function -> Int -> [ParamAnnotation]
 userParameterAnnotations allAnnots f ix =
   case fannots of
     Nothing -> []
@@ -508,7 +514,7 @@ lookupFunctionSummary ms val = do
   ds <- getDependencySummary
   case valueContent' val of
     FunctionC f ->
-      let fannots = userFunctionAnnotations (libraryAnnotations ds) f
+      let fannots = userFunctionAnnotations (manualAnnotations ds) f
       in return $! Just $ fannots ++ map fst (summarizeFunction f ms)
     ExternalFunctionC ef -> do
       let fname = identifierContent $ externalFunctionName ef
@@ -545,7 +551,7 @@ lookupArgumentSummary ms val ix = do
         False -> return (Just [])
         True ->
           let annots = summarizeArgument (functionParameters f !! ix) ms
-              uannots = userParameterAnnotations (libraryAnnotations ds) f ix
+              uannots = userParameterAnnotations (manualAnnotations ds) f ix
           in return $! Just $ uannots ++ map fst annots
     ExternalFunctionC ef -> do
       let fname = identifierContent $ externalFunctionName ef

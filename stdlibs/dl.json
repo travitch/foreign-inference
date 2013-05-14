@@ -3,6 +3,7 @@
     "libraryName": "dl",
     "libraryTypes": [],
     "libraryEnums": [],
+    "libraryAnnotations": [],
     "libraryFunctions": [
         { "foreignFunctionName": "dlopen",
           "foreignFunctionAnnotations": [],

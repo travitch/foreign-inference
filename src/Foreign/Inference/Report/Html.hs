@@ -1,6 +1,5 @@
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE OverloadedStrings #-}
--- {-# OPTIONS_GHC -fno-warn-unused-do-bind #-}
 module Foreign.Inference.Report.Html (
   SummaryOption(..),
   htmlIndexPage,
@@ -80,13 +79,16 @@ $doctype 5
     fretType = case functionType f of
       TypeFunction rt _ _ -> rt
       rtype -> rtype
-    allAnnots = libraryAnnotations $ reportDependencies r
+    allAnnots = manualAnnotations $ reportDependencies r
     uannots = userFunctionAnnotations allAnnots f
     fannots = concatMap (summarizeFunction f) (reportSummaries r)
     htmlFannots = drilldownFunctionAnnotations startLine fannots
     -- fannots = concat [ userFunctionAnnotations allAnnots f
     --                  , concatMap (summarizeFunction f) (reportSummaries r)
     --                  ]
+
+moduleAnnotEntry :: ModuleAnnotation -> Html
+moduleAnnotEntry = toHtml . show
 
 indexAliases :: GlobalAlias -> Map Function [GlobalAlias] -> Map Function [GlobalAlias]
 indexAliases a m =
@@ -199,7 +201,7 @@ instructionToLine i =
   case instructionSrcLoc i of
     Nothing -> Nothing
     Just (MetaSourceLocation _ r _ _) -> Just (fromIntegral r)
-    m -> error ("Foreign.Inference.Report.Html.instructionToLine: Expected source location: " ++ show (instructionMetadata i))
+    _ -> error ("Foreign.Inference.Report.Html.instructionToLine: Expected source location: " ++ show (instructionMetadata i))
 
 -- | Generate an index page listing all of the functions in a module.
 -- Each listing shows the parameters and their inferred annotations.
@@ -213,6 +215,9 @@ htmlIndexPage r opts = H.docTypeHtml $ do
     H.h1 "Module Information"
     H.div ! A.id "module-info" $ do
       stringToHtml "Name: " >> toHtml (moduleIdentifier m)
+      H.br
+      H.ul $ do
+        forM_ mannots moduleAnnotEntry
     H.h1 "Exposed Functions"
     indexPageFunctionListing r (LinkDrilldowns `elem` opts) "exposed-functions" externsWithAliases
     H.h1 "Private Functions"
@@ -223,6 +228,7 @@ htmlIndexPage r opts = H.docTypeHtml $ do
     pageTitle :: Text
     pageTitle = (moduleIdentifier m) `mappend` " summary report"
     m = reportModule r
+    mannots = concatMap (summarizeModule m) (reportSummaries r)
     ts = moduleInterfaceStructTypes m
     (externs, ps) = partition isExtern (moduleDefinedFunctions m)
     privates = map tagName ps
@@ -315,7 +321,7 @@ indexPageFunctionEntry r linkFunc (f, internalName) = do
       H.span ! A.class_ "code-type" $ toHtml (show fretType)
       functionAnnotations fannots
   where
-    allAnnots = libraryAnnotations $ reportDependencies r
+    allAnnots = manualAnnotations $ reportDependencies r
     fannots = concat [ userFunctionAnnotations allAnnots f
                      , concatMap (map fst . summarizeFunction f) (reportSummaries r)
                      ]
@@ -344,7 +350,7 @@ indexPageArgument r (ix, arg) = do
   where
     paramType = show (argumentType arg)
     paramName = identifierContent (argumentName arg)
-    allAnnots = libraryAnnotations $ reportDependencies r
+    allAnnots = manualAnnotations $ reportDependencies r
     annots = concat [ userParameterAnnotations allAnnots (argumentFunction arg) ix
                     , concatMap (map fst . summarizeArgument arg) (reportSummaries r)
                     ]

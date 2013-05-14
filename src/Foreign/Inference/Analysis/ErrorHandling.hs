@@ -40,7 +40,7 @@ import GHC.Generics
 
 import Control.DeepSeq
 import Control.DeepSeq.Generics ( genericRnf )
-import Control.Lens ( makeLenses, (&), (%~), (^.) )
+import Control.Lens ( makeLenses, (&), (%~), (^.), (.~) )
 import Control.Monad.State.Strict
 import Control.Monad.Trans.Maybe
 import qualified Data.Foldable as F
@@ -93,18 +93,21 @@ instance NFData ErrorDescriptor where
 data ErrorSummary = ErrorSummary { _errorSummary :: HashMap Function (Set ErrorDescriptor)
                                  , _errorBasicFacts :: BasicFacts
                                  , _errorDiagnostics :: Diagnostics
+                                 , _savedSuccessModels :: HashMap Function (Set Int)
+                                 , _savedErrorFunctions :: Set String
                                  }
                   deriving (Generic)
 
 $(makeLenses ''ErrorSummary)
 
 instance Eq ErrorSummary where
-  (ErrorSummary s1 b1 _) == (ErrorSummary s2 b2 _) = s1 == s2 && b1 == b2
+  (ErrorSummary s1 b1 _ _ _) == (ErrorSummary s2 b2 _ _ _) =
+    s1 == s2 && b1 == b2
 
 instance Monoid ErrorSummary where
-  mempty = ErrorSummary mempty mempty mempty
-  mappend (ErrorSummary m1 b1 d1) (ErrorSummary m2 b2 d2) =
-    ErrorSummary (HM.union m1 m2) (mappend b1 b2) (mappend d1 d2)
+  mempty = ErrorSummary mempty mempty mempty mempty mempty
+  mappend (ErrorSummary m1 b1 d1 s1 f1) (ErrorSummary m2 b2 d2 s2 f2) =
+    ErrorSummary (HM.union m1 m2) (mappend b1 b2) (mappend d1 d2) (mappend s1 s2) (mappend f1 f2)
 
 instance NFData ErrorSummary where
   rnf = genericRnf
@@ -221,8 +224,12 @@ identifyErrorHandling funcLikes ds ics opts =
       -- information that would help in other phases.
       res4 <- foldM (byBlock returnsTransitiveError) res3 funcLikes
 
-      if res0 == res4 then return res0
-        else fixAnalysis res4
+      case res0 == res4 of
+        False -> fixAnalysis res4
+        True -> do
+          st' <- analysisGet
+          let res0' = res0 & savedSuccessModels .~ successModel st'
+          return $ res0' & savedErrorFunctions .~ errorFunctions st'
 
 -- | If a block returns an integer value in
 generalizeFromErrorCodes :: (HasFunction funcLike, HasBlockReturns funcLike)
@@ -329,14 +336,25 @@ byBlock analysis s funcLike =
 
 instance SummarizeModule ErrorSummary where
   summarizeArgument _ _ = []
-  summarizeFunction f (ErrorSummary summ _ _) = fromMaybe [] $ do
+  summarizeFunction f s = fromMaybe [] $ do
+    let summ = s ^. errorSummary
+        succMods = s ^. savedSuccessModels
+        succAnnot = maybe [] toSuccAnnot (HM.lookup f succMods)
     fsumm <- HM.lookup f summ
     descs <- NEL.nonEmpty (F.toList fsumm)
     let retcodes = unifyReturnCodes descs
         ws = concatMap errorWitnesses (NEL.toList descs)
     case unifyErrorActions descs of
-      Nothing -> return [(FAReportsErrors mempty retcodes, ws)]
-      Just uacts -> return [(FAReportsErrors uacts retcodes, ws)]
+      Nothing -> return $ succAnnot ++ [(FAReportsErrors mempty retcodes, ws)]
+      Just uacts -> return $ succAnnot ++ [(FAReportsErrors uacts retcodes, ws)]
+  summarizeModule _ s
+    | S.null errFuncs = []
+    | otherwise = [MAErrorIndicators (S.toList errFuncs)]
+    where
+      errFuncs = s ^. savedErrorFunctions
+
+toSuccAnnot :: Set Int -> [(FuncAnnotation, [Witness])]
+toSuccAnnot is = [(FASuccessCodes is, [])]
 
 -- | FIXME: Prefer error actions of size one (should discard extraneous
 -- actions like cleanup code).
@@ -700,12 +718,23 @@ instToAction i a@(acc, ignore) =
              , callArguments = (map fst -> args)
              }
       | toValue i `S.member` ignore ->
-        (acc, foldr S.insert ignore args)
+        (acc, foldr insertArgAndBase ignore args)
       | otherwise ->
         let fname = identifierAsString (functionName f)
             argActs = foldr callArgActions mempty (zip [0..] args)
-        in (FunctionCall fname argActs : acc, foldr S.insert ignore args)
+        in (FunctionCall fname argActs : acc, foldr insertArgAndBase ignore args)
     _ -> a
+
+insertArgAndBase :: Value -> Set Value -> Set Value
+insertArgAndBase arg ignore =
+  baseOf arg `S.union` ignore'
+  where
+    ignore' = S.insert arg ignore
+    baseOf a =
+      case valueContent' a of
+        InstructionC LoadInst { loadAddress = (stripBitcasts -> la) } ->
+          S.singleton la
+        _ -> mempty
 
 callArgActions :: (Int, Value)
                   -> IntMap ErrorActionArgument

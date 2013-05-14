@@ -124,6 +124,16 @@ calleeInContext (ErrorBlock args) m i
     M.insertWith mappend cv errVal m
   | otherwise = m
 
+-- Maybe the reason archive looks weird is that no references to errno
+-- come in blocks with known errors from the first pass?  Test this?
+--
+-- It looks like errno really is accessed, so there is some bug in
+-- maintaining the used-as-args set that we wanted to use to compute
+-- features.
+--
+-- It might be that the particular *blocks* in which errno is accessed
+-- are not recognized...
+
 succVal :: Feature
 succVal = mempty { inSuccess = 1 }
 errVal :: Feature

@@ -1,6 +1,7 @@
 {
     "libraryDependencies": [], 
     "libraryEnums": [], 
+    "libraryAnnotations": [],
     "libraryFunctions": [
         {
             "foreignFunctionAnnotations": [

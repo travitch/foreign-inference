@@ -3,6 +3,7 @@
     "libraryName": "m",
     "libraryTypes": [],
     "libraryEnums": [],
+    "libraryAnnotations": [],
     "libraryFunctions": [
         { "foreignFunctionName": "acos",
           "foreignFunctionAnnotations": [],

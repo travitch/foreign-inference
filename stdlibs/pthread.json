@@ -3,6 +3,7 @@
     "libraryName": "pthread",
     "libraryTypes": [],
     "libraryEnums": [],
+    "libraryAnnotations": [],
     "libraryFunctions": [
         { "foreignFunctionName": "pthread_self",
           "foreignFunctionAnnotations": [],

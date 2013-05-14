@@ -48,7 +48,6 @@ import Data.HashMap.Strict ( HashMap )
 import qualified Data.HashMap.Strict as HM
 import Data.IntMap ( IntMap )
 import qualified Data.IntMap as IM
-import Data.List.NonEmpty ( NonEmpty(..) )
 import qualified Data.Map as M
 import Data.Maybe ( fromMaybe, mapMaybe )
 import Data.Monoid
@@ -69,7 +68,7 @@ import Foreign.Inference.Analysis.IndirectCallResolver
 import Foreign.Inference.Analysis.ErrorHandling.Features
 import Foreign.Inference.Analysis.ErrorHandling.SMT
 
-import Text.Printf
+-- import Text.Printf
 import Debug.Trace
 debug :: a -> String -> a
 debug = flip trace
@@ -362,24 +361,19 @@ instance SummarizeModule ErrorSummary where
     guard (not (S.null fsumm))
     let descs = F.toList fsumm
     return $ succAnnot ++ map toFReportAnnot descs
-  {-
-    let retcodes = unifyReturnCodes descs
-        ws = concatMap errorWitnesses (NEL.toList descs)
-    case unifyErrorActions descs of
-      Nothing -> return $ succAnnot ++ [(FAReportsErrors mempty retcodes, ws)]
-      Just uacts -> return $ succAnnot ++ [(FAReportsErrors uacts retcodes, ws)]
-      -}
   summarizeModule _ s
     | S.null errFuncs = []
     | otherwise = [MAErrorIndicators (S.toList errFuncs)]
     where
       errFuncs = s ^. savedErrorFunctions
 
+toFReportAnnot :: ErrorDescriptor -> (FuncAnnotation, [Witness])
 toFReportAnnot desc = (FAReportsErrors (errorActions desc) (errorReturns desc), errorWitnesses desc)
 
 toSuccAnnot :: Set Int -> [(FuncAnnotation, [Witness])]
 toSuccAnnot is = [(FASuccessCodes is, [])]
 
+{-
 -- | FIXME: Prefer error actions of size one (should discard extraneous
 -- actions like cleanup code).
 unifyErrorActions :: NonEmpty ErrorDescriptor -> Maybe (Set ErrorAction)
@@ -403,6 +397,7 @@ unifyReturnCodes = F.foldr1 unifyReturns . fmap errorReturns
       ReturnConstantPtr (is1 `S.union` is2)
     unifyReturns (ReturnConstantPtr _) r@(ReturnConstantInt _) = r
     unifyReturns r@(ReturnConstantInt _) (ReturnConstantPtr _) = r
+-}
 
 -- | If the function transitively returns errors, record them in the
 -- error summary.  Errors are only transitive if they are unhandled in

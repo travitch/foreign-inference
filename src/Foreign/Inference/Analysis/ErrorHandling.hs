@@ -49,7 +49,6 @@ import qualified Data.HashMap.Strict as HM
 import Data.IntMap ( IntMap )
 import qualified Data.IntMap as IM
 import Data.List.NonEmpty ( NonEmpty(..) )
-import qualified Data.List.NonEmpty as NEL
 import qualified Data.Map as M
 import Data.Maybe ( fromMaybe, mapMaybe )
 import Data.Monoid
@@ -70,10 +69,10 @@ import Foreign.Inference.Analysis.IndirectCallResolver
 import Foreign.Inference.Analysis.ErrorHandling.Features
 import Foreign.Inference.Analysis.ErrorHandling.SMT
 
--- import Text.Printf
--- import Debug.Trace
--- debug :: a -> String -> a
--- debug = flip trace
+import Text.Printf
+import Debug.Trace
+debug :: a -> String -> a
+debug = flip trace
 
 -- | An ErrorDescriptor describes a site in the program handling an
 -- error (along with a witness).
@@ -207,15 +206,18 @@ identifyErrorHandling funcLikes ds ics opts =
       let successCodes = mconcat (HM.elems (successModel st))
           base = res1 ^. errorBasicFacts
           errorFuncs = case errorClassifier opts of
-            DefaultClassifier -> errorFuncHeuristic base funcLikes
-            FeatureClassifier c -> classifyErrorFunctions base funcLikes c
-            NoClassifier -> mempty
-          ganalysis = generalizeBlockFromErrFunc errorFuncs successCodes base
+            DefaultClassifier -> classifyErrorFunctions base funcLikes defaultClassifier
+              -- errorFuncHeuristic base funcLikes
+            FeatureClassifier c -> classifyErrorFunctions base funcLikes c `debug` "FeatureClassifier"
+            NoClassifier -> mempty `debug` "NoClassifier"
+          ganalysis = generalizeBlockFromErrFunc errorFuncs successCodes base `debug` (show (prettyErrorFuncs errorFuncs))
       -- Generalizing based on error functions will learn new error values.
       res2 <- foldM (byBlock ganalysis) res1 funcLikes
 
       -- Now try to generalize based on error values
-      res3 <- foldM (byBlock generalizeFromErrorCodes) res2 funcLikes
+      res3 <- case generalizeFromReturns opts of
+        True -> foldM (byBlock generalizeFromErrorCodes) res2 funcLikes
+        False -> return res2
 
       -- Once we know all of the error blocks we can find in this pass,
       -- look for all of the transitive errors.  These don't give us any
@@ -227,9 +229,22 @@ identifyErrorHandling funcLikes ds ics opts =
         True -> do
           st' <- analysisGet
           let res0' = res0 & savedSuccessModels .~ successModel st'
-          return $ res0' & savedErrorFunctions .~ errorFunctions st'
+          return $ res0' & savedErrorFunctions .~ prettyErrorFuncs errorFuncs `debug` (show (prettyErrorFuncs errorFuncs))
+
+
+prettyErrorFuncs :: Set Value -> Set String
+prettyErrorFuncs = S.fromList . mapMaybe toPrettyErrFunc . S.toList
+  where
+    toPrettyErrFunc v =
+      case valueContent' v of
+        FunctionC f -> return $ identifierAsString (functionName f)
+        ExternalFunctionC ef -> return $ identifierAsString (externalFunctionName ef)
+        _ -> fail "Not a function"
 
 -- | If a block returns an integer value in
+--
+-- FIXME: Respect the success model and include the return instruction as
+-- the witness
 generalizeFromErrorCodes :: (HasFunction funcLike, HasBlockReturns funcLike)
                          => funcLike
                          -> ErrorSummary
@@ -344,17 +359,23 @@ instance SummarizeModule ErrorSummary where
         succMods = s ^. savedSuccessModels
         succAnnot = maybe [] toSuccAnnot (HM.lookup f succMods)
     fsumm <- HM.lookup f summ
-    descs <- NEL.nonEmpty (F.toList fsumm)
+    guard (not (S.null fsumm))
+    let descs = F.toList fsumm
+    return $ succAnnot ++ map toFReportAnnot descs
+  {-
     let retcodes = unifyReturnCodes descs
         ws = concatMap errorWitnesses (NEL.toList descs)
     case unifyErrorActions descs of
       Nothing -> return $ succAnnot ++ [(FAReportsErrors mempty retcodes, ws)]
       Just uacts -> return $ succAnnot ++ [(FAReportsErrors uacts retcodes, ws)]
+      -}
   summarizeModule _ s
     | S.null errFuncs = []
     | otherwise = [MAErrorIndicators (S.toList errFuncs)]
     where
       errFuncs = s ^. savedErrorFunctions
+
+toFReportAnnot desc = (FAReportsErrors (errorActions desc) (errorReturns desc), errorWitnesses desc)
 
 toSuccAnnot :: Set Int -> [(FuncAnnotation, [Witness])]
 toSuccAnnot is = [(FASuccessCodes is, [])]
@@ -483,6 +504,7 @@ handlesKnownError :: (HasFunction funcLike, HasBlockReturns funcLike,
                   -> BasicBlock
                   -> Analysis ErrorSummary
 handlesKnownError funcLike s bb -- See Note [Known Error Conditions]
+  | Just _ <- M.lookup bb (s ^. errorBasicFacts) = return s
   | Just rv <- blockReturn brs bb
   , Just _ <- retValToConstantInt rv = do
     let termInst = basicBlockTerminatorInstruction bb

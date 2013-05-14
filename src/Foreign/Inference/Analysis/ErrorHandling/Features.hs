@@ -6,7 +6,8 @@ module Foreign.Inference.Analysis.ErrorHandling.Features (
   FeatureVector,
   computeFeatures,
   classifyErrorFunctions,
-  featureVectorLength
+  featureVectorLength,
+  defaultClassifier
   ) where
 
 import GHC.Generics
@@ -24,6 +25,7 @@ import Data.Vector.Unboxed ( Vector )
 import qualified Data.Vector.Unboxed as UV
 
 import LLVM.Analysis
+import LLVM.Analysis.BlockReturnValue
 
 data BaseFact = ErrorBlock (Set Value)
               -- ^ For a block returning an error code, record the error
@@ -72,20 +74,28 @@ instance Monoid Feature where
 -- | Iterate over every BasicBlock in the library.  If the basic block is not
 -- in BasicFacts, we don't believe it is an error handling context, so
 -- increment the notError count for each of its called functions.
-computeFeatures :: (HasFunction funcLike)
+computeFeatures :: (HasFunction funcLike, HasBlockReturns funcLike)
                 => BasicFacts
                 -> [funcLike]
                 -> Map Value FeatureVector
 computeFeatures bf funcs =
   fmap (toFeatureVector nFuncs) m
   where
-    m = F.foldl' (computeFuncFeatures bf) mempty fs
-    fs = map getFunction funcs
+    m = F.foldl' (computeFuncFeatures bf) mempty funcs
     nFuncs = M.size m
 
 featureVectorLength :: Double
 featureVectorLength = 5.0
 
+defaultClassifier :: FeatureVector -> ErrorFuncClass
+defaultClassifier fv
+  | fv UV.! 4 > 0.2 = ErrorReporter
+  | otherwise = OtherFunction
+
+-- | More values needed for useful features:
+--
+--  * # probable error contexts
+--
 toFeatureVector :: Int -> Feature -> FeatureVector
 toFeatureVector nFuncs (Feature nerr inerr insucc arg) =
   UV.fromList [ fromIntegral nerr / fromIntegral nFuncs
@@ -95,12 +105,18 @@ toFeatureVector nFuncs (Feature nerr inerr insucc arg) =
               , fromIntegral inerr / fromIntegral nerr
               ]
 
-computeFuncFeatures :: BasicFacts
+-- compute block returns here - if there is a constant return
+-- value, classify it as a possible error context
+computeFuncFeatures :: (HasFunction funcLike, HasBlockReturns funcLike)
+                    => BasicFacts
                     -> Map Value Feature
-                    -> Function
+                    -> funcLike
                     -> Map Value Feature
-computeFuncFeatures bf m f =
+computeFuncFeatures bf m funcLike =
   F.foldl' (computeBlockFeatures bf) m (functionBody f)
+  where
+    f = getFunction funcLike
+    brs = getBlockReturns funcLike
 
 computeBlockFeatures :: BasicFacts
                      -> Map Value Feature
@@ -164,7 +180,7 @@ directCallTarget v =
 -- | Compute the features for each called value in the library (using
 -- the BasicFacts and funcLikes).  Classify each one using the classifier.
 -- Insert each 'ErrorReporter' into the result set.
-classifyErrorFunctions :: (HasFunction funcLike)
+classifyErrorFunctions :: (HasFunction funcLike, HasBlockReturns funcLike)
                        => BasicFacts
                        -> [funcLike]
                        -> (FeatureVector -> ErrorFuncClass)

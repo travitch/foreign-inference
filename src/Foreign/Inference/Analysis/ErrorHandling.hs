@@ -286,26 +286,31 @@ generalizeBlockFromErrFunc errFuncs succCodes baseFacts funcLike summ bb
     isErrFuncCall i =
       case i of
         CallInst { callFunction = (stripBitcasts -> cv) }
-          | S.member cv errFuncs -> fmap identifierAsString (valueName cv)
+          | S.member cv errFuncs -> do
+            vn <- valueName cv
+            return (identifierAsString vn, i)
           | otherwise -> Nothing
         _ -> Nothing
     simpleFuncallAction callee = FunctionCall callee mempty
+    simpleWitness i = Witness i "called errf"
     blockErrorDescriptor rc =
       let calledErrFuncs = mapMaybe isErrFuncCall (basicBlockInstructions bb)
-          acts = map simpleFuncallAction calledErrFuncs
+          acts = map (simpleFuncallAction . fst) calledErrFuncs
           ret = ReturnConstantInt (S.singleton rc)
       in case null calledErrFuncs of
         True -> fail "Not an error block"
-        False -> return $ ErrorDescriptor (S.fromList acts) ret []
+        False ->
+          let ws = map (simpleWitness . snd) calledErrFuncs
+          in return $ ErrorDescriptor (S.fromList acts) ret ws
 
 -- | This is a basic heuristic to categorize functions as error-reporting
 -- functions or not.  This is the fallback if no SVM classifier is
 -- provided.
-errorFuncHeuristic :: (HasFunction funcLike)
-                   => BasicFacts
-                   -> [funcLike]
-                   -> Set Value
-errorFuncHeuristic = undefined
+-- errorFuncHeuristic :: (HasFunction funcLike)
+--                    => BasicFacts
+--                    -> [funcLike]
+--                    -> Set Value
+-- errorFuncHeuristic = undefined
 
 extractBasicFacts :: (HasFunction funcLike, HasBlockReturns funcLike,
                       HasCFG funcLike, HasCDG funcLike, HasDomTree funcLike)

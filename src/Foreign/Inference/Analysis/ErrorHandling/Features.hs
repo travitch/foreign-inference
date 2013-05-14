@@ -118,7 +118,7 @@ calleeInContext SuccessBlock m i
     M.insertWith mappend cv succVal m
   | otherwise = m
 calleeInContext (ErrorBlock args) m i
-  | Just cv <- directCallTarget i, S.member cv args =
+  | Just cv <- directCallTarget i, S.member (toValue i) args =
     M.insertWith mappend cv argVal m
   | Just cv <- directCallTarget i =
     M.insertWith mappend cv errVal m

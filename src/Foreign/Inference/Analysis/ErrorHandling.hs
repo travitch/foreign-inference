@@ -215,7 +215,7 @@ identifyErrorHandling funcLikes ds ics opts =
 
       -- Now try to generalize based on error values
       res3 <- case generalizeFromReturns opts of
-        True -> foldM (byBlock generalizeFromErrorCodes) res2 funcLikes
+        True -> foldM (byBlock (generalizeFromErrorCodes successCodes)) res2 funcLikes
         False -> return res2
 
       -- Once we know all of the error blocks we can find in this pass,
@@ -242,18 +242,18 @@ prettyErrorFuncs = S.fromList . mapMaybe toPrettyErrFunc . S.toList
 
 -- | If a block returns an integer value in
 --
--- FIXME: Respect the success model and include the return instruction as
--- the witness
+-- FIXME: Include the return instruction as the witness
 generalizeFromErrorCodes :: (HasFunction funcLike, HasBlockReturns funcLike)
-                         => funcLike
+                         => Set Int
+                         -> funcLike
                          -> ErrorSummary
                          -> BasicBlock
                          -> Analysis ErrorSummary
-generalizeFromErrorCodes funcLike s bb
+generalizeFromErrorCodes succCodes funcLike s bb
   | Just rv <- blockReturn brs bb
   , Just rc <- retValToConstantInt rv = do
     st <- analysisGet
-    case rc `S.member` errorCodes st of
+    case rc `S.member` errorCodes st && not (S.member rc succCodes) of
       False -> return s
       True -> do
         let ed = ErrorDescriptor mempty (ReturnConstantInt (S.singleton rc)) []

@@ -119,16 +119,14 @@ instance HasDiagnostics ErrorSummary where
 -- generalization rules
 data ErrorState =
   ErrorState { errorCodes :: Set Int
-             , errorFunctions :: Set String
              , successModel :: HashMap Function (Set Int)
              , formulaCache :: HashMap (Function, BasicBlock, Instruction) (Maybe (SInt32 -> SBool))
              }
 
 instance Monoid ErrorState where
-  mempty = ErrorState mempty mempty mempty mempty
-  mappend (ErrorState c1 f1 s1 fc1) (ErrorState c2 f2 s2 fc2) =
+  mempty = ErrorState mempty mempty mempty
+  mappend (ErrorState c1 s1 fc1) (ErrorState c2 s2 fc2) =
     ErrorState { errorCodes = c1 `mappend` c2
-               , errorFunctions = f1 `mappend` f2
                , successModel = HM.unionWith S.union s1 s2
                , formulaCache = HM.union fc1 fc2
                }

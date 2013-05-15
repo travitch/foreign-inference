@@ -7,7 +7,8 @@ module Foreign.Inference.Analysis.ErrorHandling.Features (
   computeFeatures,
   classifyErrorFunctions,
   featureVectorLength,
-  defaultClassifier
+  defaultClassifier,
+  directCallTarget
   ) where
 
 import GHC.Generics
@@ -70,6 +71,9 @@ instance Monoid Feature where
   mempty = Feature 0 0 0 0
   mappend (Feature ne1 e1 s1 a1) (Feature ne2 e2 s2 a2) =
     Feature (ne1 + ne2) (e1 + e2) (s1 + s2) (a1 + a2)
+
+-- FIXME: count uses of each function *not* in a function returning an int.
+-- Also count uses of each function in functions returning an int.
 
 -- | Iterate over every BasicBlock in the library.  If the basic block is not
 -- in BasicFacts, we don't believe it is an error handling context, so

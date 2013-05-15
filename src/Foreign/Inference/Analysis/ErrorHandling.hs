@@ -60,6 +60,7 @@ import LLVM.Analysis.BlockReturnValue
 import LLVM.Analysis.CDG
 import LLVM.Analysis.CFG
 import LLVM.Analysis.Dominance
+import LLVM.Analysis.UsesOf
 
 import Foreign.Inference.AnalysisMonad
 import Foreign.Inference.Diagnostics
@@ -147,13 +148,14 @@ errorHandlingTrainingData :: (HasFunction funcLike, HasBlockReturns funcLike,
                               HasCFG funcLike)
                           => [funcLike]
                           -> DependencySummary
+                          -> UseSummary
                           -> IndirectCallSummary
                           -> [(Value, FeatureVector)]
-errorHandlingTrainingData funcLikes ds ics = r
+errorHandlingTrainingData funcLikes ds uses ics = r
   where
     TrainingWrapper r _ = runAnalysis a ds (ErrorData ics) mempty
     a = do
-      res1 <- extractBasicFacts mempty funcLikes
+      res1 <- extractBasicFacts uses mempty funcLikes
       let base = res1 ^. errorBasicFacts
           res2 = M.toList $ computeFeatures base funcLikes
       return $ TrainingWrapper res2 mempty
@@ -187,16 +189,17 @@ identifyErrorHandling :: (HasFunction funcLike, HasBlockReturns funcLike,
                           HasCFG funcLike, HasCDG funcLike, HasDomTree funcLike)
                          => [funcLike]
                          -> DependencySummary
+                         -> UseSummary
                          -> IndirectCallSummary
                          -> ErrorAnalysisOptions
                          -> ErrorSummary
-identifyErrorHandling funcLikes ds ics opts =
+identifyErrorHandling funcLikes ds uses ics opts =
   runAnalysis (fixAnalysis mempty) ds roData mempty
   where
     roData = ErrorData ics
     fixAnalysis res0 = do
       -- First, find known success blocks and known failure blocks
-      res1 <- extractBasicFacts res0 funcLikes
+      res1 <- extractBasicFacts uses res0 funcLikes
 
       -- If we have a classifier, try it.  Otherwise, use a basic
       -- heuristic.  Use the classification to generalize and find
@@ -328,20 +331,25 @@ generalizeBlockFromErrFunc errFuncs succCodes baseFacts funcLike summ bb
 
 extractBasicFacts :: (HasFunction funcLike, HasBlockReturns funcLike,
                       HasCFG funcLike, HasCDG funcLike, HasDomTree funcLike)
-                  => ErrorSummary -> [funcLike] -> Analysis ErrorSummary
-extractBasicFacts s0 funcLikes = do
-  s1 <- foldM (byBlock reportsSuccess) s0 funcLikes
-  foldM (byBlock handlesKnownError) s1 funcLikes
+                  => UseSummary -> ErrorSummary -> [funcLike]
+                  -> Analysis ErrorSummary
+extractBasicFacts uses s0 funcLikes = do
+  mapM_ (byBlock findSuccesses ()) funcLikes
+  -- s1 <- foldM (byBlock (reportsSuccess uses)) s0 funcLikes
+  foldM (byBlock handlesKnownError) s0 funcLikes
+  where
+    findSuccesses flike () =
+      mapM_ (impliesSuccess uses flike s0) . basicBlockInstructions
 
 -- | Apply an analysis function to each 'BasicBlock' in a 'Function'.
 --
 -- The main analysis functions in this module all have the same signature
 -- and are analyzed in this same way.
-byBlock :: (HasFunction funcLike)
-        => (funcLike -> ErrorSummary -> BasicBlock -> Analysis ErrorSummary)
-        -> ErrorSummary
+byBlock :: (Monad m, HasFunction funcLike)
+        => (funcLike -> a -> BasicBlock -> m a)
+        -> a
         -> funcLike
-        -> Analysis ErrorSummary
+        -> m a
 byBlock analysis s funcLike =
   foldM (analysis funcLike) s (functionBody f)
   where
@@ -372,32 +380,6 @@ toFReportAnnot desc = (FAReportsErrors (errorActions desc) (errorReturns desc), 
 
 toSuccAnnot :: Set Int -> [(FuncAnnotation, [Witness])]
 toSuccAnnot is = [(FASuccessCodes is, [])]
-
-{-
--- | FIXME: Prefer error actions of size one (should discard extraneous
--- actions like cleanup code).
-unifyErrorActions :: NonEmpty ErrorDescriptor -> Maybe (Set ErrorAction)
-unifyErrorActions d0 = foldr unifyActions (Just d) ds
-  where
-    (d:|ds) = fmap errorActions d0
-    unifyActions _ Nothing = Nothing
-    unifyActions s1 acc@(Just s2)
-      | S.size s1 == 1 && S.size s2 /= 1 = Just s1
-      | s1 == s2 = acc
-      | otherwise = Nothing
-
--- | Merge all return values; if ints and ptrs are mixed, prefer the
--- ints
-unifyReturnCodes :: NonEmpty ErrorDescriptor -> ErrorReturn
-unifyReturnCodes = F.foldr1 unifyReturns . fmap errorReturns
-  where
-    unifyReturns (ReturnConstantInt is1) (ReturnConstantInt is2) =
-      ReturnConstantInt (is1 `S.union` is2)
-    unifyReturns (ReturnConstantPtr is1) (ReturnConstantPtr is2) =
-      ReturnConstantPtr (is1 `S.union` is2)
-    unifyReturns (ReturnConstantPtr _) r@(ReturnConstantInt _) = r
-    unifyReturns r@(ReturnConstantInt _) (ReturnConstantPtr _) = r
--}
 
 -- | If the function transitively returns errors, record them in the
 -- error summary.  Errors are only transitive if they are unhandled in
@@ -553,39 +535,25 @@ checkForKnownErrorReturn funcLike bb s brInst = do
   case res of
     Nothing -> return s
     Just (d, argVals) -> do
-      fitsSuccessModel <- checkFitsSuccessModelFor f d
-      case fitsSuccessModel of
-        False -> do
+      st <- analysisGet
+      let allSuccessCodes = mconcat (HM.elems (successModel st))
+      case filterSuccesses allSuccessCodes d of
+        Nothing -> return s
+        Just d' -> do
           let s' = s & errorBasicFacts %~ M.insert bb (ErrorBlock argVals)
-          addErrorDescriptor f s' d
-        True -> do
-          let s' = s & errorBasicFacts %~ M.insert bb SuccessBlock
-          removeImprobableErrors f s' d
+          addErrorDescriptor f s' d'
   where
     f = getFunction funcLike
 
-removeImprobableErrors :: Function -> ErrorSummary -> ErrorDescriptor
-                       -> Analysis ErrorSummary
-removeImprobableErrors f s (ErrorDescriptor _ (ReturnConstantInt dis) _) =
-  return $ s & errorSummary %~ HM.adjust (S.foldr go mempty) f
-  where
-    go d@(ErrorDescriptor acts (ReturnConstantInt is) ws) acc
-      | S.null (S.intersection is dis) = S.insert d acc -- no overlap
-      | is == dis = acc -- identical, just remove
-      | otherwise = -- Some overlap, need to remove offending codes
-        let consts' = S.difference is dis
-            desc = ErrorDescriptor acts (ReturnConstantInt consts') ws
-        in S.insert desc acc
-    go d acc = S.insert d acc
-removeImprobableErrors _ s _ = return s
-
-checkFitsSuccessModelFor :: Function -> ErrorDescriptor -> Analysis Bool
-checkFitsSuccessModelFor f (ErrorDescriptor _ (ReturnConstantInt is) _) = do
-  st <- analysisGet
-  case HM.lookup f (successModel st) of
-    Nothing -> return False
-    Just m -> return $ not $ S.null (is `S.intersection` m)
-checkFitsSuccessModelFor _ _ = return False
+filterSuccesses :: Set Int -> ErrorDescriptor -> Maybe ErrorDescriptor
+filterSuccesses succCodes d =
+  case errorReturns d of
+    ReturnConstantPtr _ -> return d
+    ReturnConstantInt is ->
+      let leftovers = S.difference is succCodes
+      in case S.null leftovers `debug` show succCodes of
+        True -> fail "This was a success"
+        False -> return d { errorReturns = ReturnConstantInt leftovers } 
 
 
 -- | The other analyses identify error handling code.  This one instead looks
@@ -603,45 +571,70 @@ checkFitsSuccessModelFor _ _ = return False
 --
 -- See tests/error-handling/reused-error-reporter.c for an example where this
 -- is critical.
-reportsSuccess :: (HasFunction funcLike, HasBlockReturns funcLike,
-                   HasCFG funcLike, HasCDG funcLike, HasDomTree funcLike)
-               => funcLike
+--
+-- FIXME: Why is this making theorem prover calls at all?  It is sufficient
+-- to look for function calls (that are able to report errors) whose return
+-- values are never checked.
+--
+-- The easiest way to do that will be a low-level simple pass to build up
+-- a used-by set for each instruction.  If the return value is never used
+-- in a cmp instruction, then we can do the rest of this (check to see if
+-- the same value is returned from all paths after the call).
+impliesSuccess :: (HasBlockReturns funcLike, HasFunction funcLike)
+               => UseSummary
+               -> funcLike
                -> ErrorSummary
-               -> BasicBlock
-               -> Analysis ErrorSummary
-reportsSuccess funcLike s bb
-  | Just spred <- singlePredecessor cfg bb
-  , Just rv <- blockReturnsSameIntOnPaths rets = do
-    res <- runMaybeT $ do
-      let brInst = basicBlockTerminatorInstruction spred
-      (target, isErrHandlingFormula) <- targetOfErrorCheckBy s brInst
-      ifacts <- lift $ relevantInducedFacts funcLike bb target
-      ifacts' <- liftMaybe ifacts
-      let formula (x :: SInt32) = isErrHandlingFormula x &&& ifacts' x
-      case isSat formula of
-        True -> fail "Not a success branch"
-        -- In this block, some call that can return errors did /not/ return an
-        -- error.  We also know that the value @rv@ is /always/ returned from
-        -- this point, so we will conclude that @rv@ is a success code.
-        False -> do
-          st <- lift analysisGet
-          let model = successModel st
-              model' = HM.insertWith S.union f (S.singleton rv) model
-          lift $ analysisPut st { successModel = model' }
-          return s
-    return $ fromMaybe s res
-  | otherwise = return s
+               -> Instruction
+               -> Analysis ()
+impliesSuccess uses funcLike s i
+  | Just cv <- directCallTarget i
+  , Just bb <- instructionBasicBlock i
+  , Just rv <- blockReturn brs bb
+  , Just succCode <- retValToConstantInt rv
+  , not (usedInCondition uses i) = do
+    -- Since the summary is only augmented as we iterate towards
+    -- a fixed point, more and more functions will be noticed as
+    -- possibly returning errors, refining this.
+    funcSumm <- lookupFunctionSummaryList s cv
+    case any isErrRetAnnot funcSumm of
+      False -> return ()
+      True -> do
+        st <- analysisGet
+        let model = successModel st
+            model' = HM.insertWith S.union f (S.singleton succCode) model
+        analysisPut st { successModel = model' }
+        return ()
+  | otherwise = return ()
   where
     f = getFunction funcLike
     brs = getBlockReturns funcLike
-    cfg = getCFG funcLike
-    rets = blockReturns brs bb
 
-blockReturnsSameIntOnPaths :: [Value] -> Maybe Int
-blockReturnsSameIntOnPaths [] = Nothing
-blockReturnsSameIntOnPaths (v:vs)
-  | all (==v) vs = retValToConstantInt v
-  | otherwise = Nothing
+usedInCondition :: UseSummary -> Instruction -> Bool
+usedInCondition useSumm i0 = evalState (go i0) mempty
+  where
+    isCmp i =
+      case i of
+        ICmpInst {} -> True
+        _ -> False
+    isBitcast i =
+      case i of
+        BitcastInst {} -> True
+        _ -> False
+    go i = do
+      vis <- get
+      case S.member i vis of
+        True -> return False
+        False -> do
+          put $ S.insert i vis
+          let uses = usedBy useSumm (toValue i)
+              cmpUses = filter isCmp uses
+              bitcastUses = filter isBitcast uses
+          case cmpUses of
+            [] -> do
+              res' <- mapM go bitcastUses
+              return $ or res'
+            _ -> return True
+
 
 -- | Return the first call instruction and its callee
 firstCallInst :: [Value] -> MaybeT Analysis (Instruction, Value)
@@ -768,12 +761,6 @@ callArgActions (ix, v) acc =
     ConstantC ConstantInt { constantIntValue = (fromIntegral -> iv) } ->
       IM.insert ix (ErrorInt iv) acc
     _ -> acc
-
-singlePredecessor :: CFG -> BasicBlock -> Maybe BasicBlock
-singlePredecessor cfg bb =
-  case basicBlockPredecessors cfg bb of
-    [singlePred] -> return singlePred
-    _ -> Nothing
 
 liftMaybe :: Maybe a -> MaybeT Analysis a
 liftMaybe = maybe mzero return

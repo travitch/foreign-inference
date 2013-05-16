@@ -41,7 +41,9 @@ import GHC.Generics
 import Control.DeepSeq
 import Control.DeepSeq.Generics ( genericRnf )
 import Control.Lens ( makeLenses, (&), (%~), (^.), (.~) )
-import Control.Monad.State.Strict
+import Control.Monad ( foldM, when, guard, mzero )
+import Control.Monad.Trans
+import Control.Monad.Trans.State.Strict
 import Control.Monad.Trans.Maybe
 import qualified Data.Foldable as F
 import Data.HashMap.Strict ( HashMap )

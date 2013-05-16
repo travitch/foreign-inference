@@ -322,22 +322,12 @@ generalizeBlockFromErrFunc errFuncs succCodes baseFacts funcLike summ bb
           let ws = map (simpleWitness . snd) calledErrFuncs
           in return $ ErrorDescriptor (S.fromList acts) ret ws
 
--- | This is a basic heuristic to categorize functions as error-reporting
--- functions or not.  This is the fallback if no SVM classifier is
--- provided.
--- errorFuncHeuristic :: (HasFunction funcLike)
---                    => BasicFacts
---                    -> [funcLike]
---                    -> Set Value
--- errorFuncHeuristic = undefined
-
 extractBasicFacts :: (HasFunction funcLike, HasBlockReturns funcLike,
                       HasCFG funcLike, HasCDG funcLike, HasDomTree funcLike)
                   => UseSummary -> ErrorSummary -> [funcLike]
                   -> Analysis ErrorSummary
 extractBasicFacts uses s0 funcLikes = do
   mapM_ (byBlock findSuccesses ()) funcLikes
-  -- s1 <- foldM (byBlock (reportsSuccess uses)) s0 funcLikes
   foldM (byBlock handlesKnownError) s0 funcLikes
   where
     findSuccesses flike () =

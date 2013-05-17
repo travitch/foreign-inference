@@ -211,9 +211,8 @@ identifyErrorHandling funcLikes ds uses ics opts =
           base = res1 ^. errorBasicFacts
           errorFuncs = case errorClassifier opts of
             DefaultClassifier -> classifyErrorFunctions base funcLikes defaultClassifier
-              -- errorFuncHeuristic base funcLikes
-            FeatureClassifier c -> classifyErrorFunctions base funcLikes c `debug` "FeatureClassifier"
-            NoClassifier -> mempty `debug` "NoClassifier"
+            FeatureClassifier c -> classifyErrorFunctions base funcLikes c
+            NoClassifier -> mempty
           ganalysis = generalizeBlockFromErrFunc errorFuncs successCodes base `debug` (show (prettyErrorFuncs errorFuncs))
       -- Generalizing based on error functions will learn new error values.
       res2 <- foldM (byBlock ganalysis) res1 funcLikes

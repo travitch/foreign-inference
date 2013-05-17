@@ -260,7 +260,8 @@ generalizeFromErrorCodes succCodes funcLike s bb
     case rc `S.member` errorCodes st && not (S.member rc succCodes) of
       False -> return s
       True -> do
-        let ed = ErrorDescriptor mempty (ReturnConstantInt (S.singleton rc)) []
+        let w = Witness (basicBlockTerminatorInstruction bb) ("returns " ++ show rc)
+            ed = ErrorDescriptor mempty (ReturnConstantInt (S.singleton rc)) [w]
         addErrorDescriptor f s ed
   | otherwise = return s
   where

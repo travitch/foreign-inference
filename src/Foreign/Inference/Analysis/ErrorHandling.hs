@@ -584,7 +584,7 @@ impliesSuccess uses funcLike s i
   , Just bb <- instructionBasicBlock i
   , Just rv <- blockReturn brs bb
   , Just succCode <- retValToConstantInt rv
-  , not (usedInCondition uses i) = do
+  , not (usedInCondition uses i) && followedByNonReturn i = do
     -- Since the summary is only augmented as we iterate towards
     -- a fixed point, more and more functions will be noticed as
     -- possibly returning errors, refining this.
@@ -601,6 +601,29 @@ impliesSuccess uses funcLike s i
   where
     f = getFunction funcLike
     brs = getBlockReturns funcLike
+
+instructionSuccessor :: Instruction -> Maybe Instruction
+instructionSuccessor i =
+  case rest of
+    _:nxt:_ -> Just nxt
+    _ -> Nothing
+  where
+    Just bb = instructionBasicBlock i
+    rest = dropWhile (/=i) (basicBlockInstructions bb)
+
+-- | Return True if the given 'Instruction' is followed by an
+-- instruction with some effect besides a return or unconditional branch.
+-- Note that phi nodes do not have an effect.
+followedByNonReturn :: Instruction -> Bool
+followedByNonReturn = maybe False go . instructionSuccessor
+  where
+    go i =
+      case i of
+        UnconditionalBranchInst { unconditionalBranchTarget = t } ->
+          go (firstNonPhiInstruction t)
+        RetInst {} -> False
+        _ -> True
+
 
 usedInCondition :: UseSummary -> Instruction -> Bool
 usedInCondition useSumm i0 = evalState (go i0) mempty

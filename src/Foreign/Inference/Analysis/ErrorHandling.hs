@@ -196,9 +196,10 @@ identifyErrorHandling :: (HasFunction funcLike, HasBlockReturns funcLike,
                          -> IndirectCallSummary
                          -> ErrorAnalysisOptions
                          -> ErrorSummary
-identifyErrorHandling funcLikes ds uses ics opts =
+identifyErrorHandling allFuncLikes ds uses ics opts =
   runAnalysis (fixAnalysis mempty) ds roData mempty
   where
+    funcLikes = filter couldReturnError allFuncLikes
     roData = ErrorData ics
     fixAnalysis res0 = do
       -- First, find known success blocks and known failure blocks
@@ -211,8 +212,8 @@ identifyErrorHandling funcLikes ds uses ics opts =
       let successCodes = S.fromList $ M.elems (mconcat (HM.elems (successModel st)))
           base = res1 ^. errorBasicFacts
           errorFuncs = case errorClassifier opts of
-            DefaultClassifier -> classifyErrorFunctions base funcLikes defaultClassifier
-            FeatureClassifier c -> classifyErrorFunctions base funcLikes c
+            DefaultClassifier -> classifyErrorFunctions base allFuncLikes defaultClassifier
+            FeatureClassifier c -> classifyErrorFunctions base allFuncLikes c
             NoClassifier -> mempty
           ganalysis = generalizeBlockFromErrFunc errorFuncs successCodes base `debug` (show (prettyErrorFuncs errorFuncs))
       -- Generalizing based on error functions will learn new error values.
@@ -573,6 +574,9 @@ filterSuccesses succCodes d =
 -- if nothing is called between it and the return?  Then we would
 -- be requiring that something else happen after a success is declared.
 -- We could probably avoid cleanup code then.
+--
+-- FIXME: Another success indicator: a function that always returns the
+-- same constant int.
 impliesSuccess :: (HasBlockReturns funcLike, HasFunction funcLike)
                => UseSummary
                -> funcLike
@@ -614,6 +618,15 @@ instructionSuccessor i =
 -- | Return True if the given 'Instruction' is followed by an
 -- instruction with some effect besides a return or unconditional branch.
 -- Note that phi nodes do not have an effect.
+--
+-- This only works for non-terminator instructions.
+--
+-- FIXME: It may be worth expanding this to ignore multiple
+-- functions called in a row in the initial block.  That is,
+-- start searching from the terminator of the block.
+--
+-- What we would really be looking at is just the terminator instruction
+-- then.
 followedByNonReturn :: Instruction -> Bool
 followedByNonReturn = maybe False go . instructionSuccessor
   where

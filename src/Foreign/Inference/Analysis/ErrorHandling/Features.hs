@@ -1,4 +1,5 @@
 {-# LANGUAGE PatternGuards, DeriveGeneric, TemplateHaskell #-}
+{-# LANGUAGE ViewPatterns #-}
 -- | This module computes feature vectors for the error handling analysis.
 --
 -- The feature vectors can be used for machine learning based classification,
@@ -29,7 +30,8 @@ module Foreign.Inference.Analysis.ErrorHandling.Features (
   classifyErrorFunctions,
   featureVectorLength,
   defaultClassifier,
-  directCallTarget
+  directCallTarget,
+  couldReturnError
   ) where
 
 import GHC.Generics
@@ -173,6 +175,21 @@ exitValues f = concatMap fromReturn exitInsts
         RetInst { retInstValue = Just rv } -> flattenValue rv
         _ -> []
 
+-- | A function could return an error if it returns an integral type
+-- and values besides 0, 1, and sign-extendex compares.  That is,
+-- non-bool functions.
+couldReturnError :: (HasFunction funcLike) => funcLike -> Bool
+couldReturnError funcLike =
+  complexIntFunction f && not (null nonBoolRets)
+  where
+    nonBoolRets = filter notBool (exitValues f)
+    f = getFunction funcLike
+    notBool v =
+      case valueContent' v of
+        ConstantC ConstantInt { constantIntValue = iv } ->
+          iv /= 1 && iv /= 0
+        InstructionC ZExtInst { castedValue = (valueContent -> InstructionC ICmpInst {})} -> False
+        _ -> True
 
 featureVectorLength :: Double
 featureVectorLength =

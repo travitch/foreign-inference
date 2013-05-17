@@ -244,9 +244,9 @@ prettyErrorFuncs = S.fromList . mapMaybe toPrettyErrFunc . S.toList
         ExternalFunctionC ef -> return $ identifierAsString (externalFunctionName ef)
         _ -> fail "Not a function"
 
--- | If a block returns an integer value in
---
--- FIXME: Include the return instruction as the witness
+-- | If a block returns an integer value known to be an error code (but never
+-- used as a success code), then consider the block to be returning an
+-- error code.
 generalizeFromErrorCodes :: (HasFunction funcLike, HasBlockReturns funcLike)
                          => Set Int
                          -> funcLike

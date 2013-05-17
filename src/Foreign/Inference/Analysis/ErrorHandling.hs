@@ -50,6 +50,7 @@ import Data.HashMap.Strict ( HashMap )
 import qualified Data.HashMap.Strict as HM
 import Data.IntMap ( IntMap )
 import qualified Data.IntMap as IM
+import Data.Map ( Map )
 import qualified Data.Map as M
 import Data.Maybe ( fromMaybe, mapMaybe )
 import Data.Monoid
@@ -94,7 +95,7 @@ instance NFData ErrorDescriptor where
 data ErrorSummary = ErrorSummary { _errorSummary :: HashMap Function (Set ErrorDescriptor)
                                  , _errorBasicFacts :: BasicFacts
                                  , _errorDiagnostics :: Diagnostics
-                                 , _savedSuccessModels :: HashMap Function (Set Int)
+                                 , _savedSuccessModels :: HashMap Function (Map Instruction Int)
                                  , _savedErrorFunctions :: Set String
                                  }
                   deriving (Generic)
@@ -120,7 +121,7 @@ instance HasDiagnostics ErrorSummary where
 -- generalization rules
 data ErrorState =
   ErrorState { errorCodes :: Set Int
-             , successModel :: HashMap Function (Set Int)
+             , successModel :: HashMap Function (Map Instruction Int)
              , formulaCache :: HashMap (Function, BasicBlock, Instruction) (Maybe (SInt32 -> SBool))
              }
 
@@ -128,7 +129,7 @@ instance Monoid ErrorState where
   mempty = ErrorState mempty mempty mempty
   mappend (ErrorState c1 s1 fc1) (ErrorState c2 s2 fc2) =
     ErrorState { errorCodes = c1 `mappend` c2
-               , successModel = HM.unionWith S.union s1 s2
+               , successModel = HM.unionWith M.union s1 s2
                , formulaCache = HM.union fc1 fc2
                }
 
@@ -207,7 +208,7 @@ identifyErrorHandling funcLikes ds uses ics opts =
       -- heuristic.  Use the classification to generalize and find
       -- new error blocks.
       st <- analysisGet
-      let successCodes = mconcat (HM.elems (successModel st))
+      let successCodes = S.fromList $ M.elems (mconcat (HM.elems (successModel st)))
           base = res1 ^. errorBasicFacts
           errorFuncs = case errorClassifier opts of
             DefaultClassifier -> classifyErrorFunctions base funcLikes defaultClassifier
@@ -370,8 +371,12 @@ instance SummarizeModule ErrorSummary where
 toFReportAnnot :: ErrorDescriptor -> (FuncAnnotation, [Witness])
 toFReportAnnot desc = (FAReportsErrors (errorActions desc) (errorReturns desc), errorWitnesses desc)
 
-toSuccAnnot :: Set Int -> [(FuncAnnotation, [Witness])]
-toSuccAnnot is = [(FASuccessCodes is, [])]
+toSuccAnnot :: Map Instruction Int -> [(FuncAnnotation, [Witness])]
+toSuccAnnot m = [(FASuccessCodes is, ws)]
+  where
+    is = S.fromList (M.elems m)
+    ws = map toWitness (M.keys m)
+    toWitness i = Witness i "errors ignored"
 
 -- | If the function transitively returns errors, record them in the
 -- error summary.  Errors are only transitive if they are unhandled in
@@ -528,7 +533,7 @@ checkForKnownErrorReturn funcLike bb s brInst = do
     Nothing -> return s
     Just (d, argVals) -> do
       st <- analysisGet
-      let allSuccessCodes = mconcat (HM.elems (successModel st))
+      let allSuccessCodes = S.fromList $ M.elems (mconcat (HM.elems (successModel st)))
       case filterSuccesses allSuccessCodes d of
         Nothing -> return s
         Just d' -> do
@@ -564,14 +569,10 @@ filterSuccesses succCodes d =
 -- See tests/error-handling/reused-error-reporter.c for an example where this
 -- is critical.
 --
--- FIXME: Why is this making theorem prover calls at all?  It is sufficient
--- to look for function calls (that are able to report errors) whose return
--- values are never checked.
---
--- The easiest way to do that will be a low-level simple pass to build up
--- a used-by set for each instruction.  If the return value is never used
--- in a cmp instruction, then we can do the rest of this (check to see if
--- the same value is returned from all paths after the call).
+-- FIXME: Maybe we can try to not consider a function to be a success
+-- if nothing is called between it and the return?  Then we would
+-- be requiring that something else happen after a success is declared.
+-- We could probably avoid cleanup code then.
 impliesSuccess :: (HasBlockReturns funcLike, HasFunction funcLike)
                => UseSummary
                -> funcLike
@@ -593,7 +594,7 @@ impliesSuccess uses funcLike s i
       True -> do
         st <- analysisGet
         let model = successModel st
-            model' = HM.insertWith S.union f (S.singleton succCode) model
+            model' = HM.insertWith M.union f (M.fromList [(i, succCode)]) model
         analysisPut st { successModel = model' }
         return ()
   | otherwise = return ()

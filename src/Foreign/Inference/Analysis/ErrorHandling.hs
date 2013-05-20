@@ -46,6 +46,7 @@ import Control.Monad.Trans
 import Control.Monad.Trans.State.Strict
 import Control.Monad.Trans.Maybe
 import qualified Data.Foldable as F
+import Data.Function (on )
 import Data.HashMap.Strict ( HashMap )
 import qualified Data.HashMap.Strict as HM
 import Data.IntMap ( IntMap )
@@ -208,33 +209,70 @@ identifyErrorHandling allFuncLikes ds uses ics opts =
       -- If we have a classifier, try it.  Otherwise, use a basic
       -- heuristic.  Use the classification to generalize and find
       -- new error blocks.
-      st <- analysisGet
-      let successCodes = S.fromList $ M.elems (mconcat (HM.elems (successModel st)))
-          base = res1 ^. errorBasicFacts
+      successCodes <- getSuccessCodes
+      res2 <- removeSuccessesFromErrors successCodes res1
+      let base = res2 ^. errorBasicFacts
           errorFuncs = case errorClassifier opts of
             DefaultClassifier -> classifyErrorFunctions base allFuncLikes defaultClassifier
             FeatureClassifier c -> classifyErrorFunctions base allFuncLikes c
             NoClassifier -> mempty
-          ganalysis = generalizeBlockFromErrFunc errorFuncs successCodes base `debug` (show (prettyErrorFuncs errorFuncs))
+          ganalysis = generalizeBlockFromErrFunc errorFuncs successCodes base -- `debug` (show (prettyErrorFuncs errorFuncs))
       -- Generalizing based on error functions will learn new error values.
-      res2 <- foldM (byBlock ganalysis) res1 funcLikes
+      res3 <- foldM (byBlock ganalysis) res2 funcLikes
 
       -- Now try to generalize based on error values
-      res3 <- case generalizeFromReturns opts of
-        True -> foldM (byBlock (generalizeFromErrorCodes successCodes)) res2 funcLikes
-        False -> return res2
+      res4 <- case generalizeFromReturns opts of
+        True -> foldM (byBlock (generalizeFromErrorCodes successCodes)) res3 funcLikes
+        False -> return res3
 
       -- Once we know all of the error blocks we can find in this pass,
       -- look for all of the transitive errors.  These don't give us any
       -- information that would help in other phases.
-      res4 <- foldM (byBlock returnsTransitiveError) res3 funcLikes
+      res5 <- foldM (byBlock returnsTransitiveError) res4 funcLikes
 
-      case res0 == res4 of
-        False -> fixAnalysis res4
+      case res0 == res5 of
+        False -> fixAnalysis res5
         True -> do
           st' <- analysisGet
           let res0' = res0 & savedSuccessModels .~ successModel st'
-          return $ res0' & savedErrorFunctions .~ prettyErrorFuncs errorFuncs `debug` (show (prettyErrorFuncs errorFuncs))
+          return $ res0' & savedErrorFunctions .~ prettyErrorFuncs errorFuncs -- `debug` (show (prettyErrorFuncs errorFuncs))
+
+removeSuccessesFromErrors :: Set Int -> ErrorSummary -> Analysis ErrorSummary
+removeSuccessesFromErrors errCodes summ
+  | S.null errCodes = return summ
+  | otherwise = do
+    st <- analysisGet
+    analysisPut st { errorCodes = errorCodes st `S.difference` errCodes }
+    return $ F.foldl' removeSuccesses summ (HM.toList (summ ^. errorSummary))
+  where
+    removeSuccesses acc (f, descs) =
+      let descs' = F.foldl' fixErrorDescriptor mempty descs
+      in acc & errorSummary %~ HM.insert f descs'
+    fixErrorDescriptor acc desc =
+      case errorReturns desc of
+        ReturnConstantPtr _ -> S.insert desc acc
+        ReturnConstantInt is ->
+          let is' = S.difference is errCodes
+          in case S.null is' of
+            True -> acc
+            False -> S.insert (desc { errorReturns = ReturnConstantInt is'}) acc
+
+
+-- | From all of our models of success, choose the most likely success code.
+-- This is a 'Set' mostly because the rest of the code was written to operate
+-- over sets.
+getSuccessCodes :: Analysis (Set Int)
+getSuccessCodes = do
+  st <- analysisGet
+  let modelMaps = HM.elems (successModel st)
+      modelMap = mconcat modelMaps
+      succCodes = M.elems modelMap
+      counts :: Map Int Int
+      counts = F.foldl' (\acc k -> M.insertWith (+) k 1 acc) mempty succCodes
+      countList = M.keys counts
+  case null countList of
+    True -> return mempty
+    False -> return $ S.singleton $ F.maximumBy (compare `on` (counts M.!)) countList
 
 
 prettyErrorFuncs :: Set Value -> Set String
@@ -424,14 +462,21 @@ returnsTransitiveError funcLike summ bb
       let w = Witness i "transitive error"
       fsumm <- lookupFunctionSummaryList s callee
       maybe (return s) (addErrorDescriptor f s) $ do
-        FAReportsErrors errActs eret <- F.find isErrRetAnnot fsumm
-        rvs <- intReturnsToList eret
+        let rvs = errorCodesFromSummary fsumm
         -- See Note [Transitive Returns with Conditions]
         case priors of
-          Nothing -> return $! ErrorDescriptor errActs eret [w]
+          Nothing -> return $! ErrorDescriptor mempty (ReturnConstantInt rvs) [w]
           Just priors' -> do
-            let rvs' = foldr (addUncaughtErrors priors') mempty rvs
-            return $! ErrorDescriptor errActs (ReturnConstantInt rvs') [w]
+            let rvs' = F.foldr (addUncaughtErrors priors') mempty rvs
+            return $! ErrorDescriptor mempty (ReturnConstantInt rvs') [w]
+
+errorCodesFromSummary :: [FuncAnnotation] -> Set Int
+errorCodesFromSummary fsumm =
+  mconcat $ mapMaybe toIntReturns descs
+  where
+    toIntReturns (FAReportsErrors _ (ReturnConstantInt eret)) = return eret
+    toIntReturns _ = fail "Not an int return"
+    descs = filter isErrRetAnnot fsumm
 
 -- | Update the error summary with the given descriptor.  If the
 -- descriptor is returning an integer error code, additionally
@@ -533,8 +578,7 @@ checkForKnownErrorReturn funcLike bb s brInst = do
   case res of
     Nothing -> return s
     Just (d, argVals) -> do
-      st <- analysisGet
-      let allSuccessCodes = S.fromList $ M.elems (mconcat (HM.elems (successModel st)))
+      allSuccessCodes <- getSuccessCodes
       case filterSuccesses allSuccessCodes d of
         Nothing -> return s
         Just d' -> do
@@ -549,9 +593,9 @@ filterSuccesses succCodes d =
     ReturnConstantPtr _ -> return d
     ReturnConstantInt is ->
       let leftovers = S.difference is succCodes
-      in case S.null leftovers `debug` show succCodes of
+      in case S.null leftovers of
         True -> fail "This was a success"
-        False -> return d { errorReturns = ReturnConstantInt leftovers } 
+        False -> return d { errorReturns = ReturnConstantInt leftovers }
 
 
 -- | The other analyses identify error handling code.  This one instead looks
@@ -679,10 +723,11 @@ errorReturnValues :: ErrorSummary -> [Value] -> MaybeT Analysis [Int]
 errorReturnValues _ [] = fail "No call targets"
 errorReturnValues s [callee] = do
   fsumm <- lift $ lookupFunctionSummaryList s callee
-  liftMaybe $ errRetVals fsumm
+  return $ unique $ errRetVals fsumm
 errorReturnValues s (callee:rest) = do
   fsumm <- lift $ lookupFunctionSummaryList s callee
-  rvs <- liftMaybe $ errRetVals fsumm
+  let rvs = unique $ errRetVals fsumm
+  guard (not (null rvs))
   -- This lets us emit a warning if some callees return errors while
   -- others do not
   mapM_ (checkOtherErrorReturns rvs) rest
@@ -690,22 +735,18 @@ errorReturnValues s (callee:rest) = do
   where
     checkOtherErrorReturns rvs c = do
       fsumm <- lift $ lookupFunctionSummaryList s c
-      rvs' <- liftMaybe $ errRetVals fsumm
+      let rvs' = errRetVals fsumm
       let inter = S.intersection (S.fromList rvs') (S.fromList rvs)
       when (S.null inter) $ emitWarning Nothing "ErrorAnalysis" ("Mismatched error return codes for indirect call " ++ show (valueName callee))
 
-errRetVals :: [FuncAnnotation] -> Maybe [Int]
-errRetVals [] = Nothing
-errRetVals (FAReportsErrors _ ract : _) = do
+errRetVals :: [FuncAnnotation] -> [Int]
+errRetVals [] = []
+errRetVals (FAReportsErrors _ ract : rest) = do
   case ract of
     ReturnConstantInt is ->
-      case F.toList is of
-        [] -> Nothing
-        lis -> return lis
+      F.toList is <> errRetVals rest
     ReturnConstantPtr is ->
-      case F.toList is of
-        [] -> Nothing
-        lis -> return lis
+      F.toList is <> errRetVals rest
 errRetVals (_:rest) = errRetVals rest
 
 callTargets :: IndirectCallSummary -> Value -> [Value]
@@ -793,6 +834,9 @@ callArgActions (ix, v) acc =
 
 liftMaybe :: Maybe a -> MaybeT Analysis a
 liftMaybe = maybe mzero return
+
+unique :: (Ord a) => [a] -> [a]
+unique = S.toList . S.fromList
 
 -- | Given a branch instruction, if the branch is checking the return value of
 -- a function call, return the function call instruction and a formula that

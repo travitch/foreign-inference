@@ -74,9 +74,12 @@ import Foreign.Inference.Analysis.ErrorHandling.Features
 import Foreign.Inference.Analysis.ErrorHandling.SMT
 
 -- import Text.Printf
-import Debug.Trace
-debug :: a -> String -> a
-debug = flip trace
+-- import Debug.Trace
+-- debug :: a -> String -> a
+-- debug = flip trace
+
+-- FIXME: Have a separate classification for boolean functions.  Additionally,
+-- do not try to generalize boolean functions.
 
 -- | An ErrorDescriptor describes a site in the program handling an
 -- error (along with a witness).
@@ -464,11 +467,14 @@ returnsTransitiveError funcLike summ bb
       maybe (return s) (addErrorDescriptor f s) $ do
         let rvs = errorCodesFromSummary fsumm
         -- See Note [Transitive Returns with Conditions]
-        case priors of
-          Nothing -> return $! ErrorDescriptor mempty (ReturnConstantInt rvs) [w]
-          Just priors' -> do
+        case (S.null rvs, priors) of
+          (True, _) -> fail "No error codes"
+          (False, Nothing) -> return $! ErrorDescriptor mempty (ReturnConstantInt rvs) [w]
+          (False, Just priors') -> do
             let rvs' = F.foldr (addUncaughtErrors priors') mempty rvs
-            return $! ErrorDescriptor mempty (ReturnConstantInt rvs') [w]
+            case S.null rvs' of
+              False -> return $! ErrorDescriptor mempty (ReturnConstantInt rvs') [w]
+              True -> fail "All errors handled"
 
 errorCodesFromSummary :: [FuncAnnotation] -> Set Int
 errorCodesFromSummary fsumm =

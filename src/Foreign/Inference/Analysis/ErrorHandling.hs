@@ -78,9 +78,6 @@ import Foreign.Inference.Analysis.ErrorHandling.SMT
 -- debug :: a -> String -> a
 -- debug = flip trace
 
--- FIXME: Have a separate classification for boolean functions.  Additionally,
--- do not try to generalize boolean functions.
-
 -- | An ErrorDescriptor describes a site in the program handling an
 -- error (along with a witness).
 data ErrorDescriptor =

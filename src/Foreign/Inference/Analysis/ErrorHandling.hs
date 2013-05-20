@@ -387,10 +387,6 @@ byBlock analysis s funcLike =
   where
     f = getFunction funcLike
 
--- errorSummaryToString = unlines . map entryToString . HM.toList
---   where
---     entryToString (f, descs) = identifierAsString (functionName f) ++ ": " ++ show descs
-
 instance SummarizeModule ErrorSummary where
   summarizeArgument _ _ = []
   summarizeFunction f s = fromMaybe [] $ do

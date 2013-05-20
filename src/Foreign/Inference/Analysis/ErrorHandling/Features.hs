@@ -172,7 +172,10 @@ exitValues f = concatMap fromReturn exitInsts
     exitInsts = functionExitInstructions f
     fromReturn i =
       case i of
-        RetInst { retInstValue = Just rv } -> flattenValue rv
+        RetInst { retInstValue = Just rv } ->
+          case valueContent' rv of
+            InstructionC PhiNode {} -> filter (/= rv) $ flattenValue rv
+            _ -> [rv]
         _ -> []
 
 -- | A function could return an error if it returns an integral type

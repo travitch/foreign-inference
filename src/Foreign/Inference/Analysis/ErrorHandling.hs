@@ -74,9 +74,9 @@ import Foreign.Inference.Analysis.ErrorHandling.Features
 import Foreign.Inference.Analysis.ErrorHandling.SMT
 
 -- import Text.Printf
--- import Debug.Trace
--- debug :: a -> String -> a
--- debug = flip trace
+import Debug.Trace
+debug :: a -> String -> a
+debug = flip trace
 
 -- | An ErrorDescriptor describes a site in the program handling an
 -- error (along with a witness).
@@ -210,7 +210,7 @@ identifyErrorHandling allFuncLikes ds uses ics opts =
       -- heuristic.  Use the classification to generalize and find
       -- new error blocks.
       successCodes <- getSuccessCodes
-      res2 <- removeSuccessesFromErrors successCodes res1
+      res2 <- removeSuccessesFromErrors successCodes res1 `debug` show successCodes
       let base = res2 ^. errorBasicFacts
           errorFuncs = case errorClassifier opts of
             DefaultClassifier -> classifyErrorFunctions base allFuncLikes defaultClassifier
@@ -295,7 +295,7 @@ generalizeFromErrorCodes :: (HasFunction funcLike, HasBlockReturns funcLike)
                          -> Analysis ErrorSummary
 generalizeFromErrorCodes succCodes funcLike s bb
   | Just rv <- blockReturn brs bb
-  , Just rc <- retValToConstantInt rv = do
+  , Just rc <- valueToConstantInt rv = do
     st <- analysisGet
     case rc `S.member` errorCodes st && not (S.member rc succCodes) of
       False -> return s
@@ -333,7 +333,7 @@ generalizeBlockFromErrFunc :: (HasFunction funcLike, HasBlockReturns funcLike)
                            -> Analysis ErrorSummary
 generalizeBlockFromErrFunc errFuncs succCodes baseFacts funcLike summ bb
   | Just rv <- blockReturn brs bb
-  , Just rc <- retValToConstantInt rv
+  , Just rc <- valueToConstantInt rv
   , Just errDesc <- blockErrorDescriptor rc
   , isUnclassifiedBlock baseFacts bb && not (S.member rc succCodes) =
     let val = S.singleton errDesc
@@ -485,7 +485,8 @@ addErrorDescriptor :: Function -> ErrorSummary -> ErrorDescriptor
 addErrorDescriptor f s d
   | Just is <- intReturnsToList (errorReturns d) = do
     st <- analysisGet
-    analysisPut st { errorCodes = S.fromList is `mappend` errorCodes st }
+    let is' = filter (/=0) is
+    analysisPut st { errorCodes = S.fromList is' `mappend` errorCodes st }
     return s'
   | otherwise = return s'
   where
@@ -525,7 +526,7 @@ handlesKnownError :: (HasFunction funcLike, HasBlockReturns funcLike,
 handlesKnownError funcLike s bb -- See Note [Known Error Conditions]
   | Just _ <- M.lookup bb (s ^. errorBasicFacts) = return s
   | Just rv <- blockReturn brs bb
-  , Just _ <- retValToConstantInt rv = do
+  , Just _ <- valueToConstantInt rv = do
     let termInst = basicBlockTerminatorInstruction bb
         cdeps = controlDependencies funcLike termInst
     foldM (checkForKnownErrorReturn funcLike bb) s cdeps
@@ -586,6 +587,10 @@ checkForKnownErrorReturn funcLike bb s brInst = do
   where
     f = getFunction funcLike
 
+-- Maybe we can look at int functions that always return the same value
+-- and consider that a success code?  The problem would be un-implemented
+-- functions that always return ENOTIMPLEMENTED or something.
+
 filterSuccesses :: Set Int -> ErrorDescriptor -> Maybe ErrorDescriptor
 filterSuccesses succCodes d =
   case errorReturns d of
@@ -630,7 +635,7 @@ impliesSuccess uses funcLike s i
   | Just cv <- directCallTarget i
   , Just bb <- instructionBasicBlock i
   , Just rv <- blockReturn brs bb
-  , Just succCode <- retValToConstantInt rv
+  , Just succCode <- valueToConstantInt rv
   , not (usedInCondition uses i) && followedByNonReturn i = do
     -- Since the summary is only augmented as we iterate towards
     -- a fixed point, more and more functions will be noticed as
@@ -765,19 +770,30 @@ branchToErrorDescriptor :: (HasFunction funcLike, HasBlockReturns funcLike,
                         -> MaybeT Analysis (ErrorDescriptor, Set Value)
 branchToErrorDescriptor funcLike bb = do
   singleRetVal <- liftMaybe $ blockReturn brs bb
-  constantRc <- liftMaybe $ retValToConstantInt singleRetVal
+  constantRc <- liftMaybe $ valueToConstantInt singleRetVal
   let rcon = if functionReturnsPointer f
              then ReturnConstantPtr
              else ReturnConstantInt
       ract = rcon (S.singleton constantRc)
-      (acts, ignored) = foldr instToAction ([], mempty) (basicBlockInstructions bb)
+      (acts, ignored) = foldr instToAction ([], mempty) (instructionsToReturn bb)
   return $! (ErrorDescriptor (S.fromList acts) ract [], ignored)
   where
     f = getFunction funcLike
     brs = getBlockReturns funcLike
+    cfg = getCFG funcLike
 
-retValToConstantInt :: Value -> Maybe Int
-retValToConstantInt v = do
+    instructionsToReturn :: BasicBlock -> [Instruction]
+    instructionsToReturn =
+      concatMap basicBlockInstructions . S.toList . blocksToReturn mempty
+
+    blocksToReturn vis block
+      | S.member block vis = vis
+      | otherwise =
+        let vis' = S.insert block vis
+        in F.foldl' blocksToReturn vis' (basicBlockSuccessors cfg block)
+
+valueToConstantInt :: Value -> Maybe Int
+valueToConstantInt v = do
   ConstantInt { constantIntValue = (fromIntegral -> iv) } <- fromValue v
   return iv
 
@@ -793,9 +809,18 @@ functionReturnsPointer f =
 -- arguments to other functions.
 --
 -- We will want this set to use while defining features.
-instToAction ::Instruction -> ([ErrorAction], Set Value) -> ([ErrorAction], Set Value)
+instToAction :: Instruction -> ([ErrorAction], Set Value) -> ([ErrorAction], Set Value)
 instToAction i a@(acc, ignore) =
   case i of
+    StoreInst { storeAddress = (valueContent' -> ArgumentC arg)
+              , storeValue = sv
+              }
+      | Just rc <- valueToConstantInt sv ->
+        let argName = identifierAsString (argumentName arg)
+        in (AssignToArgument argName (Just (S.singleton rc)) : acc, ignore)
+      | otherwise ->
+        let argName = identifierAsString (argumentName arg)
+        in (AssignToArgument argName Nothing : acc, ignore)
     CallInst { callFunction = (valueContent' -> FunctionC f)
              , callArguments = (map fst -> args)
              }

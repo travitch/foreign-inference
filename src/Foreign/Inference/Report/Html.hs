@@ -113,7 +113,7 @@ extractCalledFunctionNames aliasReverseIndex i acc =
     _ -> acc
   where
     maybeExtract cv names =
-      case valueContent cv of
+      case valueContent' cv of
         FunctionC f ->
           case M.lookup f aliasReverseIndex of
             Nothing ->

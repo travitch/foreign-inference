@@ -140,6 +140,7 @@ instance NFData TypeAnnotation where
   rnf = genericRnf
 
 data ModuleAnnotation = MAErrorIndicators [String]
+                      | MASuccessCodes [Int]
                       deriving (Show, Read, Generic, Eq, Ord)
 
 instance FromJSON ModuleAnnotation

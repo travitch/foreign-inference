@@ -53,7 +53,7 @@ import Data.IntMap ( IntMap )
 import qualified Data.IntMap as IM
 import Data.Map ( Map )
 import qualified Data.Map as M
-import Data.Maybe ( fromMaybe, mapMaybe )
+import Data.Maybe ( catMaybes, fromMaybe, mapMaybe )
 import Data.Monoid
 import Data.SBV
 import Data.Set ( Set )
@@ -272,15 +272,27 @@ removeSuccessesFromErrors errCodes summ
 getSuccessCodes :: Analysis (Set Int)
 getSuccessCodes = do
   st <- analysisGet
-  let modelMaps = HM.elems (successModel st)
-      modelMap = mconcat modelMaps
-      succCodes = M.elems modelMap
-      counts :: Map Int Int
-      counts = F.foldl' (\acc k -> M.insertWith (+) k 1 acc) mempty succCodes
-      countList = M.keys counts
-  case null countList of
-    True -> return mempty
-    False -> return $ S.singleton $ F.maximumBy (compare `on` (counts M.!)) countList
+  return $ successCodesFromMap (successModel st)
+  -- let modelMaps = HM.elems (successModel st)
+  --     modelMap = mconcat modelMaps
+  --     succCodes = M.elems modelMap
+  --     counts :: Map Int Int
+  --     counts = F.foldl' (\acc k -> M.insertWith (+) k 1 acc) mempty succCodes
+  --     countList = M.keys counts
+  -- case null countList of
+  --   True -> return mempty
+  --   False -> return $ S.singleton $ F.maximumBy (compare `on` (counts M.!)) countList
+
+successCodesFromMap :: (Ord b) => HashMap a (Map b Int) -> Set Int
+successCodesFromMap m
+  | null countList = mempty
+  | otherwise = S.singleton $ F.maximumBy (compare `on` (counts M.!)) countList
+  where
+    modelMap = mconcat (HM.elems m)
+    succCodes = M.elems modelMap
+    counts :: Map Int Int
+    counts = F.foldl' (\acc k -> M.insertWith (+) k 1 acc) mempty succCodes
+    countList = M.keys counts
 
 
 prettyErrorFuncs :: Set Value -> Set String
@@ -409,11 +421,20 @@ instance SummarizeModule ErrorSummary where
     guard (not (S.null fsumm))
     let descs = F.toList fsumm
     return $ succAnnot ++ map toFReportAnnot descs
-  summarizeModule _ s
-    | S.null errFuncs = []
-    | otherwise = [MAErrorIndicators (S.toList errFuncs)]
+  summarizeModule _ s = catMaybes [ errorIndicators
+                                  , succCodes
+                                  ]
     where
-      errFuncs = s ^. savedErrorFunctions
+      errFuncs = F.toList $ s ^. savedErrorFunctions
+      scodes = F.toList $ successCodesFromMap (s ^. savedSuccessModels)
+
+      errorIndicators = do
+        guard (not (null errFuncs))
+        return $ MAErrorIndicators errFuncs
+
+      succCodes = do
+        guard (not (null scodes))
+        return $ MASuccessCodes scodes
 
 toFReportAnnot :: ErrorDescriptor -> (FuncAnnotation, [Witness])
 toFReportAnnot desc = (FAReportsErrors (errorActions desc) (errorReturns desc), errorWitnesses desc)

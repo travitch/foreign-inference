@@ -458,8 +458,7 @@ returnsTransitiveError opts funcLike summ bb
   | Just rv <- blockReturn brs bb = do
     ics <- analysisEnvironment indirectCallSummary
     case ignoreCasts rv of
-      InstructionC i@CallInst { callFunction = callee } -> do
-        let callees = callTargets ics callee
+      InstructionC i@CallInst { callFunction = (callTargets ics -> callees) } -> do
         priorFacts <- relevantInducedFacts funcLike bb i
         foldM (recordTransitiveError i priorFacts) summ callees
       _ -> return summ
@@ -773,9 +772,11 @@ errRetVals (_:rest) = errRetVals rest
 
 callTargets :: IndirectCallSummary -> Value -> [Value]
 callTargets ics callee =
+  -- Don't re-use callee in case it has some casts in it.
+  -- Re-convert it back to a value instead.
   case valueContent' callee of
-    FunctionC _ -> [callee]
-    ExternalFunctionC _ -> [callee]
+    FunctionC f -> [toValue f]
+    ExternalFunctionC ef -> [toValue ef]
     _ -> indirectCallInitializers ics callee
 
 isErrRetAnnot :: FuncAnnotation -> Bool

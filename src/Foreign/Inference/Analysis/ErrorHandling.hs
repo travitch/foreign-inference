@@ -231,7 +231,12 @@ identifyErrorHandling allFuncLikes ds uses ics opts =
       -- Once we know all of the error blocks we can find in this pass,
       -- look for all of the transitive errors.  These don't give us any
       -- information that would help in other phases.
-      res5 <- foldM (byBlock (returnsTransitiveError opts)) res4 funcLikes
+      --
+      -- Note that we are iterating over @allFuncLikes@ here.  Transitive error
+      -- returns do not quite look like our definition for functions that can
+      -- return error codes (since they don't necessarily return any error
+      -- constants).
+      res5 <- foldM (byBlock (returnsTransitiveError opts)) res4 allFuncLikes
 
       case res0 == res5 of
         False -> fixAnalysis res5

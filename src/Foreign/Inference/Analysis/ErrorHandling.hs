@@ -154,12 +154,13 @@ errorHandlingTrainingData :: (HasFunction funcLike, HasBlockReturns funcLike,
                           -> DependencySummary
                           -> UseSummary
                           -> IndirectCallSummary
+                          -> ErrorAnalysisOptions
                           -> [(Value, FeatureVector)]
-errorHandlingTrainingData funcLikes ds uses ics = r
+errorHandlingTrainingData funcLikes ds uses ics opts = r
   where
     TrainingWrapper r _ = runAnalysis a ds (ErrorData ics) mempty
     a = do
-      res1 <- extractBasicFacts uses mempty funcLikes
+      res1 <- extractBasicFacts opts uses mempty funcLikes
       let base = res1 ^. errorBasicFacts
           res2 = M.toList $ computeFeatures base funcLikes
       return $ TrainingWrapper res2 mempty
@@ -181,12 +182,14 @@ data Classifier = FeatureClassifier (FeatureVector -> ErrorFuncClass)
 data ErrorAnalysisOptions =
   ErrorAnalysisOptions { errorClassifier :: Classifier
                        , generalizeFromReturns :: Bool
+                       , prohibitLearnZero :: Bool
                        }
 
 defaultErrorAnalysisOptions :: ErrorAnalysisOptions
 defaultErrorAnalysisOptions =
   ErrorAnalysisOptions { errorClassifier = DefaultClassifier
                        , generalizeFromReturns = True
+                       , prohibitLearnZero = False
                        }
 
 identifyErrorHandling :: (HasFunction funcLike, HasBlockReturns funcLike,
@@ -204,7 +207,7 @@ identifyErrorHandling allFuncLikes ds uses ics opts =
     roData = ErrorData ics
     fixAnalysis res0 = do
       -- First, find known success blocks and known failure blocks
-      res1 <- extractBasicFacts uses res0 funcLikes
+      res1 <- extractBasicFacts opts uses res0 funcLikes
 
       -- If we have a classifier, try it.  Otherwise, use a basic
       -- heuristic.  Use the classification to generalize and find
@@ -222,13 +225,13 @@ identifyErrorHandling allFuncLikes ds uses ics opts =
 
       -- Now try to generalize based on error values
       res4 <- case generalizeFromReturns opts of
-        True -> foldM (byBlock (generalizeFromErrorCodes successCodes)) res3 funcLikes
+        True -> foldM (byBlock (generalizeFromErrorCodes opts successCodes)) res3 funcLikes
         False -> return res3
 
       -- Once we know all of the error blocks we can find in this pass,
       -- look for all of the transitive errors.  These don't give us any
       -- information that would help in other phases.
-      res5 <- foldM (byBlock returnsTransitiveError) res4 funcLikes
+      res5 <- foldM (byBlock (returnsTransitiveError opts)) res4 funcLikes
 
       case res0 == res5 of
         False -> fixAnalysis res5
@@ -288,12 +291,13 @@ prettyErrorFuncs = S.fromList . mapMaybe toPrettyErrFunc . S.toList
 -- used as a success code), then consider the block to be returning an
 -- error code.
 generalizeFromErrorCodes :: (HasFunction funcLike, HasBlockReturns funcLike)
-                         => Set Int
+                         => ErrorAnalysisOptions
+                         -> Set Int
                          -> funcLike
                          -> ErrorSummary
                          -> BasicBlock
                          -> Analysis ErrorSummary
-generalizeFromErrorCodes succCodes funcLike s bb
+generalizeFromErrorCodes opts succCodes funcLike s bb
   | Just rv <- blockReturn brs bb
   , Just rc <- valueToConstantInt rv = do
     st <- analysisGet
@@ -302,7 +306,7 @@ generalizeFromErrorCodes succCodes funcLike s bb
       True -> do
         let w = Witness (basicBlockTerminatorInstruction bb) ("returns " ++ show rc)
             ed = ErrorDescriptor mempty (ReturnConstantInt (S.singleton rc)) [w]
-        addErrorDescriptor f s ed
+        addErrorDescriptor opts f s ed
   | otherwise = return s
   where
     f = getFunction funcLike
@@ -364,11 +368,14 @@ generalizeBlockFromErrFunc errFuncs succCodes baseFacts funcLike summ bb
 
 extractBasicFacts :: (HasFunction funcLike, HasBlockReturns funcLike,
                       HasCFG funcLike, HasCDG funcLike, HasDomTree funcLike)
-                  => UseSummary -> ErrorSummary -> [funcLike]
+                  => ErrorAnalysisOptions
+                  -> UseSummary
+                  -> ErrorSummary
+                  -> [funcLike]
                   -> Analysis ErrorSummary
-extractBasicFacts uses s0 funcLikes = do
+extractBasicFacts opts uses s0 funcLikes = do
   mapM_ (byBlock findSuccesses ()) funcLikes
-  foldM (byBlock handlesKnownError) s0 funcLikes
+  foldM (byBlock (handlesKnownError opts)) s0 funcLikes
   where
     findSuccesses flike () =
       mapM_ (impliesSuccess uses flike s0) . basicBlockInstructions
@@ -437,11 +444,12 @@ toSuccAnnot m = [(FASuccessCodes is, ws)]
 -- details.
 returnsTransitiveError :: (HasFunction funcLike, HasBlockReturns funcLike,
                            HasCFG funcLike, HasCDG funcLike, HasDomTree funcLike)
-                       => funcLike
+                       => ErrorAnalysisOptions
+                       -> funcLike
                        -> ErrorSummary
                        -> BasicBlock
                        -> Analysis ErrorSummary
-returnsTransitiveError funcLike summ bb
+returnsTransitiveError opts funcLike summ bb
   | Just rv <- blockReturn brs bb = do
     ics <- analysisEnvironment indirectCallSummary
     case ignoreCasts rv of
@@ -457,7 +465,7 @@ returnsTransitiveError funcLike summ bb
     recordTransitiveError i priors s callee = do
       let w = Witness i "transitive error"
       fsumm <- lookupFunctionSummaryList s callee
-      maybe (return s) (addErrorDescriptor f s) $ do
+      maybe (return s) (addErrorDescriptor opts f s) $ do
         let rvs = errorCodesFromSummary fsumm
         -- See Note [Transitive Returns with Conditions]
         case (S.null rvs, priors) of
@@ -480,12 +488,15 @@ errorCodesFromSummary fsumm =
 -- | Update the error summary with the given descriptor.  If the
 -- descriptor is returning an integer error code, additionally
 -- file that code away in the errorCodes state for later generalization.
-addErrorDescriptor :: Function -> ErrorSummary -> ErrorDescriptor
+addErrorDescriptor :: ErrorAnalysisOptions
+                   -> Function
+                   -> ErrorSummary
+                   -> ErrorDescriptor
                    -> Analysis ErrorSummary
-addErrorDescriptor f s d
+addErrorDescriptor opts f s d
   | Just is <- intReturnsToList (errorReturns d) = do
     st <- analysisGet
-    let is' = filter (/=0) is
+    let is' = if prohibitLearnZero opts then filter (/=0) is else is
     analysisPut st { errorCodes = S.fromList is' `mappend` errorCodes st }
     return s'
   | otherwise = return s'
@@ -519,17 +530,18 @@ intReturnsToList er =
 -- relevant error-reporting actions).
 handlesKnownError :: (HasFunction funcLike, HasBlockReturns funcLike,
                       HasCFG funcLike, HasCDG funcLike, HasDomTree funcLike)
-                  => funcLike
+                  => ErrorAnalysisOptions
+                  -> funcLike
                   -> ErrorSummary
                   -> BasicBlock
                   -> Analysis ErrorSummary
-handlesKnownError funcLike s bb -- See Note [Known Error Conditions]
+handlesKnownError opts funcLike s bb -- See Note [Known Error Conditions]
   | Just _ <- M.lookup bb (s ^. errorBasicFacts) = return s
   | Just rv <- blockReturn brs bb
   , Just _ <- valueToConstantInt rv = do
     let termInst = basicBlockTerminatorInstruction bb
         cdeps = controlDependencies funcLike termInst
-    foldM (checkForKnownErrorReturn funcLike bb) s cdeps
+    foldM (checkForKnownErrorReturn opts funcLike bb) s cdeps
   | otherwise = return s
   where
     brs = getBlockReturns funcLike
@@ -552,13 +564,14 @@ handlesKnownError funcLike s bb -- See Note [Known Error Conditions]
 -- generalizations.
 checkForKnownErrorReturn :: (HasFunction funcLike, HasCFG funcLike, HasDomTree funcLike,
                              HasCDG funcLike, HasBlockReturns funcLike)
-                         => funcLike
+                         => ErrorAnalysisOptions
+                         -> funcLike
                          -> BasicBlock
                          -- ^ The block returning the Int value
                          -> ErrorSummary
                          -> Instruction
                          -> Analysis ErrorSummary
-checkForKnownErrorReturn funcLike bb s brInst = do
+checkForKnownErrorReturn opts funcLike bb s brInst = do
   res <- runMaybeT $ do
     (target, isErrHandlingFormula) <- targetOfErrorCheckBy s brInst
     ifacts <- lift $ relevantInducedFacts funcLike bb target
@@ -583,7 +596,7 @@ checkForKnownErrorReturn funcLike bb s brInst = do
         Nothing -> return s
         Just d' -> do
           let s' = s & errorBasicFacts %~ M.insert bb (ErrorBlock argVals)
-          addErrorDescriptor f s' d'
+          addErrorDescriptor opts f s' d'
   where
     f = getFunction funcLike
 

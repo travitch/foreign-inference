@@ -273,15 +273,6 @@ getSuccessCodes :: Analysis (Set Int)
 getSuccessCodes = do
   st <- analysisGet
   return $ successCodesFromMap (successModel st)
-  -- let modelMaps = HM.elems (successModel st)
-  --     modelMap = mconcat modelMaps
-  --     succCodes = M.elems modelMap
-  --     counts :: Map Int Int
-  --     counts = F.foldl' (\acc k -> M.insertWith (+) k 1 acc) mempty succCodes
-  --     countList = M.keys counts
-  -- case null countList of
-  --   True -> return mempty
-  --   False -> return $ S.singleton $ F.maximumBy (compare `on` (counts M.!)) countList
 
 successCodesFromMap :: (Ord b) => HashMap a (Map b Int) -> Set Int
 successCodesFromMap m

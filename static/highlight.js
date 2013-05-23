@@ -32,7 +32,7 @@ function linkCalledFunctions(fnames) {
 function initializeHighlighting() {
   var linkFunc = function(txtName, fname) {
     var target = txtName.replace(/([-.*+?^${}()|[\]\/\\])/g, "\\$1");
-    var regex = new RegExp('(<[^>]*>)|(\\b'+ target +')', 'g');
+    var regex = new RegExp('(<[^>]*>)|(\\b'+ target +'\\b)', 'g');
     return this.html(this.html().replace(regex, function(a, b, c){
       var url = fname + ".html";
       return (a.charAt(0) == '<') ? a : '<a href="'+ url +'">' + c + '</a>';

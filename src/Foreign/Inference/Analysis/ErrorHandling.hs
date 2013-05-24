@@ -621,15 +621,13 @@ checkForKnownErrorReturn opts funcLike bb s brInst = do
 -- functions that always return ENOTIMPLEMENTED or something.
 
 filterSuccesses :: Set Int -> ErrorDescriptor -> Maybe ErrorDescriptor
-filterSuccesses succCodes d =
-  case errorReturns d of
-    ReturnConstantPtr _ -> return d
-    ReturnConstantInt is ->
-      let leftovers = S.difference is succCodes
-      in case S.null leftovers of
-        True -> fail "This was a success"
-        False -> return d { errorReturns = ReturnConstantInt leftovers }
-
+filterSuccesses succCodes d
+  | ReturnConstantInt is <- errorReturns d =
+    let leftovers = S.difference is succCodes
+    in case S.null leftovers of
+      True -> fail "This was a success"
+      False -> return d { errorReturns = ReturnConstantInt leftovers }
+  | otherwise = return d
 
 -- | The other analyses identify error handling code.  This one instead looks
 -- for code that we can prove is /not/ handling an error.  If we are on a

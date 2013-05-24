@@ -651,9 +651,6 @@ filterSuccesses succCodes d =
 -- if nothing is called between it and the return?  Then we would
 -- be requiring that something else happen after a success is declared.
 -- We could probably avoid cleanup code then.
---
--- FIXME: Another success indicator: a function that always returns the
--- same constant int.
 impliesSuccess :: (HasBlockReturns funcLike, HasFunction funcLike)
                => UseSummary
                -> funcLike

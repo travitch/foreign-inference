@@ -65,25 +65,6 @@ data Feature = Feature { _calledInErrorContext :: Int
 $(makeLenses ''Feature)
 emptyFeature :: Feature
 emptyFeature = Feature 0 0 0 0 0 0
-{-
-addCalledInErrorContext = emptyFeature { calledInErrorContext = 1 }
-addCalledInNonErrorContext = emptyFeature { calledInNonErrorContext = 1 }
-addCalledInPossibleErrorContext = emptyFeature { calledInPossibleErrorContext = 1 }
-addCalledInSuccessContext = emptyFeature { calledInSuccessContext = 1 }
-addUsedAsArgument = emptyFeature { usedAsArgument = 1 }
-addUsedAsArgumentInErrorContext = emptyFeature { usedAsArgumentInErrorContext = 1 }
-
-instance Monoid Feature where
-  mempty = emptyFeature
-  mappend f1 f2 =
-    Feature { calledInErrorContext = calledInErrorContext f1 + calledInErrorContext f2
-            , calledInNonErrorContext = calledInNonErrorContext f1 + calledInNonErrorContext f2
-            , calledInPossibleErrorContext = calledInPossibleErrorContext f1 + calledInPossibleErrorContext f2
-            , calledInSuccessContext = calledInSuccessContext f1 + calledInSuccessContext f2
-            , usedAsArgument = usedAsArgument f1 + usedAsArgument f2
-            , usedAsArgumentInErrorContext = usedAsArgumentInErrorContext f1 + usedAsArgumentInErrorContext f2
-            }
--}
 
 update :: (Feature -> Feature) -> Maybe Feature -> Maybe Feature
 update modifier f = Just . modifier $ fromMaybe emptyFeature f
@@ -121,13 +102,6 @@ instance Binary ErrorFuncClass where
     if b then return ErrorReporter else return OtherFunction
 
 type FeatureVector = Vector Double
-
-
-
--- instance Monoid Feature where
---   mempty = Feature 0 0 0 0
---   mappend (Feature ne1 e1 s1 a1) (Feature ne2 e2 s2 a2) =
---     Feature (ne1 + ne2) (e1 + e2) (s1 + s2) (a1 + a2)
 
 -- FIXME: count uses of each function *not* in a function returning an int.
 -- Also count uses of each function in functions returning an int.
@@ -220,29 +194,11 @@ toFeatureVector nBlocks nSuccBlocks nErrBlocks nIntFuncs f = UV.map normalize $
               -- , fromIntegral (f ^. calledInErrorContext) / fromIntegral (f ^. calledInNonErrorContext)
               -- , fromIntegral (f ^. calledInPossibleErrorContext) / fromIntegral (f ^. calledInNonErrorContext)
               ]
-              {-
-  UV.fromList [ fromIntegral (f ^. calledInErrorContext) / fromIntegral nIntFuncs
-              , fromIntegral (f ^. calledInNonErrorContext) / fromIntegral nIntFuncs
-              , fromIntegral (f ^. calledInSuccessContext) / fromIntegral nIntFuncs
-              , fromIntegral (f ^. calledInPossibleErrorContext) / fromIntegral nIntFuncs
-              , min 1 (fromIntegral (f ^. usedAsArgumentInErrorContext))
-              , fromIntegral (f ^. calledInErrorContext) / fromIntegral (f ^. calledInPossibleErrorContext)
-              , fromIntegral (f ^. calledInErrorContext) / fromIntegral (f ^. calledInNonErrorContext)
-              , fromIntegral (f ^. calledInPossibleErrorContext) / fromIntegral (f ^. calledInNonErrorContext)
-              ]
--}
+
 normalize :: Double -> Double
 normalize d
   | isInfinite d || isNaN d = 0.0
   | otherwise = d
-
--- (Feature nerr inerr insucc arg _ _) =
-  -- UV.fromList [ fromIntegral nerr / fromIntegral nFuncs
-  --             , fromIntegral inerr / fromIntegral nFuncs
-  --             , fromIntegral insucc / fromIntegral nFuncs
-  --             , fromIntegral arg / fromIntegral nFuncs
-  --             , fromIntegral inerr / fromIntegral nerr
-  --             ]
 
 -- compute block returns here - if there is a constant return
 -- value, classify it as a possible error context

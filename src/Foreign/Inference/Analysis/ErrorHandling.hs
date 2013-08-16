@@ -660,7 +660,7 @@ impliesSuccess uses funcLike s i
   , Just bb <- instructionBasicBlock i
   , Just rv <- blockReturn brs bb
   , Just succCode <- valueToConstantInt rv
-  , not (usedInCondition uses i) && followedByNonReturn i = do
+  , {-not (usedInCondition uses i) &&-} followedByNonReturn i = do
     -- Since the summary is only augmented as we iterate towards
     -- a fixed point, more and more functions will be noticed as
     -- possibly returning errors, refining this.

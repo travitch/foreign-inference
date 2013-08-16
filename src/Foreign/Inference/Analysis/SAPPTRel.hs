@@ -179,8 +179,8 @@ type Analysis = AnalysisMonad () ()
 sapAnalysis :: (FuncLike funcLike, HasFunction funcLike, HasCFG funcLike)
                => funcLike -> SAPPTRelSummary -> Analysis SAPPTRelSummary
 sapAnalysis funcLike s = do
-  let analysis = dataflowAnalysis top meet sapTransfer
-  funcInfo <- forwardDataflow funcLike analysis top
+  let analysis = fwdDataflowAnalysis top meet sapTransfer
+  funcInfo <- dataflow funcLike analysis top
   let SAPInfo ps vs = dataflowResult funcInfo
       addVals = sapValues %~ M.insert f (invertMap vs)
       addPaths = sapPaths %~ M.insert f (invertMap ps)

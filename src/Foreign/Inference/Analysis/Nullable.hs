@@ -210,7 +210,7 @@ nullableAnalysis retSumm funcLike s@(NullableSummary summ _) = do
       args = filter isPointer (functionParameters f)
       fact0 = top { nullArguments = S.fromList args }
       analysis = fwdDataflowEdgeAnalysis top meetNullInfo nullTransfer nullEdgeTransfer
-  localInfo <- analysisLocal envMod (forwardDataflow funcLike analysis fact0)
+  localInfo <- analysisLocal envMod (dataflow funcLike analysis fact0)
 
   let exitInfo = dataflowResult localInfo
       notNullableArgs = S.toList $ S.fromList args `S.difference` nullArguments exitInfo

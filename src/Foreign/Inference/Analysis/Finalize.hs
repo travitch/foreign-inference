@@ -163,7 +163,7 @@ finalizerAnalysis funcLike s@(FinalizerSummary summ _) = do
       fact0 = FinalizerInfo mempty mempty
       analysis = fwdDataflowEdgeAnalysis top meet finalizerTransfer finalizerEdgeTransfer
 
-  funcInfo <- analysisLocal envMod (forwardDataflow funcLike analysis fact0)
+  funcInfo <- analysisLocal envMod (dataflow funcLike analysis fact0)
 
   let FinalizerInfo finalized witnesses = dataflowResult funcInfo
       attachWitness a = HM.insert a (S.toList (HM.lookupDefault mempty a witnesses))

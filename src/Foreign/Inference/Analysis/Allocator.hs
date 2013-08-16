@@ -182,14 +182,14 @@ allocatorAnalysis :: (FuncLike funcLike, HasFunction funcLike, HasCFG funcLike)
                      -> AllocatorSummary
                      -> Analysis AllocatorSummary
 allocatorAnalysis (esumm, (fsumm, outSumm)) funcLike s = do
-  res <- forwardDataflow funcLike analysis top
+  res <- dataflow funcLike analysis top
   let AI rvs argRets = dataflowResult res
       s' = s & finalizerSummary .~ fsumm
   s'' <- checkReturnValues esumm f (S.toList rvs) s'
   foldM (checkArgValues esumm) s'' (M.toList argRets)
   where
     f = getFunction funcLike
-    analysis = dataflowAnalysis top meet (transfer s outSumm)
+    analysis = fwdDataflowAnalysis top meet (transfer s outSumm)
 
 top :: AllocatorInfo
 top = AI mempty mempty

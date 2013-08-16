@@ -148,6 +148,11 @@ meet (FinalizerInfo s1 m1) (FinalizerInfo s2 m2) =
 
 type Analysis = AnalysisMonad FinalizerData ()
 
+-- FIXME: The result extraction from the dataflow analysis has to change.
+-- Instead of looking at the unique exit node, look at the *return inst*.
+-- Otherwise, calls to exit in error branches make functions into non-finalizers
+-- when they otherwise might be.
+
 finalizerAnalysis :: (FuncLike funcLike, HasFunction funcLike,
                       HasCFG funcLike, HasNullSummary funcLike)
                      => funcLike
@@ -226,6 +231,12 @@ callTransfer callInst v as info =
       foldM (checkArg modSumm) info indexedArgs
   where
     indexedArgs = zip [0..] as
+    -- FIXME: Try the following variation: in an SCC, analyze each function
+    -- in isolation (no function sees results from the others).  Then, this
+    -- transfer function would assume that functions with no summary do finalize
+    -- their arguments.  After each function in an SCC is analyzed, then combine
+    -- all of the results and move on to iteration two.  This would pick up
+    -- mutually-recursive finalizers.
     checkArg ms acc (ix, (valueContent' -> ArgumentC a)) = do
       attrs <- lookupArgumentSummaryList ms v ix
       case PAFinalize `elem` attrs of

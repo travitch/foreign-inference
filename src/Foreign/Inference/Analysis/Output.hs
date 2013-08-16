@@ -191,15 +191,18 @@ outAnalysis :: (FuncLike funcLike, HasFunction funcLike, HasCFG funcLike)
 outAnalysis m funcLike s = do
   let envMod e = e { moduleSummary = s
                    }
-      analysis = dataflowAnalysis top meetOutInfo (outTransfer m)
-  funcInfo <- analysisLocal envMod (forwardDataflow funcLike analysis top)
-  let OI exitInfo fexitInfo = dataflowResult funcInfo
-      exitInfo' = M.map (second S.toList) exitInfo
+      analysis = bwdDataflowAnalysis top meetOutInfo (outTransfer m)
+  funcInfo <- analysisLocal envMod (dataflow funcLike analysis top)
+  let OI exitInfo fexitInfo = dataflowResult funcInfo -- (functionEntryInstruction f)
+--  let OI exitInfo fexitInfo = dataflowResult funcInfo
+  let exitInfo' = M.map (second S.toList) exitInfo
       fexitInfo' = M.map (second S.toList) fexitInfo
   -- Merge the local information we just computed with the global
   -- summary.  Prefer the locally computed info if there are
   -- collisions (could arise while processing SCCs).
   return $! (outputSummary %~ M.union exitInfo') $ (outputFieldSummary %~ M.union fexitInfo') s
+  where
+    f = getFunction funcLike
 
 -- | If the given @callInst@ is an allocated value (i.e., call to an
 -- allocator) and it does not escape via any means other than the
@@ -352,18 +355,39 @@ memcpyTransfer m info i dest src (valueContent -> ConstantC ConstantInt { consta
     isArgument = fromValue . stripBitcasts
 memcpyTransfer _ info _ _ _ _ = return info
 
+-- | The transfer function encodes the following:
+--
+-- > f(*p = x, inState) = OUT
+-- > f(x = *p, inState) = IN `GLB` inState
+--
+-- There is a shorthand where we can use INOUT for atomic ptr ops
+-- since they are a read+write.  Thus, both OUT and INOUT are simple
+-- cases where they just overwrite the old value.  If the new value is
+-- IN, then we do a join with the old value (if any).
 merge :: (Ord k)
-         => Lens' info (Map k (ArgumentDirection, Set Witness))
-         -> Instruction -> k -> ArgumentDirection -> info -> info
+         => Lens' info (Map k (ArgumentDirection, Set Witness)) -- ^ Param or field
+         -> Instruction -- ^ Instruction causing the merge
+         -> k -- ^ The base value (either a param or field owner)
+         -> ArgumentDirection -- ^ New direction
+         -> info -- ^ Old info
+         -> info
 merge lns i arg ArgBoth info =
   let ws = S.singleton (Witness i (show ArgBoth))
   in (lns %~ M.insert arg (ArgBoth, ws)) info
-merge lns i arg newVal info =
+merge lns i arg ArgOut info =
+  let ws = S.singleton (Witness i (show ArgOut))
+  in (lns %~ M.insert arg (ArgOut, ws)) info
+merge lns i arg ArgIn info =
   case M.lookup arg (info ^. lns) of
     -- No old value, so take the new one
     Nothing ->
-      let ws = S.singleton (Witness i (show newVal))
-      in (lns %~ M.insert arg (newVal, ws)) info
+      let ws = S.singleton (Witness i (show ArgIn))
+      in (lns %~ M.insert arg (ArgIn, ws)) info
+    Just (oldVal, ws) ->
+      let newDir = ArgIn `meetDir` oldVal
+          nw = Witness i (show newDir)
+      in (lns %~ M.insert arg (newDir, S.insert nw ws)) info
+         {-
     -- The old value was Both, so just keep it
     Just (ArgBoth, _) -> info
     -- Since the new value is not Both, we can't advance from Out with
@@ -379,7 +403,8 @@ merge lns i arg newVal info =
         --   in (lns %~ M.insert arg (ArgBoth, S.insert nw ws)) info
         ArgIn -> info
         ArgBoth -> error "Foreign.Inference.Analysis.Output.merge(2): Infeasible path"
-
+-}
+    
 removeArrayPtr :: Argument -> OutInfo -> OutInfo
 removeArrayPtr a (OI oi foi) = OI (M.delete a oi) foi
 

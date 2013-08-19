@@ -70,19 +70,16 @@ module Foreign.Inference.Analysis.Nullable (
   nullSummaryToTestFormat
   ) where
 
--- FIXME: This analysis is currently broken and requires some null
--- pointer information from a lower-level analysis.
-
 import GHC.Generics ( Generic )
 
 import Control.Arrow
 import Control.DeepSeq
 import Control.DeepSeq.Generics ( genericRnf )
 import Control.Lens ( Getter, Lens', makeLenses, (.~) )
-import Control.Monad ( foldM, unless )
+import Control.Monad ( foldM )
 import Data.Map ( Map )
 import qualified Data.Map as M
-import Data.Maybe ( fromMaybe )
+import Data.Maybe ( fromMaybe, mapMaybe )
 import Data.Monoid
 import Data.Set ( Set )
 import qualified Data.Set as S
@@ -142,7 +139,8 @@ summarizeNullArgument a (NullableSummary s _) =
     Nothing -> []
     Just ws -> [(PANotNull, ws)]
 
-identifyNullable :: (FuncLike funcLike, HasFunction funcLike, HasCFG funcLike,
+identifyNullable :: (FuncLike funcLike, HasFunction funcLike,
+                     HasCFG funcLike, HasNullSummary funcLike,
                      HasCDG funcLike, HasDomTree funcLike)
                     => DependencySummary
                     -> Lens' compositeSummary NullableSummary
@@ -152,24 +150,26 @@ identifyNullable ds lns depLens =
   composableDependencyAnalysisM runner nullableAnalysis lns depLens
   where
     runner a = runAnalysis a ds constData cache
-    constData = ND mempty undefined undefined undefined
+    constData = ND mempty undefined undefined undefined undefined
     cache = NState HM.empty
 
 data NullData = ND { moduleSummary :: NullableSummary
                    , returnSummary :: ReturnSummary
                    , controlDepGraph :: CDG
                    , domTree :: DominatorTree
+                   , nullPointersSummary :: NullPointersSummary
                    }
 
+-- Change to a formula cache?
 data NullState = NState { phiCache :: HashMap Instruction (Maybe Value) }
 
-data NullInfo = NInfo { nullArguments :: Set Argument
+data NullInfo = NInfo { nonNullArguments :: Set Argument
                       , nullWitnesses :: Map Argument (Set Witness)
                       }
               deriving (Eq, Ord, Show)
 
-top :: NullInfo
-top = NInfo mempty mempty
+-- top :: NullInfo
+-- top = NInfo mempty mempty
 
 instance HasDiagnostics NullableSummary where
   diagnosticLens = nullableDiagnostics
@@ -178,7 +178,7 @@ type Analysis = AnalysisMonad NullData NullState
 
 meetNullInfo :: NullInfo -> NullInfo -> NullInfo
 meetNullInfo ni1 ni2 =
-  NInfo { nullArguments = nullArguments ni1 `S.union` nullArguments ni2
+  NInfo { nonNullArguments = nonNullArguments ni1 `S.intersection` nonNullArguments ni2
         , nullWitnesses = M.unionWith S.union (nullWitnesses ni1) (nullWitnesses ni2)
         }
 
@@ -190,7 +190,7 @@ meetNullInfo ni1 ni2 =
 -- all non-nullable arguments).
 nullableAnalysis :: (FuncLike funcLike, HasCFG funcLike,
                      HasFunction funcLike, HasCDG funcLike,
-                     HasDomTree funcLike)
+                     HasNullSummary funcLike, HasDomTree funcLike)
                     => ReturnSummary
                     -> funcLike
                     -> NullableSummary
@@ -206,16 +206,20 @@ nullableAnalysis retSumm funcLike s@(NullableSummary summ _) = do
                    , returnSummary = retSumm
                    , controlDepGraph = getCDG funcLike
                    , domTree = getDomTree funcLike
+                   , nullPointersSummary = nps
                    }
       args = filter isPointer (functionParameters f)
-      fact0 = top { nullArguments = S.fromList args }
-      analysis = fwdDataflowEdgeAnalysis top meetNullInfo nullTransfer nullEdgeTransfer
+      top = NInfo (S.fromList args) mempty
+      fact0 = NInfo mempty mempty
+--        top -- top { nonNullArguments = S.fromList args }
+      -- analysis = fwdDataflowEdgeAnalysis top meetNullInfo nullTransfer nullEdgeTransfer
+      analysis = fwdDataflowAnalysis top meetNullInfo nullTransfer
   localInfo <- analysisLocal envMod (dataflow funcLike analysis fact0)
 
   let exitInfo = dataflowResult localInfo
-      notNullableArgs = S.toList $ S.fromList args `S.difference` nullArguments exitInfo
-      argsAndWitnesses =
-        map (attachWitness (nullWitnesses exitInfo)) notNullableArgs
+      notNullableArgs = nonNullArguments exitInfo
+      annotateWithWitness = attachWitness (nullWitnesses exitInfo)
+      argsAndWitnesses = map annotateWithWitness (S.toList notNullableArgs)
 
   -- Update the module symmary with the set of pointer parameters that
   -- we have proven are accessed unchecked.
@@ -223,6 +227,7 @@ nullableAnalysis retSumm funcLike s@(NullableSummary summ _) = do
   return $! (nullableSummary .~ newSumm) s
   where
     f = getFunction funcLike
+    nps = getNullSummary funcLike
 
 attachWitness :: Map Argument (Set Witness)
                  -> Argument
@@ -236,7 +241,7 @@ nullEdgeTransfer :: NullInfo -> Instruction -> Analysis [(BasicBlock, NullInfo)]
 nullEdgeTransfer ni i = return $ fromMaybe [] $ do
   (_, val, notNullBlock) <- branchNullInfo i
   arg <- fromValue val
-  return [(notNullBlock, ni { nullArguments = arg `S.delete` nullArguments ni })]
+  return [(notNullBlock, ni { nonNullArguments = S.insert arg (nonNullArguments ni) })]
 
 -- | First, process the incoming CFG edges to learn about pointers
 -- that are known to be non-NULL.  Then use this updated information
@@ -266,19 +271,15 @@ valueDereferenced :: Instruction -> Value -> NullInfo -> Analysis NullInfo
 valueDereferenced i ptr ni
   | Just v <- memAccessBase ptr = do
     v' <- mustExecuteValue v
-    case v' of
-      Nothing -> return ni
-      Just mustVal -> return $ fromMaybe ni $ do
-        a <- fromValue mustVal
-        unless (S.member a args) (fail "Not a NULL argument")
-        return ni { nullArguments = S.delete a args
-                  , nullWitnesses =
-                    let w = Witness i "deref"
-                    in M.insertWith' S.union a (S.singleton w) ws
-                  }
+    return $ fromMaybe ni $ do
+      v'' <- v'
+      arg <- fromValue v''
+      let w = Witness i "deref"
+      return ni { nonNullArguments = S.insert arg (nonNullArguments ni)
+                , nullWitnesses = M.insertWith' S.union arg (S.singleton w) ws
+                }
   | otherwise = return ni
   where
-    args = nullArguments ni
     ws = nullWitnesses ni
 
 -- | Given a value that is being dereferenced by an instruction
@@ -322,14 +323,21 @@ callTransfer i calledFunc args ni = do
   let indexedArgs = zip [0..] args
   modSumm <- analysisEnvironment moduleSummary
   retSumm <- analysisEnvironment returnSummary
+  nullSumm <- analysisEnvironment nullPointersSummary
   retAttrs <- lookupFunctionSummaryList retSumm calledFunc
 
+  let nullValues = nullPointersAt nullSumm i
+      nullArgs :: Set Argument
+      nullArgs = S.fromList $ mapMaybe fromValue nullValues
   ni' <- case FANoRet `elem` retAttrs of
-    True -> return ni { nullArguments = S.empty
-                      , nullWitnesses =
-                        S.foldl' (addWitness i) (nullWitnesses ni) (nullArguments ni)
-                      }
+    True ->
+      return ni { nonNullArguments = nullArgs
+                , nullWitnesses =
+                  S.foldl' (addWitness i) (nullWitnesses ni) nullArgs
+                }
+
     False -> foldM (checkArg modSumm) ni indexedArgs
+
   -- We also learn information about pointers that are not null if
   -- this is a call through a function pointer (calling a NULL
   -- function pointer is illegal)
@@ -347,7 +355,7 @@ addWitness :: Instruction
               -> Map Argument (Set Witness)
               -> Argument
               -> Map Argument (Set Witness)
-addWitness i m a = M.insertWith' S.union a (S.singleton (Witness i "arg")) m
+addWitness i m a = M.insertWith' S.union a (S.singleton (Witness i "arg/noret")) m
 
 isIndirectCallee :: Value -> Bool
 isIndirectCallee val =
@@ -374,6 +382,8 @@ isIndirectCallee val =
 -- For Phi nodes, there may be a result for do-while style loops where
 -- the first iteration must always be taken.  In this case, return the
 -- value that *MUST* be accessed on that iteration.
+
+
 mustExecuteValue :: Value -> Analysis (Maybe Value)
 mustExecuteValue v =
   case valueContent' v of

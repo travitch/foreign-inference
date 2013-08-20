@@ -326,14 +326,17 @@ callTransfer i calledFunc args ni = do
   nullSumm <- analysisEnvironment nullPointersSummary
   retAttrs <- lookupFunctionSummaryList retSumm calledFunc
 
-  let nullValues = nullPointersAt nullSumm i
-      nullArgs :: Set Argument
-      nullArgs = S.fromList $ mapMaybe fromValue nullValues
+  let Just bb = instructionBasicBlock i
+      f = basicBlockFunction bb
+      formals = S.fromList $ functionParameters f
+  -- let nullValues = nullPointersAt nullSumm i
+  --     nullArgs :: Set Argument
+  --     nullArgs = S.fromList $ mapMaybe fromValue nullValues
   ni' <- case FANoRet `elem` retAttrs of
     True ->
-      return ni { nonNullArguments = nullArgs
+      return ni { nonNullArguments = formals
                 , nullWitnesses =
-                  S.foldl' (addWitness i) (nullWitnesses ni) nullArgs
+                  S.foldl' (addWitness i) (nullWitnesses ni) formals
                 }
 
     False -> foldM (checkArg modSumm) ni indexedArgs

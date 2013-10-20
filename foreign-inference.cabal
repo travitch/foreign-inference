@@ -62,7 +62,7 @@ library
   build-depends: base == 4.*,
                  unordered-containers >= 0.2.1.0,
                  mtl > 2,
-                 aeson >= 0.4.0.0,
+                 aeson >= 0.4.0.0 && < 0.6.1.0,
                  loch-th >= 0.2,
                  llvm-analysis >= 0.3.0,
                  lens >= 1,
@@ -72,7 +72,7 @@ library
                  file-embed >= 0.0.4.2,
                  sbv >= 2.9 && < 2.10,
                  vector, binary,
-                 hashable, containers, filepath, text, bytestring,
+                 hashable < 1.2, containers, filepath, text, bytestring,
                  deepseq, deepseq-generics, temporary, process,
                  ifscs, hbgl, hjsmin, graphviz, semigroups, ghc-prim,
                  -- For the reporting code

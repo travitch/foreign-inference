@@ -26,6 +26,9 @@
 --    pattern.
 module Foreign.Inference.Analysis.ErrorHandling (
   ErrorSummary,
+  errorDescriptors,
+  ErrorDescriptor(..),
+  ErrorReturn(..),
   Classifier(..),
   ErrorAnalysisOptions(..),
   defaultErrorAnalysisOptions,
@@ -102,6 +105,9 @@ data ErrorSummary = ErrorSummary { _errorSummary :: HashMap Function (Set ErrorD
                   deriving (Generic)
 
 $(makeLenses ''ErrorSummary)
+
+errorDescriptors :: ErrorSummary -> Function -> [ErrorDescriptor]
+errorDescriptors s f = maybe [] S.toList $ HM.lookup f (_errorSummary s)
 
 instance Eq ErrorSummary where
   (ErrorSummary s1 b1 _ _ _) == (ErrorSummary s2 b2 _ _ _) =

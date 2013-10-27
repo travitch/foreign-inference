@@ -1,3 +1,4 @@
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE RankNTypes, PatternGuards #-}
 {-# LANGUAGE ViewPatterns, DeriveGeneric, TemplateHaskell #-}
 -- | This module defines a Nullable pointer analysis.  It actually
@@ -75,11 +76,11 @@ import GHC.Generics ( Generic )
 import Control.Arrow
 import Control.DeepSeq
 import Control.DeepSeq.Generics ( genericRnf )
-import Control.Lens ( Getter, Lens', makeLenses, (.~) )
+import Control.Lens ( Getter, Lens', makeLenses, (.~), to, view )
 import Control.Monad ( foldM )
 import Data.Map ( Map )
 import qualified Data.Map as M
-import Data.Maybe ( fromMaybe, mapMaybe )
+import Data.Maybe ( fromMaybe )
 import Data.Monoid
 import Data.Set ( Set )
 import qualified Data.Set as S
@@ -87,6 +88,7 @@ import Data.HashMap.Strict ( HashMap )
 import qualified Data.HashMap.Strict as HM
 
 import LLVM.Analysis
+import LLVM.Analysis.BlockReturnValue
 import LLVM.Analysis.CDG
 import LLVM.Analysis.CFG
 import LLVM.Analysis.CallGraphSCCTraversal
@@ -97,6 +99,7 @@ import LLVM.Analysis.NullPointers
 import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
 import Foreign.Inference.AnalysisMonad
+import Foreign.Inference.Analysis.ErrorHandling
 import Foreign.Inference.Analysis.Return
 
 -- import Text.Printf
@@ -139,18 +142,23 @@ summarizeNullArgument a (NullableSummary s _) =
     Nothing -> []
     Just ws -> [(PANotNull, ws)]
 
-identifyNullable :: (FuncLike funcLike, HasFunction funcLike,
+identifyNullable :: forall funcLike compositeSummary .
+                    (FuncLike funcLike, HasFunction funcLike,
                      HasCFG funcLike, HasNullSummary funcLike,
-                     HasCDG funcLike, HasDomTree funcLike)
+                     HasCDG funcLike, HasDomTree funcLike,
+                     HasBlockReturns funcLike)
                     => DependencySummary
                     -> Lens' compositeSummary NullableSummary
                     -> Getter compositeSummary ReturnSummary
+                    -> Getter compositeSummary (Maybe ErrorSummary)
                     -> ComposableAnalysis compositeSummary funcLike
-identifyNullable ds lns depLens =
+identifyNullable ds lns retLens errLens =
   composableDependencyAnalysisM runner nullableAnalysis lns depLens
   where
+    depLens :: Getter compositeSummary (ReturnSummary, Maybe ErrorSummary)
+    depLens = to (view retLens &&& view errLens)
     runner a = runAnalysis a ds constData cache
-    constData = ND mempty undefined undefined undefined undefined
+    constData = ND mempty undefined undefined undefined undefined mempty
     cache = NState HM.empty
 
 data NullData = ND { moduleSummary :: NullableSummary
@@ -158,6 +166,7 @@ data NullData = ND { moduleSummary :: NullableSummary
                    , controlDepGraph :: CDG
                    , domTree :: DominatorTree
                    , nullPointersSummary :: NullPointersSummary
+                   , blockRets :: BlockReturns
                    }
 
 -- Change to a formula cache?
@@ -167,9 +176,6 @@ data NullInfo = NInfo { nonNullArguments :: Set Argument
                       , nullWitnesses :: Map Argument (Set Witness)
                       }
               deriving (Eq, Ord, Show)
-
--- top :: NullInfo
--- top = NInfo mempty mempty
 
 instance HasDiagnostics NullableSummary where
   diagnosticLens = nullableDiagnostics
@@ -190,12 +196,13 @@ meetNullInfo ni1 ni2 =
 -- all non-nullable arguments).
 nullableAnalysis :: (FuncLike funcLike, HasCFG funcLike,
                      HasFunction funcLike, HasCDG funcLike,
-                     HasNullSummary funcLike, HasDomTree funcLike)
-                    => ReturnSummary
+                     HasNullSummary funcLike, HasDomTree funcLike,
+                     HasBlockReturns funcLike)
+                    => (ReturnSummary, Maybe ErrorSummary)
                     -> funcLike
                     -> NullableSummary
                     -> Analysis NullableSummary
-nullableAnalysis retSumm funcLike s@(NullableSummary summ _) = do
+nullableAnalysis (retSumm, errSumm) funcLike s@(NullableSummary summ _) = do
   -- Run this sub-analysis step with a modified environment - the
   -- summary component is the current module summary (given to us by
   -- the SCC traversal).
@@ -207,13 +214,12 @@ nullableAnalysis retSumm funcLike s@(NullableSummary summ _) = do
                    , controlDepGraph = getCDG funcLike
                    , domTree = getDomTree funcLike
                    , nullPointersSummary = nps
+                   , blockRets = getBlockReturns funcLike
                    }
       args = filter isPointer (functionParameters f)
       top = NInfo (S.fromList args) mempty
       fact0 = NInfo mempty mempty
---        top -- top { nonNullArguments = S.fromList args }
-      -- analysis = fwdDataflowEdgeAnalysis top meetNullInfo nullTransfer nullEdgeTransfer
-      analysis = fwdDataflowAnalysis top meetNullInfo nullTransfer
+      analysis = fwdDataflowAnalysis top meetNullInfo (nullTransfer errSumm)
   localInfo <- analysisLocal envMod (dataflow funcLike analysis fact0)
 
   let exitInfo = dataflowResult localInfo
@@ -237,19 +243,51 @@ attachWitness m a =
     Nothing -> (a, [])
     Just is -> (a, S.toList is)
 
+{-
 nullEdgeTransfer :: NullInfo -> Instruction -> Analysis [(BasicBlock, NullInfo)]
 nullEdgeTransfer ni i = return $ fromMaybe [] $ do
   (_, val, notNullBlock) <- branchNullInfo i
   arg <- fromValue val
   return [(notNullBlock, ni { nonNullArguments = S.insert arg (nonNullArguments ni) })]
+-}
+
+nullTransfer :: Maybe ErrorSummary -> NullInfo -> Instruction -> Analysis NullInfo
+nullTransfer Nothing ni i = nullTransfer' ni i
+nullTransfer (Just errSumm) ni i
+  | instructionIsTerminator i = do
+    brs <- analysisEnvironment blockRets
+    let Just bb = instructionBasicBlock i
+        f = basicBlockFunction bb
+    case blockReturn brs bb of
+      Nothing -> nullTransfer' ni i
+      Just rv -> do
+        let descs = errorDescriptors errSumm f
+        case any (matchesReturnValue rv) descs of
+          False -> nullTransfer' ni i
+          True -> do
+            let formals = S.fromList $ functionParameters f
+                ni' = ni { nonNullArguments = formals
+                         , nullWitnesses =
+                           S.foldl' (addWitness "arg/ret-error" i) (nullWitnesses ni) formals
+                         }
+            nullTransfer' ni' i
+  | otherwise = nullTransfer' ni i
+
+matchesReturnValue :: Value -> ErrorDescriptor -> Bool
+matchesReturnValue (fromValue -> Just ConstantInt { constantIntValue = v}) d =
+  case errorReturns d of
+    ReturnConstantPtr _ -> False -- we don't really use these
+    ReturnConstantInt is -> S.member (fromIntegral v) is
+matchesReturnValue _ _ = False
+
 
 -- | First, process the incoming CFG edges to learn about pointers
 -- that are known to be non-NULL.  Then use this updated information
 -- to identify pointers that are dereferenced when they *might* be
 -- NULL.  Also map these possibly-NULL pointers to any corresponding
 -- parameters.
-nullTransfer :: NullInfo -> Instruction -> Analysis NullInfo
-nullTransfer ni i =
+nullTransfer' :: NullInfo -> Instruction -> Analysis NullInfo
+nullTransfer' ni i =
   case i of
     LoadInst { loadAddress = ptr } ->
       valueDereferenced i ptr ni
@@ -323,7 +361,7 @@ callTransfer i calledFunc args ni = do
   let indexedArgs = zip [0..] args
   modSumm <- analysisEnvironment moduleSummary
   retSumm <- analysisEnvironment returnSummary
-  nullSumm <- analysisEnvironment nullPointersSummary
+--  nullSumm <- analysisEnvironment nullPointersSummary
   retAttrs <- lookupFunctionSummaryList retSumm calledFunc
 
   let Just bb = instructionBasicBlock i
@@ -336,7 +374,7 @@ callTransfer i calledFunc args ni = do
     True ->
       return ni { nonNullArguments = formals
                 , nullWitnesses =
-                  S.foldl' (addWitness i) (nullWitnesses ni) formals
+                  S.foldl' (addWitness "arg/noret" i) (nullWitnesses ni) formals
                 }
 
     False -> foldM (checkArg modSumm) ni indexedArgs
@@ -354,11 +392,13 @@ callTransfer i calledFunc args ni = do
         False -> return acc
         True -> valueDereferenced i arg acc
 
-addWitness :: Instruction
+addWitness :: String
+              -> Instruction
               -> Map Argument (Set Witness)
               -> Argument
               -> Map Argument (Set Witness)
-addWitness i m a = M.insertWith' S.union a (S.singleton (Witness i "arg/noret")) m
+addWitness reason i m a =
+  M.insertWith' S.union a (S.singleton (Witness i reason)) m
 
 isIndirectCallee :: Value -> Bool
 isIndirectCallee val =

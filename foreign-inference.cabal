@@ -4,7 +4,7 @@ synopsis: A suite of program analyses to ease the generation of FFI bindings
 license: BSD3
 license-file: LICENSE
 author: Tristan Ravitch
-maintainer: travitch@cs.wisc.edu
+maintainer: tristan@nochair.net
 category: Foreign
 build-type: Simple
 cabal-version: >=1.10
@@ -59,27 +59,47 @@ library
                  Foreign.Inference.Interface.Metadata,
                  Foreign.Inference.Interface.Types,
                  Foreign.Inference.Internal.FlattenValue
-  build-depends: base == 4.*,
-                 unordered-containers >= 0.2.1.0,
-                 mtl > 2,
-                 aeson >= 0.4.0.0 && < 0.6.1.0,
+  build-depends: base >= 4 && < 5,
+                 unordered-containers >= 0.2.1.0 && < 0.3,
+                 mtl >= 2 && < 3,
+                 -- aeson >= 0.4.0.0 && < 0.6.1.0,
+                 aeson >= 0.7 && < 0.8,
                  loch-th >= 0.2,
                  llvm-analysis >= 0.3.0,
                  lens >= 1,
                  failure >= 0.2,
                  GenericPretty > 1,
-                 transformers >= 0.2 && < 0.4,
+                 transformers >= 0.2 && < 0.5,
                  file-embed >= 0.0.4.2,
                  sbv >= 2.9 && < 2.10,
-                 vector, binary,
-                 hashable < 1.2, containers, filepath, text, bytestring,
-                 deepseq, deepseq-generics, temporary, process,
-                 ifscs, hbgl, hjsmin, graphviz, semigroups, ghc-prim,
+                 vector,
+                 binary,
+                 hashable >= 1.1 && < 2,
+                 containers,
+                 filepath,
+                 text >= 0.11 && < 2,
+                 bytestring,
+                 deepseq,
+                 deepseq-generics,
+                 temporary,
+                 process,
+                 ifscs,
+                 hbgl,
+                 hjsmin,
+                 graphviz >= 2999.17.0.1,
+                 semigroups,
+                 ghc-prim,
                  -- For the reporting code
                  attoparsec >= 0.10 && < 1.0,
                  hamlet >= 1,
-                 regex-tdfa, safe-failure, archive-inspection, directory,
-                 blaze-builder, blaze-html, shakespeare-text, parallel-io
+                 regex-tdfa,
+                 safe-failure,
+                 archive-inspection,
+                 directory,
+                 blaze-builder >= 0.3 && < 0.4,
+                 blaze-html >= 0.6 && < 0.8,
+                 shakespeare >= 2 && < 3,
+                 parallel-io >= 0.3 && < 0.4
   ghc-options: -Wall -funbox-strict-fields
   ghc-prof-options: -auto-all
 

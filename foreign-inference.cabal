@@ -71,7 +71,7 @@ library
                  GenericPretty > 1,
                  transformers >= 0.2 && < 0.5,
                  file-embed >= 0.0.4.2,
-                 sbv >= 2.9 && < 2.10,
+                 sbv == 3.1,
                  vector,
                  binary,
                  hashable >= 1.1 && < 2,
